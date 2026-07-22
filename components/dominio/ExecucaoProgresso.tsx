@@ -86,9 +86,10 @@ export function ExecucaoProgresso({
       <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
         <Icone nome="alerta" className="mt-0.5 h-4 w-4 shrink-0" />
         <div>
-          <strong>Faça login no Gerid antes de disparar.</strong> O robô assume uma sessão já
-          autenticada. O job roda no servidor e o progresso é real, mas o preenchimento no Gerid
-          ainda é <strong>simulado</strong> — a automação com Playwright entra no Módulo 2.
+          <strong>Faça login no Gerid antes de disparar.</strong> O robô abre o navegador
+          reaproveitando a sessão já autenticada e protocola de verdade. Um caso só aparece como
+          <strong> Protocolado</strong> quando o Gerid devolve o número do protocolo — nunca por
+          suposição. Qualquer problema vira <strong>Erro</strong> com o motivo.
         </div>
       </div>
 

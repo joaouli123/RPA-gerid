@@ -92,31 +92,40 @@ describe('ações da fila de revisão', () => {
 });
 
 describe('execução', () => {
-  it('roda o job até o fim e grava no histórico', async () => {
+  it('NUNCA marca sucesso sem protocolo real do Gerid', async () => {
     const inicial = await store.iniciarExecucao();
     expect(inicial.status).toBe('rodando');
     expect(inicial.casos).toHaveLength(2);
     expect(inicial.casos.every((c) => c.status === 'pendente')).toBe(true);
 
-    // Aguarda o job terminar (pausa de 10ms por caso no teste).
-    const limite = Date.now() + 5000;
+    // O robô real vai falhar aqui (sem sessão do Gerid / mapeamento pendente).
+    // O comportamento correto é marcar ERRO, nunca inventar protocolo.
+    const limite = Date.now() + 60000;
     let atual = await store.getExecucaoAtual();
     while (atual?.status === 'rodando' && Date.now() < limite) {
-      await new Promise((r) => setTimeout(r, 25));
+      await new Promise((r) => setTimeout(r, 250));
       atual = await store.getExecucaoAtual();
     }
 
-    expect(atual?.status).toBe('concluida');
-    expect(atual?.casos.every((c) => c.status === 'sucesso')).toBe(true);
-    expect(atual?.casos.every((c) => Boolean(c.protocolo))).toBe(true);
+    expect(atual?.status).not.toBe('rodando');
 
-    const execucoes = await store.getExecucoes();
-    const gravada = execucoes.find((e) => e.id === inicial.id);
+    // A regra de ouro: sucesso exige número de protocolo.
+    for (const caso of atual?.casos ?? []) {
+      if (caso.status === 'sucesso') expect(caso.protocolo).toBeTruthy();
+      if (caso.status === 'erro') expect(caso.motivoErro).toBeTruthy();
+      // Nenhum caso pode ficar pendente depois de concluída.
+      expect(caso.status).not.toBe('pendente');
+      expect(caso.status).not.toBe('processando');
+    }
+
+    // Sem Gerid disponível no ambiente de teste, todos devem ser erro.
+    expect(atual?.casos.every((c) => c.status === 'erro')).toBe(true);
+
+    const gravada = (await store.getExecucoes()).find((e) => e.id === inicial.id);
     expect(gravada).toBeDefined();
-    expect(gravada?.sucesso).toBe(2);
-    expect(gravada?.erro).toBe(0);
-    expect(gravada?.simulado).toBe(true);
-  });
+    expect(gravada?.sucesso).toBe(0);
+    expect(gravada?.erro).toBe(2);
+  }, 90000);
 
   it('o histórico fica persistido em disco', async () => {
     const disco = await estadoNoDisco();

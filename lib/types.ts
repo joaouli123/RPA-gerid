@@ -50,9 +50,4 @@ export interface Execucao {
   sucesso: number;
   erro: number;
   casos: CasoExecucao[];
-  /**
-   * True enquanto a automação real do Gerid (Módulo 2) não existir — o
-   * processamento foi simulado. Exibido na UI para não confundir o operador.
-   */
-  simulado?: boolean;
 }

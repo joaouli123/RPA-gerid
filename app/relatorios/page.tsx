@@ -38,7 +38,6 @@ export default async function RelatoriosPage() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="font-semibold">{formatarData(e.dataISO)}</span>
-                  {e.simulado && <Badge tom="ambar">Simulada</Badge>}
                 </div>
                 <div className="text-xs text-zinc-400">
                   {e.total} caso(s) · {e.sucesso} sucesso · {e.erro} erro

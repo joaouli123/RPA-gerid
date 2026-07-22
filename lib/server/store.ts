@@ -30,7 +30,6 @@ import type {
   OverridesConfig,
   RegistroAcaoRevisao,
 } from '@/lib/types';
-import { execucoesIniciais } from '@/lib/server/seed';
 
 export type { AcaoRevisao, ExecucaoAtual, OverridesConfig, RegistroAcaoRevisao };
 
@@ -75,7 +74,8 @@ const cache: Cache = (globalCache.__rpaGeridCache ??= {
 function estadoInicial(): Estado {
   return {
     overridesConfig: {},
-    execucoes: execucoesIniciais(),
+    // Começa VAZIO: histórico só recebe execução real.
+    execucoes: [],
     execucaoAtual: null,
     acoesRevisao: {},
     backupPlanilhaId: null,
@@ -425,13 +425,10 @@ export async function getExecucaoAtual(): Promise<ExecucaoAtual | null> {
 }
 
 /** Pausa entre casos na execução simulada (menor nos testes). */
-const PAUSA_POR_CASO_MS = Number(process.env.RPA_PAUSA_EXECUCAO_MS ?? 900);
-
 /**
- * Inicia uma execução. A automação real do Gerid (Módulo 2/Playwright) ainda
- * não existe, então o processamento de cada caso é SIMULADO — mas o job é real:
- * roda no servidor, o progresso é consultável por polling e o resultado entra
- * no histórico persistido.
+ * Inicia uma execução REAL: abre o Gerid com Playwright e protocola os casos
+ * prontos. Nada é simulado — se o robô não consegue protocolar, o caso é
+ * marcado como ERRO com o motivo, nunca como sucesso.
  */
 export async function iniciarExecucao(): Promise<ExecucaoAtual> {
   const estado = await carregarEstado();
@@ -460,34 +457,111 @@ export async function iniciarExecucao(): Promise<ExecucaoAtual> {
   return instantaneo;
 }
 
+/**
+ * Processa a execução com o robô REAL do Gerid.
+ * Cada caso só vira "sucesso" se o Gerid devolver um número de protocolo.
+ * Qualquer problema vira "erro" com o motivo — nunca sucesso falso.
+ */
 async function processarExecucao(id: string): Promise<void> {
-  const espera = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  const config = await getConfig();
+  const resultado = await getResultado();
+  const prontos = resultado.clientesProntos;
 
-  for (let i = 0; ; i++) {
+  const [{ RoboGeridPlaywright }, { ErroGerid, FalhaGerid }] = await Promise.all([
+    import('@/src/modulo2/roboGerid'),
+    import('@/src/modulo2/tiposGerid'),
+  ]);
+
+  const robo = new RoboGeridPlaywright({
+    urlGerid: process.env.RPA_GERID_URL ?? 'https://gerid.dataprev.gov.br',
+    perfilNavegador:
+      process.env.RPA_PERFIL_NAVEGADOR ?? path.join(process.cwd(), '.perfil-gerid'),
+    headless: process.env.RPA_HEADLESS === '1',
+    pastaSaida: path.join(process.cwd(), 'saida'),
+    timeoutMs: Number(process.env.RPA_TIMEOUT_MS ?? 30000),
+  });
+
+  /** Marca um caso e persiste. */
+  const marcar = async (
+    indice: number,
+    mudanca: Partial<CasoExecucao>,
+  ): Promise<boolean> => {
     const estado = await carregarEstado();
     const atual = estado.execucaoAtual;
-    if (!atual || atual.id !== id || atual.status !== 'rodando') return;
-    const caso = atual.casos[i];
-    if (!caso) break;
-
-    caso.status = 'processando';
+    if (!atual || atual.id !== id) return false;
+    const caso = atual.casos[indice];
+    if (!caso) return false;
+    Object.assign(caso, mudanca);
     await persistir();
-    await espera(PAUSA_POR_CASO_MS);
+    return true;
+  };
 
-    const estadoDepois = await carregarEstado();
-    const atualDepois = estadoDepois.execucaoAtual;
-    if (!atualDepois || atualDepois.id !== id) return;
-    const casoDepois = atualDepois.casos[i];
-    if (!casoDepois) return;
+  const descreverErro = (erro: unknown): string => {
+    if (erro instanceof ErroGerid) return `[${erro.codigo}] ${erro.message}`;
+    return erro instanceof Error ? erro.message : String(erro);
+  };
 
-    casoDepois.status = 'sucesso';
-    casoDepois.protocolo = gerarProtocolo(atualDepois.iniciadoEm, i);
-    await persistir();
+  try {
+    await robo.iniciar();
+
+    for (let i = 0; i < prontos.length; i++) {
+      const estado = await carregarEstado();
+      if (estado.execucaoAtual?.id !== id || estado.execucaoAtual.status !== 'rodando') return;
+
+      if (!(await marcar(i, { status: 'processando' }))) return;
+
+      const pronto = prontos[i]!;
+      try {
+        const r = await robo.protocolar({
+          cliente: pronto.cliente,
+          grupoFamiliar: pronto.grupoFamiliar,
+          arquivos: pronto.arquivos,
+          pastaId: pronto.pastaId,
+        });
+        await marcar(i, { status: 'sucesso', protocolo: r.protocolo });
+      } catch (erro) {
+        await marcar(i, { status: 'erro', motivoErro: descreverErro(erro) });
+
+        // Sessão caiu ou o Gerid pediu verificação: parar tudo — insistir só
+        // geraria uma fila de erros iguais.
+        if (
+          erro instanceof ErroGerid &&
+          (erro.codigo === FalhaGerid.SESSAO_EXPIRADA ||
+            erro.codigo === FalhaGerid.VERIFICACAO_SEGURANCA)
+        ) {
+          break;
+        }
+      }
+    }
+  } catch (erro) {
+    // Falhou antes de processar (ex.: sem sessão): marca todos os pendentes.
+    const motivo = descreverErro(erro);
+    const estado = await carregarEstado();
+    const atual = estado.execucaoAtual;
+    if (atual?.id === id) {
+      for (const caso of atual.casos) {
+        if (caso.status === 'pendente' || caso.status === 'processando') {
+          caso.status = 'erro';
+          caso.motivoErro = motivo;
+        }
+      }
+      await persistir();
+    }
+  } finally {
+    await robo.encerrar().catch(() => undefined);
   }
 
   const estado = await carregarEstado();
   const atual = estado.execucaoAtual;
   if (!atual || atual.id !== id) return;
+
+  // Quem ficou pendente (execução interrompida) vira erro — nunca some.
+  for (const caso of atual.casos) {
+    if (caso.status === 'pendente' || caso.status === 'processando') {
+      caso.status = 'erro';
+      caso.motivoErro ??= 'Execução interrompida antes de processar este caso.';
+    }
+  }
 
   const sucesso = atual.casos.filter((c) => c.status === 'sucesso').length;
   const erro = atual.casos.filter((c) => c.status === 'erro').length;
@@ -502,16 +576,7 @@ async function processarExecucao(id: string): Promise<void> {
     sucesso,
     erro,
     casos: atual.casos,
-    simulado: true,
   });
-  atual.status = 'concluida';
+  atual.status = erro > 0 && sucesso === 0 ? 'erro' : 'concluida';
   await persistir();
-}
-
-function gerarProtocolo(iniciadoEm: string, indice: number): string {
-  const d = new Date(iniciadoEm);
-  const data = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(
-    d.getDate(),
-  ).padStart(2, '0')}`;
-  return `${data}${String(indice + 1).padStart(4, '0')}`;
 }
