@@ -16,7 +16,8 @@
     "modelo": "tsx scripts/gerarModeloPlanilha.ts",
     "auth:test": "tsx scripts/testarAuth.ts",
     "escrita:test": "tsx scripts/testarEscrita.ts",
-    "restaurar": "tsx scripts/restaurarPlanilha.ts"
+    "restaurar": "tsx scripts/restaurarPlanilha.ts",
+    "senha:hash": "tsx scripts/gerarSenha.ts"
   },
   "dependencies": {
     "@googleapis/drive": "^8.14.0",

@@ -1,5 +1,6 @@
 import { Icone } from '@/components/ui/Icone';
 import { ThemeToggle } from '@/components/layout/ThemeToggle';
+import { BotaoSair } from '@/components/layout/BotaoSair';
 
 export function Header() {
   return (
@@ -20,6 +21,7 @@ export function Header() {
             Gerid: login manual
           </span>
           <ThemeToggle />
+          <BotaoSair />
         </div>
       </div>
     </header>
