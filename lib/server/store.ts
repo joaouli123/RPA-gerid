@@ -154,10 +154,12 @@ export async function salvarConfig(overrides: OverridesConfig): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export function usandoDadosReais(): boolean {
+  // A credencial pode vir por arquivo (local) ou por variável (servidor).
+  const temCredencial = Boolean(
+    process.env.RPA_GOOGLE_CREDENTIALS?.trim() || process.env.RPA_GOOGLE_KEY_FILE?.trim(),
+  );
   return Boolean(
-    process.env.RPA_GOOGLE_KEY_FILE &&
-      process.env.RPA_PASTA_RAIZ_ID &&
-      process.env.RPA_SPREADSHEET_ID,
+    temCredencial && process.env.RPA_PASTA_RAIZ_ID && process.env.RPA_SPREADSHEET_ID,
   );
 }
 
