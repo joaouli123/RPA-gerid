@@ -235,15 +235,58 @@ precisa de permissão de **Editor** na planilha.
 ⚠️ **Service account não tem cota de armazenamento** — pode ALTERAR arquivo existente,
 mas não CRIAR nem COPIAR. Ver `docs/serviceaccount-cota.md` (afeta o Módulo 3).
 
+## Regra inegociável: nada de dado simulado
+
+O sistema **nunca finge**. Um protocolo errado no INSS tem custo real para uma
+pessoa com deficiência, então:
+
+- Um caso só vira **sucesso** quando o Gerid devolve o número do protocolo.
+- Qualquer outra coisa vira **erro com motivo** (coberto por teste).
+- Nenhum caso pode terminar `pendente`/`processando` — quem sobrou vira erro.
+- O histórico de execuções começa **vazio**; só recebe execução real.
+- Se a leitura do Google falhar, o Painel mostra a causa em vermelho em vez de
+  passar dado de exemplo como se fosse real.
+- Sem cliente pronto, a execução **se recusa a iniciar**.
+
+## Módulo 2 — robô do Gerid (`src/modulo2/`)
+
+- `roboGerid.ts` — **real**: abre o Chrome com perfil persistente (herda a sessão
+  que o operador autenticou), navega, detecta sessão expirada e verificação de
+  segurança, tira screenshot na falha.
+- `tiposGerid.ts` — contrato do robô + motivos de falha tipados.
+- `mapaGerid.ts` — **o único ponto que exige acesso ao Gerid real**. Enquanto
+  `pendencias` não estiver vazio, `mapeamentoCompleto()` é false e o robô
+  **se recusa a protocolar** (`MAPEAMENTO_PENDENTE`).
+
+⚠️ **Não preencha `mapaGerid.ts` no chute.** Seletor inventado faria o robô
+protocolar dado errado em nome de terceiros. Siga
+`docs/checklists/revisao-seletor-playwright.md` com o Gerid aberto.
+
+## Módulo 3 — comprovante (`src/modulo3/comprovante.ts`)
+
+Tenta salvar na pasta do cliente no Drive; se a credencial não puder criar
+arquivo, salva em disco local e **devolve um aviso explícito** com a causa.
+Ver `docs/serviceaccount-cota.md`.
+
 ## Status
 
 - **Autenticação Google: FUNCIONANDO** (testada em 2026-07-22 contra o Drive real).
   `pnpm auth:test` (leitura) e `pnpm escrita:test` (escrita).
 - **Cadastro pelo sistema: FUNCIONANDO** — cliente + grupo familiar gravam na planilha real.
 - **Módulo 1 (leitura de dados): implementado e testado.** Roda isolado, sem Gerid nem Google real.
-- **Frontend: implementado e FUNCIONAL.** 41 testes verdes, typecheck limpo. Todas as ações fazem
-  algo de verdade e persistem: recarregar dados, salvar config, marcar/desfazer na fila de revisão,
-  disparar execução (job no servidor + polling) e baixar comprovante. Estado sobrevive a restart.
-- **Falta para ser produção:** (a) credencial Google no `.env` para ler a pasta/planilha reais —
-  o código já suporta, só não foi exercitado contra o Google de verdade; (b) **Módulo 2 (Playwright)**
-  para substituir o preenchimento simulado; (c) Módulo 3 (salvar comprovante no Drive do cliente).
+- **Frontend: implementado e FUNCIONAL.** Todas as ações fazem algo de verdade e persistem:
+  recarregar dados, salvar config, marcar/desfazer na fila de revisão, disparar execução
+  (job no servidor + polling) e baixar comprovante. Estado sobrevive a restart.
+- **Deploy: no ar** em `rpa-gerid-production.up.railway.app` (Railway, auto-deploy no push).
+- **Módulo 2 (Playwright): infraestrutura pronta, mapeamento pendente.** Navegador, sessão,
+  erros e screenshots funcionam. Falta preencher `src/modulo2/mapaGerid.ts` com as telas reais
+  do Gerid — exige acesso ao sistema (print da etapa do grupo familiar).
+- **Módulo 3 (comprovante): implementado**, com fallback para disco local enquanto a credencial
+  não puder criar arquivo no Drive.
+- **Zero simulação:** 70 testes verdes, typecheck limpo, build de produção OK.
+
+### O que ainda bloqueia o uso em produção
+
+1. **Mapeamento do Gerid** (`mapaGerid.ts`) — sem isso o robô não protocola, por decisão de projeto.
+2. **`RPA_GOOGLE_CREDENTIALS` no Railway** — sem ela o servidor roda com dataset de exemplo.
+3. **Cota da service account** — impede salvar o comprovante no Drive (cai para local).
