@@ -442,6 +442,14 @@ export async function iniciarExecucao(): Promise<ExecucaoAtual> {
     status: 'pendente',
   }));
 
+  // Sem caso pronto não há o que protocolar — abrir o navegador à toa só
+  // geraria um relatório vazio e confundiria o operador.
+  if (casos.length === 0) {
+    throw new Error(
+      'Nenhum cliente está pronto para protocolar. Resolva as pendências em "Revisão manual" e recarregue os dados.',
+    );
+  }
+
   const agora = new Date();
   const atual: ExecucaoAtual = {
     id: `exec-${agora.getTime()}`,
