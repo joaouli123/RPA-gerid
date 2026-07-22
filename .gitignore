@@ -1,0 +1,30 @@
+# Dependências
+node_modules/
+
+# Build / cache
+.next/
+dist/
+out/
+*.tsbuildinfo
+
+# === SENSÍVEL — nunca versionar ===
+# Credenciais do Google (chave privada da service account)
+secrets/
+*.pem
+*.key
+# Variáveis de ambiente (contêm CPF e caminhos locais)
+.env
+.env.local
+.env.*.local
+# Estado do app e backups da planilha do cliente (dados pessoais: CPF, nomes)
+.data/
+backups/
+comprovantes/
+
+# Logs
+*.log
+npm-debug.log*
+
+# SO / editor
+.DS_Store
+Thumbs.db

@@ -1,0 +1,341 @@
+'use client';
+
+import { useState, useTransition, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
+import type { Cliente, Integrante } from '@/src/domain/types';
+import { acaoExcluirCliente, acaoSalvarCliente } from '@/lib/server/actions';
+import { Card } from '@/components/ui/Card';
+import { Botao } from '@/components/ui/Botao';
+import { Icone } from '@/components/ui/Icone';
+import { Badge } from '@/components/ui/Badge';
+import { cn } from '@/lib/cn';
+
+const PARENTESCOS = [
+  'Titular',
+  'Mãe',
+  'Pai',
+  'Cônjuge',
+  'Irmão(ã)',
+  'Filho(a)',
+  'Avô(ó)',
+  'Outro',
+];
+
+const ESTADOS_CIVIS = ['solteiro', 'casado', 'viúvo', 'divorciado', 'união estável'];
+
+function integranteVazio(parentesco = 'Outro'): Integrante {
+  return { nome: '', parentesco, cpf: '', estadoCivil: '', dataNascimento: '', renda: '' };
+}
+
+export function ClienteForm({
+  clienteInicial,
+  integrantesIniciais,
+  edicao,
+}: {
+  clienteInicial?: Cliente;
+  integrantesIniciais?: Integrante[];
+  edicao: boolean;
+}) {
+  const router = useRouter();
+  const [salvando, startTransition] = useTransition();
+  const [erros, setErros] = useState<string[]>([]);
+
+  const [cliente, setCliente] = useState<Cliente>(
+    clienteInicial ?? { pasta: '', cpf: '', nome: '', cidade: '', cep: '', telefone: '' },
+  );
+  const [integrantes, setIntegrantes] = useState<Integrante[]>(
+    integrantesIniciais?.length ? integrantesIniciais : [integranteVazio('Titular')],
+  );
+
+  const setCampo =
+    (chave: keyof Cliente) =>
+    (e: ChangeEvent<HTMLInputElement>): void => {
+      const valor = e.target.value;
+      setCliente((c) => ({ ...c, [chave]: valor }));
+      setErros([]);
+    };
+
+  function setIntegrante(indice: number, chave: keyof Integrante, valor: string): void {
+    setIntegrantes((lista) =>
+      lista.map((item, i) => (i === indice ? { ...item, [chave]: valor } : item)),
+    );
+    setErros([]);
+  }
+
+  function adicionarIntegrante(): void {
+    setIntegrantes((lista) => [...lista, integranteVazio()]);
+  }
+
+  function removerIntegrante(indice: number): void {
+    setIntegrantes((lista) => lista.filter((_, i) => i !== indice));
+    setErros([]);
+  }
+
+  function salvar(e: FormEvent): void {
+    e.preventDefault();
+    setErros([]);
+    startTransition(async () => {
+      try {
+        await acaoSalvarCliente({ cliente, integrantes });
+      } catch (err: unknown) {
+        // redirect() do Next lança um erro de controle — não é falha real.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('NEXT_REDIRECT')) return;
+        setErros(msg.split(/(?<=\.)\s+/).filter(Boolean));
+      }
+    });
+  }
+
+  function excluir(): void {
+    if (!clienteInicial?.cpf) return;
+    startTransition(async () => {
+      try {
+        await acaoExcluirCliente(clienteInicial.cpf);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('NEXT_REDIRECT')) return;
+        setErros([msg]);
+      }
+    });
+  }
+
+  const totalTitulares = integrantes.filter(
+    (i) => i.parentesco.trim().toLowerCase() === 'titular',
+  ).length;
+
+  return (
+    <form onSubmit={salvar} className="space-y-5">
+      {erros.length > 0 && (
+        <div className="rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+          <div className="flex items-center gap-2 font-medium">
+            <Icone nome="alerta" className="h-4 w-4" />
+            Corrija antes de salvar:
+          </div>
+          <ul className="mt-1 list-inside list-disc space-y-0.5">
+            {erros.map((erro, i) => (
+              <li key={i}>{erro}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <Bloco titulo="Dados do requerente" descricao="Vão para a aba Clientes da planilha.">
+        <Campo rotulo="Nome completo" obrigatorio valor={cliente.nome} onChange={setCampo('nome')} dica="Precisa ser igual ao nome da pasta no Drive." />
+        <Campo rotulo="CPF" obrigatorio valor={cliente.cpf} onChange={setCampo('cpf')} dica="Só números. O zero à esquerda é preservado." />
+        <Campo rotulo="CEP" obrigatorio valor={cliente.cep} onChange={setCampo('cep')} dica="É o que localiza a agência do INSS." />
+        <Campo rotulo="Cidade do protocolo" obrigatorio valor={cliente.cidade} onChange={setCampo('cidade')} />
+        <Campo rotulo="Telefone" valor={cliente.telefone ?? ''} onChange={setCampo('telefone')} dica="Em branco usa o telefone do escritório." />
+      </Bloco>
+
+      <Card className="p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h3 className="font-semibold">Grupo familiar</h3>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Uma linha por pessoa que mora na casa, incluindo o requerente. Marque o requerente
+              como <strong>Titular</strong>.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge tom={totalTitulares === 1 ? 'verde' : 'ambar'}>
+              {integrantes.length} integrante(s)
+            </Badge>
+            <Botao type="button" variante="secundario" onClick={adicionarIntegrante}>
+              + Adicionar integrante
+            </Botao>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {integrantes.map((integrante, i) => {
+            const titular = integrante.parentesco.trim().toLowerCase() === 'titular';
+            return (
+              <div
+                key={i}
+                className={cn(
+                  'rounded-lg border p-3',
+                  titular
+                    ? 'border-blue-300 bg-blue-50/50 dark:border-blue-500/30 dark:bg-blue-500/5'
+                    : 'border-zinc-200 dark:border-zinc-800',
+                )}
+              >
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
+                    Integrante {i + 1}
+                    {titular && <Badge tom="azul" className="ml-2">Requerente</Badge>}
+                  </span>
+                  {integrantes.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removerIntegrante(i)}
+                      className="rounded p-1 text-zinc-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
+                      aria-label={`Remover integrante ${i + 1}`}
+                    >
+                      <Icone nome="x" className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <CampoSimples
+                    rotulo="Nome"
+                    valor={integrante.nome}
+                    onChange={(v) => setIntegrante(i, 'nome', v)}
+                  />
+                  <Selecao
+                    rotulo="Parentesco"
+                    valor={integrante.parentesco}
+                    opcoes={PARENTESCOS}
+                    onChange={(v) => setIntegrante(i, 'parentesco', v)}
+                  />
+                  <CampoSimples
+                    rotulo="CPF"
+                    valor={integrante.cpf ?? ''}
+                    onChange={(v) => setIntegrante(i, 'cpf', v)}
+                  />
+                  <Selecao
+                    rotulo="Estado civil"
+                    valor={integrante.estadoCivil ?? ''}
+                    opcoes={ESTADOS_CIVIS}
+                    onChange={(v) => setIntegrante(i, 'estadoCivil', v)}
+                    permitirVazio
+                  />
+                  <CampoSimples
+                    rotulo="Nascimento"
+                    tipo="date"
+                    valor={integrante.dataNascimento ?? ''}
+                    onChange={(v) => setIntegrante(i, 'dataNascimento', v)}
+                  />
+                  <CampoSimples
+                    rotulo="Renda mensal"
+                    valor={integrante.renda ?? ''}
+                    onChange={(v) => setIntegrante(i, 'renda', v)}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Botao type="submit" disabled={salvando}>
+          <Icone nome="check" className="h-4 w-4" />
+          {salvando ? 'Gravando na planilha…' : 'Salvar na planilha'}
+        </Botao>
+        <Botao type="button" variante="secundario" onClick={() => router.push('/clientes')}>
+          Cancelar
+        </Botao>
+        {edicao && (
+          <Botao type="button" variante="perigo" onClick={excluir} disabled={salvando}>
+            Excluir da planilha
+          </Botao>
+        )}
+      </div>
+    </form>
+  );
+}
+
+function Bloco({
+  titulo,
+  descricao,
+  children,
+}: {
+  titulo: string;
+  descricao?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Card className="p-4">
+      <div className="mb-3">
+        <h3 className="font-semibold">{titulo}</h3>
+        {descricao && <p className="text-sm text-zinc-500 dark:text-zinc-400">{descricao}</p>}
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">{children}</div>
+    </Card>
+  );
+}
+
+const CLASSE_INPUT =
+  'mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 dark:border-zinc-700 dark:bg-zinc-900';
+
+function Campo({
+  rotulo,
+  valor,
+  onChange,
+  obrigatorio,
+  dica,
+}: {
+  rotulo: string;
+  valor: string;
+  onChange: (e: ChangeEvent<HTMLInputElement>) => void;
+  obrigatorio?: boolean;
+  dica?: string;
+}) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
+        {rotulo}
+        {obrigatorio && <span className="ml-0.5 text-rose-500">*</span>}
+      </span>
+      <input value={valor} onChange={onChange} className={CLASSE_INPUT} />
+      {dica && <span className="mt-1 block text-xs text-zinc-400">{dica}</span>}
+    </label>
+  );
+}
+
+function CampoSimples({
+  rotulo,
+  valor,
+  onChange,
+  tipo = 'text',
+}: {
+  rotulo: string;
+  valor: string;
+  onChange: (valor: string) => void;
+  tipo?: string;
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{rotulo}</span>
+      <input
+        type={tipo}
+        value={valor}
+        onChange={(e) => onChange(e.target.value)}
+        className={CLASSE_INPUT}
+      />
+    </label>
+  );
+}
+
+function Selecao({
+  rotulo,
+  valor,
+  opcoes,
+  onChange,
+  permitirVazio,
+}: {
+  rotulo: string;
+  valor: string;
+  opcoes: string[];
+  onChange: (valor: string) => void;
+  permitirVazio?: boolean;
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{rotulo}</span>
+      <select
+        value={valor}
+        onChange={(e) => onChange(e.target.value)}
+        className={CLASSE_INPUT}
+      >
+        {permitirVazio && <option value="">—</option>}
+        {opcoes.map((opcao) => (
+          <option key={opcao} value={opcao}>
+            {opcao}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
