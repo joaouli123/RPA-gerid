@@ -32,4 +32,17 @@ export interface DriveGateway {
    * ver docs/serviceaccount-cota.md.
    */
   copiarArquivo(arquivoId: string, novoNome: string): Promise<string>;
+  /**
+   * Cria um arquivo novo dentro de uma pasta. Devolve o id.
+   *
+   * OPCIONAL de propósito: com service account em Drive pessoal isto SEMPRE
+   * falha por falta de cota (mesmo motivo de copiarArquivo). O Módulo 3 trata
+   * a ausência/falha caindo para disco local. Ver docs/serviceaccount-cota.md.
+   */
+  criarArquivo?(
+    pastaId: string,
+    nome: string,
+    conteudo: Uint8Array,
+    mimeType: string,
+  ): Promise<string>;
 }

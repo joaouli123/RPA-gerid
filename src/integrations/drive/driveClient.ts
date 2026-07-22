@@ -68,6 +68,23 @@ export class DriveClient implements DriveGateway {
     });
   }
 
+  async criarArquivo(
+    pastaId: string,
+    nome: string,
+    conteudo: Uint8Array,
+    mimeType: string,
+  ): Promise<string> {
+    const res = await this.api.files.create({
+      requestBody: { name: nome, parents: [pastaId] },
+      media: { mimeType, body: Readable.from(Buffer.from(conteudo)) },
+      fields: 'id',
+      supportsAllDrives: true,
+    });
+    const id = res.data.id;
+    if (!id) throw new Error('Drive não devolveu o id do arquivo criado.');
+    return id;
+  }
+
   async copiarArquivo(arquivoId: string, novoNome: string): Promise<string> {
     const res = await this.api.files.copy({
       fileId: arquivoId,
