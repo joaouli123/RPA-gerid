@@ -24,33 +24,29 @@ export function validarCadastro(entrada: EntradaCadastro): string[] {
   if (!cpf) erros.push('Informe o CPF do requerente.');
   else if (cpf.length !== 11) erros.push(`CPF do requerente inválido: precisa ter 11 dígitos.`);
 
-  if (integrantes.length === 0) {
-    erros.push('O grupo familiar precisa ter ao menos o próprio requerente (Titular).');
+  // Grupo familiar simplificado (decisão do escritório): basta o CPF de cada
+  // pessoa da casa. O requerente é a pessoa cujo CPF é o do cliente (ou a linha
+  // marcada "Titular"); ele não precisa repetir o CPF, herda o do cadastro.
+  const ehRequerente = (i: Integrante): boolean =>
+    (cpf.length === 11 && padronizarCpf(i.cpf) === cpf) || ehTitular(i.parentesco);
+
+  if (!integrantes.some(ehRequerente)) {
+    erros.push('O grupo familiar precisa incluir o próprio requerente.');
   }
 
-  const titulares = integrantes.filter((i) => ehTitular(i.parentesco));
-  if (integrantes.length > 0 && titulares.length === 0) {
-    erros.push('Marque exatamente um integrante como "Titular" (o próprio requerente).');
-  }
-  if (titulares.length > 1) {
-    erros.push(`O grupo familiar tem ${titulares.length} "Titular" — deve haver apenas um.`);
-  }
-
-  integrantes.forEach((integrante, i) => {
-    const posicao = `Integrante ${i + 1}`;
-    if (!integrante.nome.trim()) erros.push(`${posicao}: informe o nome.`);
-    if (!integrante.parentesco.trim()) erros.push(`${posicao}: informe o parentesco.`);
-    const cpfIntegrante = apenasDigitos(integrante.cpf);
-    if (cpfIntegrante && padronizarCpf(integrante.cpf).length !== 11) {
-      erros.push(`${posicao}: CPF inválido (precisa ter 11 dígitos ou ficar em branco).`);
+  // Cada FAMILIAR (quem não é o requerente) precisa do CPF — é a única
+  // informação que se digita; o CadÚnico traz o resto no GERID.
+  let numeroFamiliar = 0;
+  integrantes.forEach((integrante) => {
+    if (ehRequerente(integrante)) return;
+    numeroFamiliar += 1;
+    const posicao = `Familiar ${numeroFamiliar}`;
+    const cpfIntegrante = padronizarCpf(integrante.cpf);
+    if (!cpfIntegrante) erros.push(`${posicao}: informe o CPF.`);
+    else if (cpfIntegrante.length !== 11) {
+      erros.push(`${posicao}: CPF inválido (precisa ter 11 dígitos).`);
     }
   });
-
-  // O CPF do Titular tem que bater com o do cliente.
-  const titular = titulares[0];
-  if (titular?.cpf && cpf && padronizarCpf(titular.cpf) !== cpf) {
-    erros.push('O CPF do Titular precisa ser igual ao CPF do requerente.');
-  }
 
   // Sem CPF repetido dentro do grupo.
   const cpfs = integrantes.map((i) => padronizarCpf(i.cpf)).filter((c) => c.length === 11);
@@ -80,12 +76,17 @@ export function normalizarCadastro(entrada: EntradaCadastro): EntradaCadastro {
   else delete cliente.telefone;
 
   const integrantes = entrada.integrantes.map((i) => {
-    const integrante: Integrante = {
-      nome: i.nome.trim(),
-      parentesco: i.parentesco.trim(),
-    };
-    // O Titular herda o CPF do requerente quando vem em branco.
+    // Identifica o requerente pelo CPF (o do cliente) ou pelo rótulo antigo.
     const cpf = padronizarCpf(i.cpf) || (ehTitular(i.parentesco) ? cpfCliente : '');
+    const ehReq = (cpf && cpf === cpfCliente) || ehTitular(i.parentesco);
+
+    const integrante: Integrante = {
+      nome: i.nome?.trim() ?? '',
+      // O requerente vira "Titular" (o GERID já o traz como Requerente). Os
+      // demais podem ficar sem parentesco — ele é escolhido na revisão, já que
+      // o essencial (o CPF) basta para o CadÚnico puxar a pessoa.
+      parentesco: ehReq ? 'Titular' : (i.parentesco?.trim() ?? ''),
+    };
     if (cpf) integrante.cpf = cpf;
     if (i.estadoCivil?.trim()) integrante.estadoCivil = i.estadoCivil.trim();
     if (i.dataNascimento?.trim()) integrante.dataNascimento = i.dataNascimento.trim();

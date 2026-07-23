@@ -45,11 +45,25 @@ export function ehTitular(parentesco: string | undefined): boolean {
 }
 
 /**
+ * True se o integrante é o próprio requerente: casa pelo CPF (o do cliente) ou,
+ * por compatibilidade com dados antigos, pelo rótulo "Titular".
+ */
+export function ehRequerente(integrante: Integrante, cliente: Cliente): boolean {
+  const cpfCliente = apenasDigitos(cliente.cpf);
+  return (
+    (cpfCliente.length > 0 && apenasDigitos(integrante.cpf) === cpfCliente) ||
+    ehTitular(integrante.parentesco)
+  );
+}
+
+/**
  * Valida as invariantes do grupo familiar de um cliente.
- * Regras (cada violação vira um MotivoRevisao):
- *   - precisa existir (>= 1 integrante);
- *   - exatamente 1 Titular;
- *   - CPF do Titular (quando informado) == CPF do cliente;
+ *
+ * Regra simplificada (decisão do escritório, 23/07/2026): **basta o CPF** de
+ * cada pessoa da casa. O GERID puxa nome, nascimento e renda do CadÚnico, e o
+ * estado civil entra como Solteiro por padrão — então aqui só se cobra o que
+ * de fato importa:
+ *   - o grupo precisa existir e incluir o próprio requerente (pelo CPF);
  *   - sem CPF duplicado entre integrantes.
  */
 export function validarGrupoFamiliar(
@@ -67,35 +81,15 @@ export function validarGrupoFamiliar(
   }
 
   const motivos: MotivoRevisao[] = [];
-  const titulares = gf.integrantes.filter((i) => ehTitular(i.parentesco));
 
-  if (titulares.length === 0) {
+  if (apenasDigitos(cliente.cpf) && !gf.integrantes.some((i) => ehRequerente(i, cliente))) {
     motivos.push(
       motivo(
         CodigoMotivo.GRUPO_FAMILIAR_INVALIDO,
-        'Grupo familiar sem nenhum integrante marcado como "Titular".',
-        { integrantes: gf.integrantes.length },
+        `O grupo familiar não inclui o próprio requerente (CPF ${cliente.cpf}).`,
+        { cpfCliente: cliente.cpf },
       ),
     );
-  } else if (titulares.length > 1) {
-    motivos.push(
-      motivo(
-        CodigoMotivo.GRUPO_FAMILIAR_INVALIDO,
-        `Grupo familiar com ${titulares.length} "Titular" (deveria ser exatamente 1).`,
-        { titulares: titulares.length },
-      ),
-    );
-  } else {
-    const titular = titulares[0]!;
-    if (titular.cpf && apenasDigitos(titular.cpf) !== apenasDigitos(cliente.cpf)) {
-      motivos.push(
-        motivo(
-          CodigoMotivo.GRUPO_FAMILIAR_INVALIDO,
-          `CPF do Titular (${titular.cpf}) diverge do CPF do cliente (${cliente.cpf}).`,
-          { cpfTitular: titular.cpf, cpfCliente: cliente.cpf },
-        ),
-      );
-    }
   }
 
   const cpfs = gf.integrantes.map((i) => apenasDigitos(i.cpf)).filter((c) => c.length > 0);

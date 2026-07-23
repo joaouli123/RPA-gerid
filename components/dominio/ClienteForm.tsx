@@ -40,6 +40,9 @@ export function ClienteForm({
   const [salvando, startTransition] = useTransition();
   const [erros, setErros] = useState<string[]>([]);
   const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
+  // Por padrão o grupo familiar pede só o CPF; os campos extras (parentesco,
+  // estado civil, nascimento, renda) ficam atrás deste botão para quem quiser.
+  const [mostrarOpcionais, setMostrarOpcionais] = useState(false);
 
   const [cliente, setCliente] = useState<Cliente>(
     clienteInicial ?? { pasta: '', cpf: '', nome: '', cidade: '', cep: '', telefone: '' },
@@ -64,7 +67,8 @@ export function ClienteForm({
   }
 
   function adicionarIntegrante(): void {
-    setIntegrantes((lista) => [...lista, integranteVazio()]);
+    // Familiar novo entra só com o CPF (parentesco em branco — escolhido depois).
+    setIntegrantes((lista) => [...lista, integranteVazio('')]);
   }
 
   function removerIntegrante(indice: number): void {
@@ -146,90 +150,115 @@ export function ClienteForm({
           <div>
             <h3 className="font-semibold">Grupo familiar</h3>
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              Uma linha por pessoa que mora na casa, incluindo o requerente. Marque o requerente
-              como <strong>Titular</strong>.
+              Basta o <strong>CPF</strong> de cada pessoa que mora na casa. No INSS, o CadÚnico
+              preenche sozinho nome, nascimento e renda; o estado civil entra como{' '}
+              <strong>Solteiro</strong> por padrão (muda só se houver certidão de casamento).
             </p>
           </div>
           <div className="flex items-center gap-2">
             <Badge tom={totalTitulares === 1 ? 'verde' : 'ambar'}>
-              {integrantes.length} integrante(s)
+              {integrantes.length} pessoa(s)
             </Badge>
             <Botao type="button" variante="secundario" onClick={adicionarIntegrante}>
-              + Adicionar integrante
+              + Adicionar familiar
             </Botao>
           </div>
         </div>
 
         <div className="space-y-3">
-          {integrantes.map((integrante, i) => {
-            const titular = integrante.parentesco.trim().toLowerCase() === 'titular';
-            return (
-              <div
-                key={i}
-                className={cn(
-                  'rounded-lg border p-3',
-                  titular
-                    ? 'border-blue-300 bg-blue-50/50 dark:border-blue-500/30 dark:bg-blue-500/5'
-                    : 'border-zinc-200 dark:border-zinc-800',
-                )}
-              >
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
-                    Integrante {i + 1}
-                    {titular && <Badge tom="azul" className="ml-2">Requerente</Badge>}
-                  </span>
-                  {integrantes.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removerIntegrante(i)}
-                      className="rounded p-1 text-zinc-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
-                      aria-label={`Remover integrante ${i + 1}`}
-                    >
-                      <Icone nome="x" className="h-4 w-4" />
-                    </button>
+          {(() => {
+            let contadorFamiliar = 0;
+            return integrantes.map((integrante, i) => {
+              const titular = integrante.parentesco.trim().toLowerCase() === 'titular';
+              if (!titular) contadorFamiliar += 1;
+              return (
+                <div
+                  key={i}
+                  className={cn(
+                    'rounded-lg border p-3',
+                    titular
+                      ? 'border-blue-300 bg-blue-50/50 dark:border-blue-500/30 dark:bg-blue-500/5'
+                      : 'border-zinc-200 dark:border-zinc-800',
                   )}
-                </div>
+                >
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
+                      {titular ? 'Requerente' : `Familiar ${contadorFamiliar}`}
+                      {titular && <Badge tom="azul" className="ml-2">titular</Badge>}
+                    </span>
+                    {!titular && (
+                      <button
+                        type="button"
+                        onClick={() => removerIntegrante(i)}
+                        className="rounded p-1 text-zinc-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
+                        aria-label={`Remover familiar ${contadorFamiliar}`}
+                      >
+                        <Icone nome="x" className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
 
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  <CampoSimples
-                    rotulo="Nome"
-                    valor={integrante.nome}
-                    onChange={(v) => setIntegrante(i, 'nome', v)}
-                  />
-                  <Selecao
-                    rotulo="Parentesco"
-                    valor={integrante.parentesco}
-                    opcoes={PARENTESCOS}
-                    onChange={(v) => setIntegrante(i, 'parentesco', v)}
-                  />
-                  <CampoSimples
-                    rotulo="CPF"
-                    valor={integrante.cpf ?? ''}
-                    onChange={(v) => setIntegrante(i, 'cpf', v)}
-                  />
-                  <Selecao
-                    rotulo="Estado civil"
-                    valor={integrante.estadoCivil ?? ''}
-                    opcoes={ESTADOS_CIVIS}
-                    onChange={(v) => setIntegrante(i, 'estadoCivil', v)}
-                    permitirVazio
-                  />
-                  <CampoSimples
-                    rotulo="Nascimento"
-                    tipo="date"
-                    valor={integrante.dataNascimento ?? ''}
-                    onChange={(v) => setIntegrante(i, 'dataNascimento', v)}
-                  />
-                  <CampoSimples
-                    rotulo="Renda mensal"
-                    valor={integrante.renda ?? ''}
-                    onChange={(v) => setIntegrante(i, 'renda', v)}
-                  />
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <CampoSimples
+                      rotulo="CPF"
+                      // O CPF do requerente é o mesmo do cadastro acima — mostra
+                      // travado para não digitar duas vezes.
+                      valor={titular ? cliente.cpf : (integrante.cpf ?? '')}
+                      onChange={(v) => setIntegrante(i, 'cpf', v)}
+                      somenteLeitura={titular}
+                      dica={titular ? 'É o CPF do requerente, lá de cima.' : undefined}
+                    />
+
+                    {mostrarOpcionais && (
+                      <>
+                        <CampoSimples
+                          rotulo="Nome"
+                          valor={integrante.nome}
+                          onChange={(v) => setIntegrante(i, 'nome', v)}
+                        />
+                        {!titular && (
+                          <Selecao
+                            rotulo="Parentesco"
+                            valor={integrante.parentesco}
+                            opcoes={PARENTESCOS}
+                            onChange={(v) => setIntegrante(i, 'parentesco', v)}
+                            permitirVazio
+                          />
+                        )}
+                        <Selecao
+                          rotulo="Estado civil"
+                          valor={integrante.estadoCivil ?? ''}
+                          opcoes={ESTADOS_CIVIS}
+                          onChange={(v) => setIntegrante(i, 'estadoCivil', v)}
+                          permitirVazio
+                        />
+                        <CampoSimples
+                          rotulo="Nascimento"
+                          tipo="date"
+                          valor={integrante.dataNascimento ?? ''}
+                          onChange={(v) => setIntegrante(i, 'dataNascimento', v)}
+                        />
+                        <CampoSimples
+                          rotulo="Renda mensal"
+                          valor={integrante.renda ?? ''}
+                          onChange={(v) => setIntegrante(i, 'renda', v)}
+                        />
+                      </>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            });
+          })()}
         </div>
+
+        <button
+          type="button"
+          onClick={() => setMostrarOpcionais((v) => !v)}
+          className="mt-3 text-sm text-blue-600 hover:underline dark:text-blue-400"
+        >
+          {mostrarOpcionais ? 'Ocultar campos opcionais' : 'Preencher campos opcionais (parentesco, estado civil…)'}
+        </button>
       </Card>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -330,11 +359,15 @@ function CampoSimples({
   valor,
   onChange,
   tipo = 'text',
+  somenteLeitura,
+  dica,
 }: {
   rotulo: string;
   valor: string;
   onChange: (valor: string) => void;
   tipo?: string;
+  somenteLeitura?: boolean;
+  dica?: string;
 }) {
   return (
     <label className="block">
@@ -343,8 +376,10 @@ function CampoSimples({
         type={tipo}
         value={valor}
         onChange={(e) => onChange(e.target.value)}
-        className={CLASSE_INPUT}
+        readOnly={somenteLeitura}
+        className={cn(CLASSE_INPUT, somenteLeitura && 'cursor-not-allowed opacity-70')}
       />
+      {dica && <span className="mt-1 block text-xs text-zinc-400">{dica}</span>}
     </label>
   );
 }

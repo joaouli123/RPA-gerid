@@ -60,37 +60,44 @@ describe('validarCadastro', () => {
     expect(erros.some((e) => e.includes('CEP'))).toBe(true);
   });
 
-  it('exige exatamente um Titular', () => {
-    const semTitular = validarCadastro({
+  it('o grupo precisa incluir o próprio requerente (pelo CPF)', () => {
+    // Só um familiar, sem o requerente (nem CPF do cliente, nem Titular).
+    const semRequerente = validarCadastro({
       ...base,
-      integrantes: [{ nome: 'RITA', parentesco: 'Mãe' }],
+      integrantes: [{ nome: '', parentesco: '', cpf: '11122233396' }],
     });
-    expect(semTitular.some((e) => e.includes('Titular'))).toBe(true);
-
-    const doisTitulares = validarCadastro({
-      ...base,
-      integrantes: [
-        { nome: 'MARIA', parentesco: 'Titular' },
-        { nome: 'OUTRO', parentesco: 'Titular' },
-      ],
-    });
-    expect(doisTitulares.some((e) => e.includes('apenas um'))).toBe(true);
+    expect(semRequerente.some((e) => e.includes('requerente'))).toBe(true);
   });
 
-  it('recusa CPF do Titular diferente do requerente e CPF repetido', () => {
+  it('reconhece o requerente pelo CPF do cliente, sem precisar do rótulo Titular', () => {
+    // A linha do requerente vem só com o CPF (igual ao do cliente) — sem nome
+    // nem parentesco. Deve passar.
     expect(
       validarCadastro({
         ...base,
-        integrantes: [{ nome: 'MARIA', parentesco: 'Titular', cpf: '11122233396' }],
-      }).some((e) => e.includes('igual ao CPF do requerente')),
-    ).toBe(true);
+        integrantes: [{ nome: '', parentesco: '', cpf: '52998224725' }],
+      }),
+    ).toEqual([]);
+  });
 
+  it('cada familiar precisa do CPF (é a única informação que se digita)', () => {
+    const erros = validarCadastro({
+      ...base,
+      integrantes: [
+        { nome: '', parentesco: 'Titular', cpf: '52998224725' },
+        { nome: '', parentesco: '', cpf: '' }, // familiar sem CPF
+      ],
+    });
+    expect(erros.some((e) => e.includes('Familiar 1') && e.includes('CPF'))).toBe(true);
+  });
+
+  it('recusa CPF repetido no grupo', () => {
     expect(
       validarCadastro({
         ...base,
         integrantes: [
-          { nome: 'MARIA', parentesco: 'Titular', cpf: '52998224725' },
-          { nome: 'CLONE', parentesco: 'Irmão(ã)', cpf: '52998224725' },
+          { nome: '', parentesco: 'Titular', cpf: '52998224725' },
+          { nome: '', parentesco: '', cpf: '52998224725' },
         ],
       }).some((e) => e.includes('repetido')),
     ).toBe(true);
