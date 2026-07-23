@@ -123,16 +123,36 @@ realidade por caso que nenhum robô resolve. **DECISÃO** de como tratar
 - **Procurador = Fabrício** (CPF `047.947.501-61`) — igual ao `.env`.
 - **E-mail do escritório** `inssclientefd@gmail.com` — igual ao `.env`.
 
-## Dados que o GERID pede e a planilha AINDA NÃO tem
+## Decisões do escritório (Fabrício, 23/07/2026) — JÁ CODIFICADAS
 
-Estas respostas são decisões jurídicas por caso. Hoje não estão na planilha —
-ou viram coluna, ou viram padrão fixo (**DECISÃO** do Fabrício para cada uma):
+Respondidas e travadas em `src/modulo2/regrasPreenchimento.ts` (com testes):
 
-- Comprometimento de Renda (passo 5): Não/Sim
-- Proteção Especial SUAS (passo 6): Não/Sim
-- Estado Civil de cada integrante (passo 4)
-- Onde mora / Forma de Convívio / Recebe benefício (passo 7)
-- Qual agência (Órgão Pagador, passo 9) quando o CEP retorna mais de uma
+- **Respostas fixas** (iguais em todo caso): Comprometimento de Renda = Não;
+  Proteção Especial SUAS = Não; Estrangeiro = Não; Representante Legal = Não;
+  Procurador = Sim; Onde mora = "Moro em residência"; Recebe benefício = Não;
+  desligamento Bolsa Família = Sim; alterar data do pedido = Sim.
+- **Forma de Convívio**: deriva do grupo — só o Titular ⇒ "Sozinho"; senão
+  "Com pessoas da família". (Rótulo "Sozinho" a CONFIRMAR na tela.)
+- **Estado Civil**: padrão **Solteiro** para todos; só muda quando a planilha
+  disser outra coisa (ex.: cliente com certidão de casamento).
+- **Parentesco**: mapeado da planilha para os grupos do GERID (Pai/Mãe/…,
+  Irmão/Irmã confirmados; Cônjuge/Filho/Avô a CONFIRMAR). Parentesco que não
+  casa ⇒ o robô NÃO chuta, vira pendência.
+- **Órgão Pagador / Unidade**: escolhe a agência da **mesma cidade** do cliente,
+  mesmo que a primeira da lista seja de outra cidade. Nenhuma casa ⇒ pendência.
+- **Biometria**: seguir o preenchimento até o fim mesmo sem biometria; o
+  Fabrício resolve manualmente em "cumprimento de exigência".
+- **Humano no laço**: o robô preenche os passos 1–9 e **para no Confirmar**;
+  quem conclui/protocola é o Fabrício. (Ele ainda vai confirmar isso com o
+  Dr. Fabrício.)
+
+## O que falta para o "Executar" ligar
+
+1. Escrever o preenchimento Playwright dos passos 1–9 usando as regras acima,
+   parando no Confirmar.
+2. **Run supervisionado** no GERID real (na máquina do Fabrício, sessão dele) num
+   caso de teste, para validar os SELETORES — eles vieram dos prints, não do DOM
+   ao vivo. Não dá para validar de outro jeito sem protocolar pedido real.
 
 ## Recomendação de arquitetura (humano no laço)
 

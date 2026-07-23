@@ -98,24 +98,24 @@ export const mapaGerid: MapaGerid = {
     baixarComprovante: null,
   },
 
-  // As telas foram mapeadas em 23/07/2026 (ver docs/gerid-fluxo-real.md). O que
-  // resta agora NÃO é "descobrir a tela" — é DECISÃO do escritório sobre dados
-  // que o GERID pede e a planilha ainda não tem, mais a implementação do
-  // preenchimento passo a passo. Enquanto qualquer pendência existir, o robô
-  // continua se recusando a protocolar.
+  // 23/07/2026 — telas mapeadas (docs/gerid-fluxo-real.md) e DECISÕES do
+  // escritório já codificadas e testadas em src/modulo2/regrasPreenchimento.ts:
+  //   - respostas fixas (Não/Não/residência/...); estado civil padrão Solteiro;
+  //   - forma de convívio derivada do grupo; parentesco -> grupos do GERID;
+  //   - unidade escolhida pela cidade do cliente; biometria = seguir até o fim
+  //     (o Fabrício resolve em cumprimento de exigência); humano-no-laço.
+  //
+  // Falta: (a) escrever o preenchimento Playwright dos passos 1–9 usando essas
+  // regras e PARANDO no Confirmar; (b) validar os SELETORES num run
+  // supervisionado no GERID real — eles vieram de PRINTS, não do DOM ao vivo,
+  // então precisam ser conferidos contra a página antes de confiar. Enquanto
+  // isso não acontecer, o robô continua se recusando a protocolar.
   pendencias: [
-    'DECISÃO: respostas jurídicas por caso (Comprometimento de Renda, Proteção ' +
-      'Especial SUAS, Onde mora, Forma de Convívio, Recebe benefício) — coluna na ' +
-      'planilha ou padrão fixo?',
-    'DECISÃO: Estado Civil por integrante do grupo familiar (o GERID pede; a ' +
-      'planilha tem, mas falta mapear os valores para as opções do GERID)',
-    'DECISÃO: mapear parentesco fino da planilha (Mãe, Pai, Irmão) para os grupos ' +
-      'do GERID (Pai/Mãe/Padrasto/Madrasta, Irmão/Irmã, ...)',
-    'DECISÃO: como tratar o gate de biometria (interessado sem cadastro biométrico ' +
-      'impede a conclusão do pedido)',
-    'DECISÃO: arquitetura humano-no-laço — robô preenche passos 1–9 e PARA no ' +
-      'Confirmar para o Fabrício revisar e concluir (protocolar é irreversível)',
-    'IMPLEMENTAR: preenchimento Playwright dos 11 passos sobre o fluxo já mapeado',
+    'IMPLEMENTAR: preenchimento Playwright dos passos 1–9 (regras já prontas em ' +
+      'regrasPreenchimento.ts), parando no Confirmar para revisão humana',
+    'VALIDAR: seletores num run supervisionado no GERID real (vieram de prints, ' +
+      'não do DOM); rótulos marcados VERIFICAR (opção "sozinho", parentescos não ' +
+      'confirmados) precisam ser conferidos na tela',
   ],
 };
 
