@@ -98,11 +98,24 @@ export const mapaGerid: MapaGerid = {
     baixarComprovante: null,
   },
 
+  // As telas foram mapeadas em 23/07/2026 (ver docs/gerid-fluxo-real.md). O que
+  // resta agora NÃO é "descobrir a tela" — é DECISÃO do escritório sobre dados
+  // que o GERID pede e a planilha ainda não tem, mais a implementação do
+  // preenchimento passo a passo. Enquanto qualquer pendência existir, o robô
+  // continua se recusando a protocolar.
   pendencias: [
-    'rótulos dos campos do requerente (CPF, telefone, autorização CadÚnico)',
-    'quais campos o Gerid pede POR INTEGRANTE do grupo familiar',
-    'como é a seleção de agência pelo CEP',
-    'onde aparece o número do protocolo e como baixar o comprovante',
+    'DECISÃO: respostas jurídicas por caso (Comprometimento de Renda, Proteção ' +
+      'Especial SUAS, Onde mora, Forma de Convívio, Recebe benefício) — coluna na ' +
+      'planilha ou padrão fixo?',
+    'DECISÃO: Estado Civil por integrante do grupo familiar (o GERID pede; a ' +
+      'planilha tem, mas falta mapear os valores para as opções do GERID)',
+    'DECISÃO: mapear parentesco fino da planilha (Mãe, Pai, Irmão) para os grupos ' +
+      'do GERID (Pai/Mãe/Padrasto/Madrasta, Irmão/Irmã, ...)',
+    'DECISÃO: como tratar o gate de biometria (interessado sem cadastro biométrico ' +
+      'impede a conclusão do pedido)',
+    'DECISÃO: arquitetura humano-no-laço — robô preenche passos 1–9 e PARA no ' +
+      'Confirmar para o Fabrício revisar e concluir (protocolar é irreversível)',
+    'IMPLEMENTAR: preenchimento Playwright dos 11 passos sobre o fluxo já mapeado',
   ],
 };
 

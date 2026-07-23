@@ -20,6 +20,8 @@ secrets/
 .data/
 backups/
 comprovantes/
+# Prints das telas do GERID enviados pelo cliente (podem ter CPF/nome/laudo)
+gerid-telas/
 
 # Logs
 *.log
