@@ -86,7 +86,7 @@ export function ConfiguracoesForm({ config }: { config: AppConfig }) {
           valor={form.limiteMB}
           onChange={set('limiteMB')}
           tipo="number"
-          aviso="TODO: confirmar o valor exato do Gerid."
+          aviso="Confirmado com o escritório em 20/07/2026: o Gerid aceita até 5 MB por arquivo."
         />
       </Bloco>
 

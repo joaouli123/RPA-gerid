@@ -475,10 +475,35 @@ async function processarExecucao(id: string): Promise<void> {
   const resultado = await getResultado();
   const prontos = resultado.clientesProntos;
 
-  const [{ RoboGeridPlaywright }, { ErroGerid, FalhaGerid }] = await Promise.all([
-    import('@/src/modulo2/roboGerid'),
-    import('@/src/modulo2/tiposGerid'),
-  ]);
+  const [{ RoboGeridPlaywright }, { ErroGerid, FalhaGerid }, { mapaGerid, mapeamentoCompleto }] =
+    await Promise.all([
+      import('@/src/modulo2/roboGerid'),
+      import('@/src/modulo2/tiposGerid'),
+      import('@/src/modulo2/mapaGerid'),
+    ]);
+
+  // Recusa ANTES de abrir o navegador. O robô já se recusava a protocolar sem
+  // o mapeamento, mas só depois de subir o Chrome — o que abria uma janela na
+  // máquina de quem clicou, para no fim não fazer nada. Falhar aqui é mais
+  // honesto e não encosta no Gerid.
+  if (!mapeamentoCompleto()) {
+    const motivo =
+      `[MAPEAMENTO_PENDENTE] O mapeamento das telas do Gerid ainda não foi preenchido ` +
+      `(${mapaGerid.pendencias.join('; ')}). Enquanto isso o robô NÃO protocola — ` +
+      `ver docs/checklists/revisao-seletor-playwright.md.`;
+
+    const estado = await carregarEstado();
+    const atual = estado.execucaoAtual;
+    if (atual?.id === id) {
+      for (const caso of atual.casos) {
+        caso.status = 'erro';
+        caso.motivoErro = motivo;
+      }
+      await persistir();
+    }
+    await finalizarExecucao(id);
+    return;
+  }
 
   const robo = new RoboGeridPlaywright({
     urlGerid: process.env.RPA_GERID_URL ?? 'https://gerid.dataprev.gov.br',
@@ -559,6 +584,15 @@ async function processarExecucao(id: string): Promise<void> {
     await robo.encerrar().catch(() => undefined);
   }
 
+  await finalizarExecucao(id);
+}
+
+/**
+ * Fecha a execução: resolve os casos que sobraram, grava o relatório e muda
+ * o status. Vale tanto para a execução que rodou quanto para a que foi
+ * recusada de saída.
+ */
+async function finalizarExecucao(id: string): Promise<void> {
   const estado = await carregarEstado();
   const atual = estado.execucaoAtual;
   if (!atual || atual.id !== id) return;

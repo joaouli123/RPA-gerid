@@ -17,6 +17,8 @@
     "auth:test": "tsx scripts/testarAuth.ts",
     "escrita:test": "tsx scripts/testarEscrita.ts",
     "restaurar": "tsx scripts/restaurarPlanilha.ts",
+    "snapshot": "tsx scripts/snapshotPlanilha.ts",
+    "restaurar:snapshot": "tsx scripts/restaurarSnapshot.ts",
     "senha:hash": "tsx scripts/gerarSenha.ts"
   },
   "dependencies": {

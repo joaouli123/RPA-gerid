@@ -54,7 +54,13 @@ export default async function RelatoriosPage() {
                   className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm transition hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
                 >
                   <Icone nome="documento" className="h-4 w-4" />
-                  Baixar comprovante
+                  {/*
+                    NÃO chamar de "comprovante": no INSS essa palavra é o
+                    recibo do protocolo. Este arquivo é o relatório interno da
+                    execução — chamá-lo de comprovante faria alguém achar que
+                    houve protocolo onde só houve erro.
+                  */}
+                  Baixar relatório da execução
                 </a>
               </div>
             </div>

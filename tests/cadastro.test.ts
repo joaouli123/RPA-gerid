@@ -132,8 +132,21 @@ describe('gravar na planilha e ler de volta (ciclo do cadastro)', () => {
         grupoFamiliar: {
           requerenteCpf: '52998224725',
           integrantes: [
-            { nome: 'MARIA', parentesco: 'Titular', cpf: '52998224725' },
-            { nome: 'RITA', parentesco: 'Mãe', renda: '1412' },
+            {
+              nome: 'MARIA',
+              parentesco: 'Titular',
+              cpf: '52998224725',
+              estadoCivil: 'solteiro',
+              dataNascimento: '1990-01-01',
+              renda: '0',
+            },
+            {
+              nome: 'RITA',
+              parentesco: 'Mãe',
+              estadoCivil: 'viúvo',
+              dataNascimento: '1960-05-10',
+              renda: '1412',
+            },
           ],
         },
       },
@@ -149,6 +162,25 @@ describe('gravar na planilha e ler de volta (ciclo do cadastro)', () => {
     expect(grupos.get('11122233344')?.integrantes).toHaveLength(1);
     expect(grupos.get('52998224725')?.integrantes).toHaveLength(2);
     expect(grupos.get('52998224725')?.integrantes[1]?.parentesco).toBe('Mãe');
+
+    // TODO campo do integrante volta igual — nenhum pode sumir no caminho.
+    // O grupo familiar é o que define a renda per capita, e é por ela que o
+    // BPC/LOAS é deferido ou negado: perder uma data ou uma renda aqui muda
+    // o resultado do requerimento de uma pessoa.
+    const titular = grupos.get('52998224725')?.integrantes[0];
+    expect(titular).toEqual({
+      nome: 'MARIA',
+      parentesco: 'Titular',
+      cpf: '52998224725',
+      estadoCivil: 'solteiro',
+      dataNascimento: '1990-01-01',
+      renda: '0',
+    });
+
+    const mae = grupos.get('52998224725')?.integrantes[1];
+    expect(mae?.dataNascimento).toBe('1960-05-10');
+    expect(mae?.estadoCivil).toBe('viúvo');
+    expect(mae?.renda).toBe('1412');
   });
 
   it('mantém o zero à esquerda do CPF após gravar', async () => {

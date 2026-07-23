@@ -39,6 +39,7 @@ export function ClienteForm({
   const router = useRouter();
   const [salvando, startTransition] = useTransition();
   const [erros, setErros] = useState<string[]>([]);
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
 
   const [cliente, setCliente] = useState<Cliente>(
     clienteInicial ?? { pasta: '', cpf: '', nome: '', cidade: '', cep: '', telefone: '' },
@@ -86,8 +87,21 @@ export function ClienteForm({
     });
   }
 
+  /**
+   * Exclusão em dois passos.
+   *
+   * O primeiro clique só arma a confirmação. Apagar apaga o requerente E o
+   * grupo familiar inteiro da planilha do escritório, e daqui não tem desfazer
+   * — só restaurando um backup. Um clique errado não pode ser suficiente.
+   */
+  function pedirExclusao(): void {
+    setErros([]);
+    setConfirmandoExclusao(true);
+  }
+
   function excluir(): void {
     if (!clienteInicial?.cpf) return;
+    setConfirmandoExclusao(false);
     startTransition(async () => {
       try {
         await acaoExcluirCliente(clienteInicial.cpf);
@@ -226,12 +240,39 @@ export function ClienteForm({
         <Botao type="button" variante="secundario" onClick={() => router.push('/clientes')}>
           Cancelar
         </Botao>
-        {edicao && (
-          <Botao type="button" variante="perigo" onClick={excluir} disabled={salvando}>
+        {edicao && !confirmandoExclusao && (
+          <Botao type="button" variante="perigo" onClick={pedirExclusao} disabled={salvando}>
             Excluir da planilha
           </Botao>
         )}
       </div>
+
+      {edicao && confirmandoExclusao && (
+        <Card>
+          <div className="space-y-3">
+            <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+              Excluir {clienteInicial?.nome} da planilha?
+            </p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              Some a linha do requerente e {integrantes.length} integrante(s) do grupo familiar.
+              Os arquivos no Drive não são tocados. Daqui não tem desfazer — só restaurando um
+              backup da planilha.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <Botao type="button" variante="perigo" onClick={excluir} disabled={salvando}>
+                Sim, excluir
+              </Botao>
+              <Botao
+                type="button"
+                variante="secundario"
+                onClick={() => setConfirmandoExclusao(false)}
+              >
+                Não, manter
+              </Botao>
+            </div>
+          </div>
+        </Card>
+      )}
     </form>
   );
 }

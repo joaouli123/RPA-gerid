@@ -5,15 +5,15 @@ import { redirect } from 'next/navigation';
 import { credenciaisValidas } from '@/lib/server/auth';
 import { COOKIE_SESSAO, DURACAO_SESSAO_MS, criarSessao } from '@/lib/server/sessao';
 import { checarLimite, limparTentativas, registrarFalha } from '@/lib/server/limiteTentativas';
+import { derivarOrigem } from '@/lib/server/origem';
 
 /** Mensagem única para credencial errada — não revela se o e-mail existe. */
 const CREDENCIAL_INVALIDA = 'E-mail ou senha incorretos.';
 
-/** IP do cliente, para o limite de tentativas. */
+/** IP do cliente, para o limite de tentativas. Ver lib/server/origem.ts. */
 async function identificarOrigem(): Promise<string> {
   const h = await headers();
-  const encaminhado = h.get('x-forwarded-for');
-  return encaminhado?.split(',')[0]?.trim() || h.get('x-real-ip') || 'desconhecido';
+  return derivarOrigem((nome) => h.get(nome));
 }
 
 export async function acaoEntrar(
