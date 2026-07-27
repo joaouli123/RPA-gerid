@@ -105,17 +105,17 @@ export const mapaGerid: MapaGerid = {
   //   - unidade escolhida pela cidade do cliente; biometria = seguir até o fim
   //     (o Fabrício resolve em cumprimento de exigência); humano-no-laço.
   //
-  // Falta: (a) escrever o preenchimento Playwright dos passos 1–9 usando essas
-  // regras e PARANDO no Confirmar; (b) validar os SELETORES num run
-  // supervisionado no GERID real — eles vieram de PRINTS, não do DOM ao vivo,
-  // então precisam ser conferidos contra a página antes de confiar. Enquanto
-  // isso não acontecer, o robô continua se recusando a protocolar.
+  // O preenchimento dos passos 1–9 (parando no Confirmar) já está ESCRITO em
+  // src/modulo2/preencherGerid.ts, sobre as regras testadas. Mas os seletores
+  // vieram dos PRINTS, não do DOM ao vivo — falta validá-los numa sessão
+  // acompanhada (`pnpm gerid:testar`, na máquina do advogado com o GERID
+  // logado). Enquanto essa validação não passar, o robô continua se recusando
+  // a protocolar — de propósito.
   pendencias: [
-    'IMPLEMENTAR: preenchimento Playwright dos passos 1–9 (regras já prontas em ' +
-      'regrasPreenchimento.ts), parando no Confirmar para revisão humana',
-    'VALIDAR: seletores num run supervisionado no GERID real (vieram de prints, ' +
-      'não do DOM); rótulos marcados VERIFICAR (opção "sozinho", parentescos não ' +
-      'confirmados) precisam ser conferidos na tela',
+    'VALIDAR os seletores do preenchimento numa sessão acompanhada no GERID real ' +
+      '(`pnpm gerid:testar`): eles vieram de prints, não do DOM. Conferir os rótulos ' +
+      'marcados VALIDAR em preencherGerid.ts (opção "sozinho", parentescos cônjuge/' +
+      'filho/avô, disparo da busca de CPF).',
   ],
 };
 

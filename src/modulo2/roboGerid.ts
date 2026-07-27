@@ -9,6 +9,11 @@ import {
   type RoboGerid,
 } from './tiposGerid';
 import { mapaGerid, mapeamentoCompleto } from './mapaGerid';
+import {
+  preencherRequerimento,
+  type OpcoesPreenchimento,
+  type ResultadoPreenchimento,
+} from './preencherGerid';
 
 export interface OpcoesRobo {
   /** URL inicial do Gerid. */
@@ -112,6 +117,35 @@ export class RoboGeridPlaywright implements RoboGerid {
       FalhaGerid.MAPEAMENTO_PENDENTE,
       `Fluxo de preenchimento ainda não implementado para ${caso.cliente.nome}.`,
     );
+  }
+
+  /**
+   * Preenche o requerimento até a tela de Confirmar e PARA (humano no laço).
+   *
+   * É o que a sessão de validação acompanhada usa: o robô preenche os passos
+   * 1–9 sobre o GERID real e devolve os avisos do que o operador precisa
+   * conferir. NÃO conclui nem protocola — quem clica em concluir é o advogado.
+   *
+   * Separado de `protocolar()` de propósito: este método é seguro de rodar
+   * (não envia nada ao INSS), então não passa pela trava de mapeamento — ele
+   * EXISTE justamente para validar esse mapeamento.
+   */
+  async preencherAteConfirmar(
+    caso: CasoParaProtocolar,
+    opcoes: OpcoesPreenchimento,
+  ): Promise<ResultadoPreenchimento> {
+    const pagina = this.exigirPagina();
+    await this.confirmarSessao();
+    try {
+      return await preencherRequerimento(pagina, caso, opcoes);
+    } catch (erro) {
+      if (erro instanceof ErroGerid && !erro.screenshot) {
+        // Anexa um print do ponto de falha para facilitar a conferência.
+        const screenshot = await this.capturarTela('preenchimento');
+        throw new ErroGerid(erro.codigo, erro.message, screenshot);
+      }
+      throw erro;
+    }
   }
 
   async encerrar(): Promise<void> {

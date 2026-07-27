@@ -148,11 +148,28 @@ Respondidas e travadas em `src/modulo2/regrasPreenchimento.ts` (com testes):
 
 ## O que falta para o "Executar" ligar
 
-1. Escrever o preenchimento Playwright dos passos 1–9 usando as regras acima,
-   parando no Confirmar.
-2. **Run supervisionado** no GERID real (na máquina do Fabrício, sessão dele) num
-   caso de teste, para validar os SELETORES — eles vieram dos prints, não do DOM
-   ao vivo. Não dá para validar de outro jeito sem protocolar pedido real.
+1. ~~Escrever o preenchimento Playwright dos passos 1–9~~ **FEITO** — está em
+   `src/modulo2/preencherGerid.ts` (rascunho), parando no Confirmar, sobre as
+   regras testadas de `regrasPreenchimento.ts`. Ligado ao robô via
+   `RoboGeridPlaywright.preencherAteConfirmar()`.
+2. **Sessão de validação** no GERID real (na máquina do Fabrício, sessão dele),
+   com `pnpm gerid:testar [CPF]`: o robô preenche um caso até o Confirmar e
+   **para**; a gente confere os seletores contra a tela real e ajusta os
+   rótulos marcados `VALIDAR` (opção "sozinho", parentescos cônjuge/filho/avô,
+   como a busca de CPF dispara). Não dá para validar de outro jeito sem
+   protocolar pedido real.
+3. Depois da validação: ligar a trava (`mapeamentoCompleto` → true) e o botão
+   "Executar" sai de "Em desenvolvimento".
+
+### Como rodar a sessão de validação (na máquina do advogado)
+
+1. Abrir o Chrome no perfil `RPA_PERFIL_NAVEGADOR` e **logar no GERID** uma vez.
+2. `RPA_GERID_URL=https://novorequerimento.inss.gov.br` no `.env`.
+3. `pnpm gerid:testar` (ou `pnpm gerid:testar <CPF>` para um caso específico).
+4. O robô abre o GERID, preenche até o Confirmar e para. Conferir os avisos que
+   ele imprime e a tela; ajustar os seletores em `preencherGerid.ts` onde não
+   bater. Repetir até preencher limpo. **O robô nunca conclui — quem protocola
+   é o advogado.**
 
 ## Recomendação de arquitetura (humano no laço)
 

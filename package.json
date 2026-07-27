@@ -16,6 +16,7 @@
     "modelo": "tsx scripts/gerarModeloPlanilha.ts",
     "auth:test": "tsx scripts/testarAuth.ts",
     "escrita:test": "tsx scripts/testarEscrita.ts",
+    "gerid:testar": "tsx scripts/testarPreenchimento.ts",
     "restaurar": "tsx scripts/restaurarPlanilha.ts",
     "snapshot": "tsx scripts/snapshotPlanilha.ts",
     "restaurar:snapshot": "tsx scripts/restaurarSnapshot.ts",
