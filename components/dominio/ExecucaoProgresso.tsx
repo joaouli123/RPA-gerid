@@ -28,9 +28,12 @@ const ROTULO_CASO: Record<CasoExecucao['status'], string> = {
 export function ExecucaoProgresso({
   inicial,
   prontos,
+  geridPronto,
 }: {
   inicial: ExecucaoAtual | null;
   prontos: { cpf: string; nome: string }[];
+  /** false enquanto o preenchimento automático no Gerid não está no ar. */
+  geridPronto: boolean;
 }) {
   const router = useRouter();
   const [atual, setAtual] = useState<ExecucaoAtual | null>(inicial);
@@ -70,6 +73,7 @@ export function ExecucaoProgresso({
   }, [concluida, router]);
 
   function disparar() {
+    if (!geridPronto) return; // trava extra: sem Gerid pronto, não dispara.
     setErro(null);
     startTransition(async () => {
       try {
@@ -83,15 +87,28 @@ export function ExecucaoProgresso({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-        <Icone nome="alerta" className="mt-0.5 h-4 w-4 shrink-0" />
-        <div>
-          <strong>Faça login no Gerid antes de disparar.</strong> O robô abre o navegador
-          reaproveitando a sessão já autenticada e protocola de verdade. Um caso só aparece como
-          <strong> Protocolado</strong> quando o Gerid devolve o número do protocolo — nunca por
-          suposição. Qualquer problema vira <strong>Erro</strong> com o motivo.
+      {geridPronto ? (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <Icone nome="alerta" className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <strong>Faça login no Gerid antes de disparar.</strong> O robô abre o navegador
+            reaproveitando a sessão já autenticada e protocola de verdade. Um caso só aparece como
+            <strong> Protocolado</strong> quando o Gerid devolve o número do protocolo — nunca por
+            suposição. Qualquer problema vira <strong>Erro</strong> com o motivo.
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex items-start gap-2 rounded-lg border border-blue-300 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200">
+          <Icone nome="raio" className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <strong>O preenchimento automático no Gerid ainda está em desenvolvimento.</strong> Esta
+            é a última etapa e entra em breve, depois de um teste acompanhado. Por enquanto o
+            sistema já <strong>lê a pasta e a planilha</strong>, <strong>confere os documentos</strong>{' '}
+            e <strong>separa os casos prontos dos que precisam de revisão</strong> — o botão abaixo
+            é liberado quando o robô estiver pronto para protocolar.
+          </div>
+        </div>
+      )}
 
       {erro && (
         <div className="flex items-start gap-2 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
@@ -111,15 +128,20 @@ export function ExecucaoProgresso({
           <div className="flex items-center gap-2">
             {rodando && <StatusPill tom="azul">Executando</StatusPill>}
             {concluida && <StatusPill tom="verde">Concluída</StatusPill>}
-            <Botao onClick={disparar} disabled={rodando || iniciando || casos.length === 0}>
+            <Botao
+              onClick={disparar}
+              disabled={!geridPronto || rodando || iniciando || casos.length === 0}
+            >
               <Icone nome="raio" className="h-4 w-4" />
-              {rodando
-                ? 'Executando…'
-                : iniciando
-                  ? 'Iniciando…'
-                  : concluida
-                    ? 'Executar de novo'
-                    : 'Disparar robô'}
+              {!geridPronto
+                ? 'Em desenvolvimento'
+                : rodando
+                  ? 'Executando…'
+                  : iniciando
+                    ? 'Iniciando…'
+                    : concluida
+                      ? 'Executar de novo'
+                      : 'Disparar robô'}
             </Botao>
           </div>
         </div>

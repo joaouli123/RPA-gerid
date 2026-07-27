@@ -487,10 +487,12 @@ async function processarExecucao(id: string): Promise<void> {
   // máquina de quem clicou, para no fim não fazer nada. Falhar aqui é mais
   // honesto e não encosta no Gerid.
   if (!mapeamentoCompleto()) {
+    // Mensagem para o usuário: curta e sem jargão. O detalhe técnico (as
+    // pendências do mapaGerid) vai só para o log do servidor.
     const motivo =
-      `[MAPEAMENTO_PENDENTE] O mapeamento das telas do Gerid ainda não foi preenchido ` +
-      `(${mapaGerid.pendencias.join('; ')}). Enquanto isso o robô NÃO protocola — ` +
-      `ver docs/checklists/revisao-seletor-playwright.md.`;
+      'O preenchimento automático no Gerid ainda está em desenvolvimento — esta etapa entra ' +
+      'em breve. Por enquanto o robô não protocola.';
+    console.info('[rpa-gerid] execução recusada (mapeamento pendente):', mapaGerid.pendencias);
 
     const estado = await carregarEstado();
     const atual = estado.execucaoAtual;
