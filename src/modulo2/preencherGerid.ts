@@ -1,27 +1,33 @@
 import type { Locator, Page } from 'playwright';
 import { ErroGerid, FalhaGerid, type CasoParaProtocolar } from './tiposGerid';
-import { apenasDigitos } from '../domain/texto';
+import { apenasDigitos, normalizar } from '../domain/texto';
+import { mapaGerid, NAVEGACAO } from './mapaGerid';
 import {
   RESPOSTAS_FIXAS,
-  formaDeConvivio,
+  PERGUNTAS_PASSO7,
+  SERVICO_BPC_PCD,
+  RESPOSTA_BOLSA_FAMILIA,
   estadoCivilGerid,
   mapearParentesco,
   escolherUnidadePorCidade,
+  extrairCidadeDaUnidade,
   slotGeridDoDocumento,
+  indiceSlotDoDocumento,
+  extensaoAceita,
 } from './regrasPreenchimento';
 
 /**
  * PREENCHIMENTO DO REQUERIMENTO NO GERID — passos 1 a 9, parando no Confirmar.
  *
- * ⚠️ RASCUNHO A VALIDAR. Os seletores aqui vieram das TELAS (prints do
- * Fabrício, 23/07/2026 — ver docs/gerid-fluxo-real.md), não do HTML ao vivo.
- * Eles precisam ser conferidos numa sessão acompanhada, com o GERID logado,
- * antes de confiar. Onde a incerteza é maior, está marcado `VALIDAR`.
+ * Seletores capturados do DOM real em 28/07/2026 (docs/gerid-mapeamento-real.md).
  *
- * Decisão de arquitetura (humano no laço): o robô preenche tudo e **para na
- * tela de Confirmar**. Quem revisa e clica em concluir é o advogado — nenhum
- * requerimento é enviado ao INSS pelo robô. Por isso esta função NÃO clica na
- * declaração final nem em "Gerar Comprovante".
+ * Decisão de arquitetura (humano no laço): o robô preenche e **para na tela de
+ * Confirmar**. Quem revisa e conclui é o advogado — nenhum requerimento é
+ * enviado ao INSS pelo robô. Esta função não marca a declaração final nem
+ * clica em "Gerar Comprovante".
+ *
+ * PRINCÍPIO: o que o robô não conseguir preencher com certeza vira AVISO, não
+ * chute. Avisos aparecem para o advogado revisar antes de concluir.
  */
 
 export interface ArquivoLocal {
@@ -29,43 +35,24 @@ export interface ArquivoLocal {
   tipo: string;
   /** Caminho no disco local do arquivo já baixado do Drive. */
   caminho: string;
+  /** Nome original, para validar extensão. */
+  nome?: string;
 }
 
 export interface OpcoesPreenchimento {
-  /** CPF do procurador (o advogado logado). */
   procuradorCpf: string;
-  /** Telefone de contato; usa o do escritório quando o cliente não tem. */
   telefonePadrao: string;
-  /** E-mail de contato do escritório. */
   emailEscritorio: string;
-  /**
-   * Arquivos do cliente JÁ BAIXADOS para o disco local, com o tipo de cada um.
-   * O upload do GERID é por caixa nomeada, então cada tipo vai no slot certo.
-   * (O download do Drive é feito por quem chama — o Playwright só anexa o arquivo.)
-   */
   arquivos: ArquivoLocal[];
 }
 
 export interface ResultadoPreenchimento {
-  /** true se chegou à tela Confirmar sem erro. */
   pronto: boolean;
-  /** Nome da tela onde o robô parou. */
   telaAtual: string;
-  /**
-   * Coisas que o humano precisa conferir/completar na revisão: parentesco não
-   * resolvido, integrante do CadÚnico sem correspondência na planilha, slot de
-   * documento não encontrado, etc. Nunca é "erro fatal" — é lista de conferência.
-   */
+  /** Conferências para o humano. Nunca é erro fatal. */
   avisos: string[];
 }
 
-const NOME_SERVICO = 'Benefício Assistencial à Pessoa com Deficiência';
-
-/**
- * Preenche o requerimento de BPC/LOAS até a tela de Confirmar.
- * Lança ErroGerid(CAMPO_NAO_ENCONTRADO) quando uma tela esperada não aparece —
- * nunca segue às cegas.
- */
 export async function preencherRequerimento(
   page: Page,
   caso: CasoParaProtocolar,
@@ -77,178 +64,400 @@ export async function preencherRequerimento(
   await passo2InformarRequerente(page, caso);
   await passo3AutorizacaoCadUnico(page);
   await passo4GrupoFamiliar(page, caso, avisos);
-  await passo5e6Perguntas(page);
+  await passo5e6Perguntas(page, avisos);
   await passo7DadosRequerente(page, caso, opcoes, avisos);
-  await passo8SelecionarUnidade(page, caso, avisos);
-  await passo9OrgaoPagador(page, caso, avisos);
 
-  // Chega ao Confirmar (passo 10) e PARA. Não marca a declaração nem conclui.
-  await esperarTela(page, /Atendimento à Distância|Confirmar|Dados do Requerente/i);
+  // A partir daqui a seleção depende da lista de agências, que ainda não está
+  // mapeada. Se o robô não conseguir selecionar, ele PARA na tela — avançar
+  // com o campo vazio só produziria um erro de validação do GERID e deixaria o
+  // advogado numa tela pior do que a que ele precisa revisar.
+  if (!(await passo8SelecionarUnidade(page, caso, avisos))) {
+    return { pronto: false, telaAtual: 'Selecionar Unidade', avisos };
+  }
+  if (!(await passo9OrgaoPagador(page, caso, avisos))) {
+    return { pronto: false, telaAtual: 'Órgão Pagador', avisos };
+  }
 
+  await esperarTela(page, /Confirmar|Declaro que li/i).catch(() => undefined);
   return { pronto: true, telaAtual: 'Confirmar', avisos };
 }
 
 // ---------------------------------------------------------------------------
-// Helpers de navegação
+// Helpers — todos conscientes de que a SPA não limpa o DOM
 // ---------------------------------------------------------------------------
 
-/** Clica no botão "Avançar" e espera a próxima tela assentar. */
+/**
+ * Só o elemento VISÍVEL interessa. O GERID mantém no HTML tudo o que já foi
+ * renderizado nas etapas anteriores: sem este filtro, `getByRole` e
+ * `getByText` casam em nós de telas passadas (e o strict mode do Playwright
+ * estoura com "resolved to N elements").
+ */
+function visivel(loc: Locator): Locator {
+  return loc.locator('visible=true');
+}
+
+/** Avança usando o id estável — nunca por texto, que existe várias vezes. */
 async function avancar(page: Page): Promise<void> {
-  await page.getByRole('button', { name: /Avançar/i }).click();
+  await visivel(page.locator(NAVEGACAO.avancar)).first().click();
   await page.waitForLoadState('networkidle').catch(() => undefined);
 }
 
-/**
- * Espera um texto/título aparecer na tela — é como o robô confirma que está no
- * passo certo antes de preencher. Falha com CAMPO_NAO_ENCONTRADO se não vier.
- */
+/** Confirma que estamos no passo certo antes de preencher. */
 async function esperarTela(page: Page, marca: RegExp): Promise<void> {
   try {
-    await page.getByText(marca).first().waitFor({ state: 'visible' });
+    await visivel(page.getByText(marca)).first().waitFor({ state: 'visible' });
   } catch {
     throw new ErroGerid(
       FalhaGerid.CAMPO_NAO_ENCONTRADO,
-      `Não encontrei a tela esperada (${marca}). O layout do GERID pode ter mudado — validar seletores.`,
+      `Não encontrei a tela esperada (${marca}). O layout do GERID pode ter mudado — revalidar o mapeamento.`,
     );
   }
 }
 
-/** Marca um checkbox se ainda não estiver marcado. */
 async function garantirMarcado(loc: Locator): Promise<void> {
   if (!(await loc.isChecked().catch(() => false))) {
-    await loc.check();
+    await loc.check({ force: true });
   }
 }
 
-/** Responde uma pergunta Não/Sim (os botões cinza do GERID). */
-async function responderNaoSim(page: Page, textoPergunta: RegExp, resposta: 'Não' | 'Sim'): Promise<void> {
-  // O par de botões fica logo após o texto da pergunta.
-  const bloco = page.locator('div', { hasText: textoPergunta }).last();
-  const botao = bloco.getByRole('button', { name: new RegExp(`^${resposta}$`) }).last();
-  await botao.click();
+/**
+ * Escolhe uma opção num combobox customizado do GERID.
+ *
+ * Não é `<select>`: é `<input role="combobox">` com as opções em radios dentro
+ * de `{id}-itens`. O escopo no container é obrigatório porque os ids das
+ * opções se repetem entre dropdowns (radio `1` = "Solteiro" no estado civil e
+ * "Cônjuge" no parentesco).
+ *
+ * Devolve false em vez de lançar: quem chama decide se vira aviso ou erro.
+ */
+async function escolherNoCombobox(
+  page: Page,
+  idCombobox: string,
+  rotuloDesejado: string,
+): Promise<boolean> {
+  const id = idCombobox.replace(/^#/, '');
+  const combo = page.locator(`[id="${id}"]`);
+  if (!(await combo.isVisible().catch(() => false))) return false;
+
+  await combo.click().catch(() => undefined);
+
+  const alvo = normalizar(rotuloDesejado);
+  const opcoes = page.locator(`[id="${id}-itens"] input[type="radio"]`);
+  const total = await opcoes.count().catch(() => 0);
+
+  for (let i = 0; i < total; i++) {
+    const radio = opcoes.nth(i);
+    const rid = await radio.getAttribute('id');
+    if (!rid) continue;
+
+    // O rótulo é lido DENTRO do container, nunca por document-wide `label[for]`:
+    // os ids se repetem e a busca global devolveria o rótulo do outro dropdown.
+    const texto = await page
+      .locator(`[id="${id}-itens"] label[for="${cssEscape(rid)}"]`)
+      .innerText()
+      .catch(() => '');
+
+    if (normalizar(texto) === alvo) {
+      await radio.check({ force: true }).catch(() => undefined);
+      return true;
+    }
+  }
+  return false;
+}
+
+function cssEscape(valor: string): string {
+  return valor.replace(/["\\]/g, '\\$&');
+}
+
+/**
+ * Localiza o id de um combobox pela PERGUNTA visível ao lado dele.
+ *
+ * No passo 7 os ids são hash (`ca-<md5>`) — id gerado não é contrato, então o
+ * robô ancora no texto. Esta é a mesma lógica usada na sessão de captura, o
+ * que garante que runtime e mapeamento enxergam a tela do mesmo jeito.
+ */
+async function comboPorPergunta(page: Page, trechoPergunta: string): Promise<string | null> {
+  return page.evaluate((trecho) => {
+    const norm = (s: string) =>
+      (s || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+    const alvo = norm(trecho);
+
+    const combos = Array.from(
+      document.querySelectorAll<HTMLElement>('[id^="ca-"]:not([id$="-itens"])'),
+    );
+    for (const c of combos) {
+      let p: HTMLElement | null = c.parentElement;
+      for (let h = 0; p && h < 6; h++, p = p.parentElement) {
+        const texto = norm(p.innerText || '');
+        if (texto.length > 10 && texto.length < 400 && texto.includes(alvo)) return c.id;
+      }
+    }
+    return null;
+  }, trechoPergunta);
+}
+
+/** Responde um combobox do passo 7 localizado pela pergunta. Vira aviso se falhar. */
+async function responderPergunta(
+  page: Page,
+  trechoPergunta: string,
+  resposta: string,
+  avisos: string[],
+): Promise<void> {
+  const id = await comboPorPergunta(page, trechoPergunta);
+  if (!id) {
+    avisos.push(`Não encontrei a pergunta "${trechoPergunta}" — responda manualmente.`);
+    return;
+  }
+  const ok = await escolherNoCombobox(page, id, resposta);
+  if (!ok) {
+    avisos.push(
+      `Não consegui marcar "${resposta}" em "${trechoPergunta}" — confira antes de concluir.`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Passos
+// Passo 1 — Selecionar Serviço
 // ---------------------------------------------------------------------------
 
 async function passo1SelecionarServico(page: Page): Promise<void> {
-  // Da tela inicial (Tarefas) para o assistente.
-  await page.getByRole('button', { name: /Novo Requerimento/i }).click();
-  await esperarTela(page, /Seleção de Serviços|Selecionar Serviço/i);
+  await esperarTela(page, /Sele..o de Servi.os/i);
 
-  // Combobox "Serviço": digita e escolhe a opção do BPC/PcD.
-  const servico = page.getByLabel(/Serviço/i).first();
-  await servico.click();
-  await servico.fill('BENEFICIO ASSIS'); // VALIDAR: pode ser input separado do combobox
-  await page.getByText(NOME_SERVICO, { exact: false }).first().click();
+  // O serviço tem código numérico fixo do INSS — mais estável que digitar o
+  // nome no combobox (que era o que o código antigo fazia).
+  const radio = page.locator(
+    `${mapaGerid.passo1.containerOpcoes} input[id="${SERVICO_BPC_PCD.id}"]`,
+  );
 
-  await avancar(page); // tela de informações do serviço
-  await esperarTela(page, /Informações do Serviço|Benefício Assistencial/i).catch(() => undefined);
+  if (await radio.count()) {
+    await radio.first().check({ force: true });
+  } else {
+    // Fallback: filtra pelo nome e clica no resultado.
+    await visivel(page.locator(mapaGerid.passo1.campoBusca)).first().fill('Assistencial');
+    await visivel(page.getByText(SERVICO_BPC_PCD.rotulo, { exact: false })).first().click();
+  }
+
   await avancar(page);
 }
+
+// ---------------------------------------------------------------------------
+// Passo 2 — Informar Requerente
+// ---------------------------------------------------------------------------
 
 async function passo2InformarRequerente(page: Page, caso: CasoParaProtocolar): Promise<void> {
-  await esperarTela(page, /Dados do Requerente|Informar Requerente/i);
+  const cpf = visivel(page.locator(mapaGerid.passo2.cpf)).first();
+  await cpf.waitFor({ state: 'visible' }).catch(() => {
+    throw new ErroGerid(
+      FalhaGerid.CAMPO_NAO_ENCONTRADO,
+      'Campo de CPF do requerente não apareceu no passo 2.',
+    );
+  });
 
-  const cpf = apenasDigitos(caso.cliente.cpf);
-  const campoCpf = page.getByLabel(/^CPF/i).first();
-  await campoCpf.fill(cpf);
-  // Buscar dispara a consulta que preenche Nome (e às vezes a data). Pode ser um
-  // botão de lupa ou Enter — VALIDAR qual dispara no GERID real.
-  await campoCpf.press('Enter').catch(() => undefined);
-  await page.waitForLoadState('networkidle').catch(() => undefined);
+  await cpf.fill(apenasDigitos(caso.cliente.cpf));
+
+  // Confirmado no GERID real: o nome preenche sozinho ao digitar o CPF.
+  // Não há lupa nem Enter (o `press('Enter')` do código antigo era inútil).
+  // Espera o nome chegar antes de avançar — é a prova de que o CPF foi aceito.
+  await visivel(page.locator(mapaGerid.passo2.nome))
+    .first()
+    .waitFor({ state: 'visible' })
+    .catch(() => undefined);
 
   await avancar(page);
 }
+
+// ---------------------------------------------------------------------------
+// Passo 3 — Autorização CadÚnico
+// ---------------------------------------------------------------------------
 
 async function passo3AutorizacaoCadUnico(page: Page): Promise<void> {
-  await esperarTela(page, /Autorização de Uso de Dados|Autorização CadÚnico/i);
-  // Único checkbox da tela: autoriza o uso dos dados do CadÚnico.
-  await garantirMarcado(page.getByRole('checkbox').first());
+  const check = visivel(page.locator(mapaGerid.passo3.autorizacaoCadUnico)).first();
+  await check.waitFor({ state: 'visible' }).catch(() => {
+    throw new ErroGerid(
+      FalhaGerid.CAMPO_NAO_ENCONTRADO,
+      'Checkbox de autorização do CadÚnico não apareceu no passo 3.',
+    );
+  });
+  await garantirMarcado(check);
   await avancar(page);
 }
 
+// ---------------------------------------------------------------------------
+// Passo 4 — Grupo Familiar
+// ---------------------------------------------------------------------------
+
+/**
+ * O GERID já lista as pessoas (vindas do CadÚnico). O robô só marca parentesco
+ * e estado civil, casando por CPF com a nossa planilha.
+ *
+ * Os comboboxes são INDEXADOS por linha (`selectParentesco{i}` /
+ * `selectEstadoCivil{i}`), com o requerente sempre no índice 0 — e o índice 0
+ * NÃO tem combobox de parentesco.
+ *
+ * Isto corrige um bug real da versão anterior, que assumia "parentesco = 1º
+ * select da linha, estado civil = último". Na linha do requerente há um único
+ * controle: os dois índices apontavam para o mesmo elemento, e o estado civil
+ * era sobrescrito pelo parentesco sem gerar aviso.
+ */
 async function passo4GrupoFamiliar(
   page: Page,
   caso: CasoParaProtocolar,
   avisos: string[],
 ): Promise<void> {
-  await esperarTela(page, /Grupo Familiar|Nome do Familiar/i);
+  await esperarTela(page, /Grupo Familiar/i);
 
-  // O GERID já traz as pessoas do CadÚnico. Para cada linha, casa pelo CPF com
-  // a nossa planilha e escolhe Parentesco + Estado Civil.
-  const linhas = page.locator('tr, [role="row"]').filter({ hasText: /\d{3}\.?\d{3}\.?\d{3}/ });
-  const total = await linhas.count();
+  const porCpf = new Map<string, string>(); // cpf -> parentesco da planilha
+  for (const i of caso.grupoFamiliar.integrantes) {
+    const c = apenasDigitos(i.cpf ?? '');
+    if (c) porCpf.set(c, i.parentesco ?? '');
+  }
 
-  // Índice dos nossos integrantes por CPF, para casar por CPF.
-  const porCpf = new Map(
-    caso.grupoFamiliar.integrantes.map((i) => [apenasDigitos(i.cpf), i]),
-  );
-
-  for (let i = 0; i < total; i++) {
-    const linha = linhas.nth(i);
-    const textoLinha = (await linha.innerText()).replace(/\s+/g, ' ');
-    const cpfLinha = apenasDigitos((textoLinha.match(/\d{3}\.?\d{3}\.?\d{3}-?\d{2}/) ?? [''])[0]);
-
-    const selects = linha.getByRole('combobox');
-    const qtdSelects = await selects.count();
-
-    const nosso = porCpf.get(cpfLinha);
-    const ehRequerente = cpfLinha === apenasDigitos(caso.cliente.cpf);
-
-    // Estado civil (sempre presente). Padrão Solteiro; muda só se a planilha disser.
-    const estadoCivil = estadoCivilGerid(nosso?.estadoCivil);
-    // O select de estado civil é o último da linha (o de parentesco vem antes).
-    await selects
-      .nth(qtdSelects - 1)
-      .selectOption({ label: estadoCivil })
-      .catch(() => avisos.push(`Estado civil "${estadoCivil}" não encontrado para o CPF ${cpfLinha}.`));
-
-    if (ehRequerente) continue; // o requerente já vem como "Requerente" fixo
-
-    // Parentesco: traduz para o grupo do GERID; se não resolver, deixa para o humano.
-    const parentesco = mapearParentesco(nosso?.parentesco ?? '');
-    if (!parentesco.grupo) {
-      avisos.push(
-        `Parentesco do CPF ${cpfLinha} não definido — escolha na revisão (a planilha só tinha o CPF).`,
-      );
-    } else {
-      if (!parentesco.confirmado) {
-        avisos.push(`Confira o parentesco do CPF ${cpfLinha}: usei "${parentesco.grupo}" (a validar).`);
+  // Descobre quantas linhas o GERID renderizou e o CPF de cada uma.
+  const linhas = await page.evaluate(() => {
+    const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim();
+    const out: Array<{ indice: number; cpf: string }> = [];
+    for (let i = 0; i < 40; i++) {
+      const ec = document.getElementById(`selectEstadoCivil${i}`);
+      if (!ec) break;
+      let p: HTMLElement | null = ec.parentElement;
+      let cpf = '';
+      for (let h = 0; p && h < 8; h++, p = p.parentElement) {
+        const m = /\d{3}\.?\d{3}\.?\d{3}-?\d{2}/.exec(norm(p.innerText || ''));
+        if (m) {
+          cpf = m[0].replace(/\D/g, '');
+          break;
+        }
       }
-      await selects
-        .nth(0)
-        .selectOption({ label: parentesco.grupo })
-        .catch(() =>
-          avisos.push(`Parentesco "${parentesco.grupo}" não encontrado para o CPF ${cpfLinha}.`),
-        );
+      out.push({ indice: i, cpf });
+    }
+    return out;
+  });
+
+  if (linhas.length === 0) {
+    avisos.push('O GERID não listou nenhum integrante do grupo familiar — confira o CadÚnico.');
+  }
+
+  const vistos = new Set<string>();
+
+  for (const linha of linhas) {
+    const ehRequerente = linha.indice === 0;
+    if (linha.cpf) vistos.add(linha.cpf);
+
+    // --- Estado civil: existe em TODAS as linhas, inclusive a do requerente.
+    const parentescoPlanilha = linha.cpf ? (porCpf.get(linha.cpf) ?? '') : '';
+    const estadoCivil = estadoCivilGerid(undefined); // decisão: sempre o padrão
+    const okEc = await escolherNoCombobox(
+      page,
+      mapaGerid.passo4.estadoCivil(linha.indice),
+      estadoCivil,
+    );
+    if (!okEc) {
+      avisos.push(
+        `Linha ${linha.indice + 1}: não consegui marcar o estado civil "${estadoCivil}".`,
+      );
     }
 
-    if (!nosso) {
-      avisos.push(`CPF ${cpfLinha} veio do CadÚnico mas não está na planilha — confira.`);
+    // --- Parentesco: NÃO existe na linha do requerente (vem fixo "Requerente").
+    if (ehRequerente) continue;
+
+    if (!linha.cpf) {
+      avisos.push(
+        `Linha ${linha.indice + 1}: não consegui ler o CPF na tela — parentesco não preenchido.`,
+      );
+      continue;
+    }
+
+    if (!porCpf.has(linha.cpf)) {
+      avisos.push(
+        `CPF ${linha.cpf} veio do CadÚnico mas não está na planilha — confira o parentesco.`,
+      );
+    }
+
+    const resolvido = mapearParentesco(parentescoPlanilha);
+    const okP = await escolherNoCombobox(
+      page,
+      mapaGerid.passo4.parentesco(linha.indice),
+      resolvido.grupo,
+    );
+
+    if (!okP) {
+      avisos.push(
+        `Linha ${linha.indice + 1}: não achei a opção de parentesco "${resolvido.grupo}".`,
+      );
+    } else if (!resolvido.exato) {
+      // Decisão do escritório: cai em "Outros" em vez de virar pendência —
+      // mas sempre avisa, para o advogado conferir na tela de Confirmar.
+      avisos.push(
+        `CPF ${linha.cpf}: parentesco "${parentescoPlanilha}" não tem opção própria no GERID; ` +
+          `marquei "Outros". Confira antes de concluir.`,
+      );
     }
   }
 
-  // "Há alguém a incluir ou excluir desta lista?" -> Não (a lista do CadÚnico vale).
-  await responderNaoSim(page, /incluir ou excluir desta lista/i, 'Não').catch(() =>
-    avisos.push('Não achei o botão Não/Sim de incluir/excluir no grupo familiar — confira.'),
-  );
+  // Integrantes da planilha que o CadÚnico não trouxe.
+  for (const cpf of porCpf.keys()) {
+    if (!vistos.has(cpf)) {
+      avisos.push(`CPF ${cpf} está na planilha mas o GERID não listou — divergência com o CadÚnico.`);
+    }
+  }
+
+  // "Há alguém que você queira incluir ou excluir?" -> sempre Não.
+  // ⚠️ São CHECKBOXES (`undefined-Nao`), não botões — o código antigo procurava
+  // por getByRole('button') e falharia aqui.
+  const nao = visivel(page.locator(mapaGerid.passo4.incluirExcluirNao)).first();
+  if (await nao.count()) {
+    await garantirMarcado(nao);
+  } else {
+    const alt = visivel(page.getByLabel(/^N.o$/i)).last();
+    if (await alt.count()) await garantirMarcado(alt);
+    else avisos.push('Não achei a opção "Não" de incluir/excluir integrante — marque manualmente.');
+  }
 
   await avancar(page);
 }
 
-async function passo5e6Perguntas(page: Page): Promise<void> {
-  // Passo 5 — Comprometimento de Renda.
-  await esperarTela(page, /Comprometimento de Renda|comprometam a renda/i);
-  await responderNaoSim(page, /comprometam a renda/i, RESPOSTAS_FIXAS.comprometimentoDeRenda);
+// ---------------------------------------------------------------------------
+// Passos 5 e 6 — perguntas simples
+// ---------------------------------------------------------------------------
+
+async function passo5e6Perguntas(page: Page, avisos: string[]): Promise<void> {
+  // Passo 5 — Comprometimento de Renda: sempre Não.
+  await marcarNaoSimples(page, avisos, 'Comprometimento de Renda');
   await avancar(page);
 
-  // Passo 6 — Proteção Especial SUAS.
-  await esperarTela(page, /Proteção Especial|Serviço de Proteção Especial/i);
-  await responderNaoSim(page, /Serviço de Proteção Especial/i, RESPOSTAS_FIXAS.protecaoEspecialSuas);
+  // Passo 6 — Proteção Especial SUAS: sempre Não.
+  await marcarNaoSimples(page, avisos, 'Proteção Especial SUAS');
   await avancar(page);
 }
+
+/**
+ * Os passos 5 e 6 não foram capturados no DOM, mas seguem o padrão do passo 4
+ * (checkbox `*-Nao` / `*-Sim`). O robô tenta as duas formas conhecidas e, se
+ * nenhuma funcionar, avisa em vez de travar — a resposta é sempre "Não" e o
+ * advogado consegue marcar em um clique na revisão.
+ */
+async function marcarNaoSimples(page: Page, avisos: string[], tela: string): Promise<void> {
+  const porId = visivel(page.locator('input[id$="-Nao"]')).last();
+  if (await porId.count()) {
+    await garantirMarcado(porId);
+    return;
+  }
+  const porRotulo = visivel(page.getByLabel(/^N.o$/i)).last();
+  if (await porRotulo.count()) {
+    await garantirMarcado(porRotulo);
+    return;
+  }
+  avisos.push(`${tela}: não achei a opção "Não" — marque manualmente (a resposta é sempre Não).`);
+}
+
+// ---------------------------------------------------------------------------
+// Passo 7 — Dados Requerente
+// ---------------------------------------------------------------------------
 
 async function passo7DadosRequerente(
   page: Page,
@@ -256,142 +465,273 @@ async function passo7DadosRequerente(
   opcoes: OpcoesPreenchimento,
   avisos: string[],
 ): Promise<void> {
-  await esperarTela(page, /Interessados|Dados Adicionais/i);
+  await esperarTela(page, /Dados Adicionais|Interessados/i);
 
-  // --- Contatos (modal "Adicionar") ---
+  // --- Contatos
   const telefone = caso.cliente.telefone?.trim() || opcoes.telefonePadrao;
-  await adicionarContato(page, 'Celular', telefone).catch(() =>
-    avisos.push('Não consegui adicionar o telefone de contato — confira.'),
+  await adicionarContato(page, 'Celular', telefone, avisos);
+  await adicionarContato(page, 'E-mail', opcoes.emailEscritorio, avisos);
+
+  // --- Perguntas fixas, localizadas pelo texto (os ids são hash)
+  await responderPergunta(page, PERGUNTAS_PASSO7.estrangeiro, RESPOSTAS_FIXAS.estrangeiro, avisos);
+  await responderPergunta(
+    page,
+    PERGUNTAS_PASSO7.representanteLegal,
+    RESPOSTAS_FIXAS.representanteLegal,
+    avisos,
   );
-  await adicionarContato(page, 'E-mail', opcoes.emailEscritorio).catch(() =>
-    avisos.push('Não consegui adicionar o e-mail de contato — confira.'),
+  await responderPergunta(page, PERGUNTAS_PASSO7.procurador, RESPOSTAS_FIXAS.procurador, avisos);
+  await responderPergunta(page, PERGUNTAS_PASSO7.ondeMora, RESPOSTAS_FIXAS.ondeMora, avisos);
+  await responderPergunta(
+    page,
+    PERGUNTAS_PASSO7.recebeBeneficio,
+    RESPOSTAS_FIXAS.recebeBeneficio,
+    avisos,
+  );
+  await responderPergunta(
+    page,
+    PERGUNTAS_PASSO7.alterarDataPedido,
+    RESPOSTAS_FIXAS.alterarDataPedido,
+    avisos,
   );
 
-  // --- Aceita acompanhar o processo -> Sim ---
-  await responderNaoSim(page, /acompanhar o andamento/i, RESPOSTAS_FIXAS.acompanhaProcesso).catch(
-    () => undefined,
-  );
-
-  // --- Dados Adicionais (selects rotulados) ---
-  await selecionarPorRotulo(page, /estrangeiro em situação regular/i, RESPOSTAS_FIXAS.estrangeiro, avisos);
-  await selecionarPorRotulo(page, /Representante Legal/i, RESPOSTAS_FIXAS.representanteLegal, avisos);
-  await selecionarPorRotulo(page, /cadastrar Procurador/i, RESPOSTAS_FIXAS.procurador, avisos);
-
-  // CPF do Procurador (aparece após escolher Procurador = Sim).
-  await page
-    .getByLabel(/CPF do Procurador/i)
-    .fill(apenasDigitos(opcoes.procuradorCpf))
-    .catch(() => avisos.push('Campo "CPF do Procurador" não encontrado — confira.'));
-
-  await selecionarPorRotulo(page, /Onde você mora/i, RESPOSTAS_FIXAS.ondeMora, avisos);
-  await selecionarPorRotulo(page, /Forma de Convívio/i, formaDeConvivio(caso.grupoFamiliar), avisos);
-  await selecionarPorRotulo(page, /Recebe algum tipo de benefício/i, RESPOSTAS_FIXAS.recebeBeneficio, avisos);
-  await selecionarPorRotulo(page, /desligamento voluntário do bolsa família/i, RESPOSTAS_FIXAS.desligamentoBolsaFamilia, avisos);
-  await selecionarPorRotulo(page, /alterar a data do pedido/i, RESPOSTAS_FIXAS.alterarDataPedido, avisos);
-
-  // Checkboxes de ciência (óbito / acompanhar).
-  for (const check of await page.getByRole('checkbox').all()) {
-    await garantirMarcado(check).catch(() => undefined);
+  // --- Bolsa Família: 4 opções, e o escritório ainda não definiu a regra.
+  // Deixar em branco e avisar é melhor do que declarar errado ao INSS.
+  if (RESPOSTA_BOLSA_FAMILIA) {
+    await responderPergunta(page, PERGUNTAS_PASSO7.bolsaFamilia, RESPOSTA_BOLSA_FAMILIA, avisos);
+  } else {
+    avisos.push(
+      'Bolsa Família: a pergunta tem 4 opções (não Sim/Não) e o escritório ainda não definiu ' +
+        'a regra. Deixei em branco — responda antes de concluir.',
+    );
   }
 
-  // --- Anexos: cada arquivo no slot nomeado certo ---
-  await anexarDocumentos(page, opcoes.arquivos, avisos);
+  // --- CPF do procurador
+  const cpfProc = visivel(page.getByLabel(/CPF do Procurador/i)).first();
+  if (await cpfProc.count()) {
+    await cpfProc.fill(apenasDigitos(opcoes.procuradorCpf));
+  } else {
+    avisos.push('Campo "CPF do Procurador" não encontrado — preencha manualmente.');
+  }
 
+  // --- Checkboxes de ciência.
+  // ⚠️ O código antigo marcava TODOS os checkboxes da página, às cegas. Agora
+  // só marca os que começam com "campo-", que é o padrão do GERID para
+  // checkbox de campo (confirmado no DOM). Nada de marcar declaração por acaso.
+  const ciencias = visivel(page.locator('input[type="checkbox"][id^="campo-"]'));
+  const totalCiencias = await ciencias.count().catch(() => 0);
+  for (let i = 0; i < totalCiencias; i++) {
+    await garantirMarcado(ciencias.nth(i));
+  }
+
+  await anexarDocumentos(page, opcoes, avisos);
   await avancar(page);
 }
 
-/** Abre o modal de contatos, escolhe o tipo, preenche o valor e adiciona. */
-async function adicionarContato(page: Page, tipo: string, valor: string): Promise<void> {
-  await page.getByText(/Adicionar/i).first().click();
-  await page.getByLabel(/Tipo de contato/i).selectOption({ label: tipo });
-  await page.getByLabel(/^Valor/i).fill(valor);
-  await page.getByRole('button', { name: /^Adicionar$/i }).click();
-  await page.getByRole('button', { name: /Fechar/i }).click();
-}
-
-/** Escolhe uma opção num <select> localizado pelo rótulo. */
-async function selecionarPorRotulo(
+async function adicionarContato(
   page: Page,
-  rotulo: RegExp,
+  tipo: string,
   valor: string,
   avisos: string[],
 ): Promise<void> {
+  if (!valor) {
+    avisos.push(`Contato ${tipo} não informado — adicione manualmente.`);
+    return;
+  }
   try {
-    const select = page.getByLabel(rotulo).first();
-    // O GERID às vezes prefixa a opção ("B) Não", "C) Não"), então casamos a
-    // opção cujo texto TERMINA com o valor — não dá para passar o valor cru.
-    const textos = (await select.locator('option').allTextContents()).map((t) => t.trim());
-    const alvo = textos.find((t) => t === valor || t.endsWith(valor));
-    if (!alvo) {
-      avisos.push(`Opção "${valor}" não encontrada em "${rotulo.source}" — confira.`);
-      return;
-    }
-    await select.selectOption({ label: alvo });
+    await visivel(page.getByText(/Adicionar/i)).first().click();
+    const ok = await escolherNoCombobox(page, mapaGerid.passo7.tipoContato, tipo);
+    if (!ok) avisos.push(`Não consegui escolher o tipo de contato "${tipo}".`);
+    await visivel(page.getByLabel(/^Valor/i)).first().fill(valor);
+    await visivel(page.getByRole('button', { name: /^Adicionar$/i })).first().click();
+    await visivel(page.getByRole('button', { name: /Fechar/i })).first().click();
   } catch {
-    avisos.push(`Não consegui responder "${rotulo.source}" com "${valor}" — confira.`);
+    avisos.push(`Falhei ao adicionar o contato ${tipo} (${valor}) — adicione manualmente.`);
   }
 }
 
-/** Anexa cada documento no slot nomeado correspondente. */
-async function anexarDocumentos(page: Page, arquivos: ArquivoLocal[], avisos: string[]): Promise<void> {
-  for (const arq of arquivos) {
+/**
+ * Anexa cada documento na CAIXA nomeada certa.
+ *
+ * Os 11 `input[type=file]` compartilham `id="single-file"`, então a caixa é
+ * localizada pelo TEXTO do slot; o índice conhecido (0-10) serve de conferência
+ * cruzada, já que a ordem é estável.
+ */
+async function anexarDocumentos(
+  page: Page,
+  opcoes: OpcoesPreenchimento,
+  avisos: string[],
+): Promise<void> {
+  const inputs = page.locator(mapaGerid.passo7.inputArquivo);
+  const total = await inputs.count().catch(() => 0);
+
+  if (total !== mapaGerid.passo7.totalSlots) {
+    avisos.push(
+      `Esperava ${mapaGerid.passo7.totalSlots} caixas de anexo e encontrei ${total} — ` +
+        'o GERID pode ter mudado. Confira os anexos antes de concluir.',
+    );
+  }
+
+  for (const arq of opcoes.arquivos) {
     const slot = slotGeridDoDocumento(arq.tipo);
     if (!slot) {
-      avisos.push(`Documento "${arq.tipo}" sem slot definido no GERID — anexe manualmente.`);
+      avisos.push(`Documento "${arq.tipo}" não tem caixa mapeada no GERID — anexe manualmente.`);
       continue;
     }
-    // Acha o input de arquivo dentro do bloco cujo título é o nome do slot.
-    const bloco = page.locator('div', { hasText: slot }).last();
-    const input = bloco.locator('input[type="file"]').last();
+
+    if (arq.nome && !extensaoAceita(arq.nome)) {
+      avisos.push(
+        `"${arq.nome}" tem extensão que o GERID não aceita (só .pdf .png .jpg .jpeg .bmp).`,
+      );
+      continue;
+    }
+
+    const indice = indiceSlotDoDocumento(arq.tipo);
+    let alvo: Locator | null = null;
+
+    // 1) pelo texto do slot — o caminho preferido.
+    const caixa = page
+      .locator('div')
+      .filter({ hasText: slot })
+      .locator('input[type="file"]')
+      .last();
+    if (await caixa.count()) alvo = caixa;
+
+    // 2) pelo índice conhecido, como rede de segurança.
+    if (!alvo && indice !== null && total === mapaGerid.passo7.totalSlots) {
+      alvo = inputs.nth(indice);
+      avisos.push(`Usei a posição ${indice} para anexar "${slot}" — confira se caiu na caixa certa.`);
+    }
+
+    if (!alvo) {
+      avisos.push(`Caixa "${slot}" não encontrada — anexe ${arq.tipo} manualmente.`);
+      continue;
+    }
+
     try {
-      await input.setInputFiles(arq.caminho);
-      await page.waitForLoadState('networkidle').catch(() => undefined);
+      await alvo.setInputFiles(arq.caminho);
     } catch {
-      avisos.push(`Falha ao anexar "${arq.tipo}" no slot "${slot}" — confira.`);
+      avisos.push(`Falha ao anexar ${arq.tipo} em "${slot}" — anexe manualmente.`);
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Passos 8 e 9 — unidade e órgão pagador
+// ---------------------------------------------------------------------------
 
 async function passo8SelecionarUnidade(
   page: Page,
   caso: CasoParaProtocolar,
   avisos: string[],
-): Promise<void> {
-  await esperarTela(page, /Selecionar Unidade|Consultar por CEP/i);
+): Promise<boolean> {
+  await esperarTela(page, /Consultar por CEP|Selecionar Unidade/i);
 
-  const cep = apenasDigitos(caso.cliente.cep);
-  await page.getByLabel(/^CEP/i).fill(cep);
-  await page.getByRole('button', { name: /Buscar/i }).click();
+  // ⚠️ único campo do fluxo sem id.
+  const cep =
+    (await visivel(page.getByLabel(/^CEP$/i)).count())
+      ? visivel(page.getByLabel(/^CEP$/i)).first()
+      : visivel(page.getByPlaceholder(mapaGerid.passo8.cepPlaceholder)).first();
+
+  if (!(await cep.count())) {
+    avisos.push('Campo de CEP não encontrado no passo 8 — selecione a unidade manualmente.');
+    return false;
+  }
+
+  await cep.fill(apenasDigitos(caso.cliente.cep));
+  // Campo mascarado ("12.345-678"): conferir o que ficou, conforme o checklist.
+  const digitado = apenasDigitos(await cep.inputValue().catch(() => ''));
+  if (digitado !== apenasDigitos(caso.cliente.cep)) {
+    avisos.push(`O CEP digitado não bateu (esperado ${caso.cliente.cep}, ficou "${digitado}").`);
+  }
+
+  await visivel(page.getByRole('button', { name: /^Buscar$/i })).first().click();
   await page.waitForLoadState('networkidle').catch(() => undefined);
 
-  await escolherUnidadeDaCidade(page, caso.cliente.cidade, avisos);
-  await avancar(page);
+  const ok = await escolherUnidadeDaCidade(page, caso, avisos, 'unidade de atendimento');
+  if (ok) await avancar(page);
+  return ok;
 }
 
 async function passo9OrgaoPagador(
   page: Page,
   caso: CasoParaProtocolar,
   avisos: string[],
-): Promise<void> {
-  await esperarTela(page, /Órgão Pagador|onde deseja receber o benefício/i);
-  await escolherUnidadeDaCidade(page, caso.cliente.cidade, avisos);
-  await avancar(page);
+): Promise<boolean> {
+  await esperarTela(page, /.rg.o Pagador|receber o benef.cio/i);
+  const ok = await escolherUnidadeDaCidade(page, caso, avisos, 'órgão pagador');
+  if (ok) await avancar(page);
+  return ok;
 }
 
 /**
- * Escolhe, numa lista de unidades (radios), a da MESMA cidade do cliente —
- * mesmo que a primeira seja de outra cidade (regra do escritório).
+ * Lê a lista de unidades e identifica a da cidade do cliente.
+ *
+ * A cidade vem sempre no padrão `CIDADE-UF` logo antes de `CEP:` — por isso a
+ * comparação usa a cidade extraída, e não o texto inteiro da linha (que inclui
+ * o endereço e fazia o robô escolher agência de outra cidade cujo logradouro
+ * citasse a cidade do cliente).
+ *
+ * ⚠️ PENDÊNCIA CONHECIDA: ainda não sabemos qual elemento representa cada
+ * agência (não são radio, button, a, li nem td). O robô identifica a agência
+ * correta e tenta selecioná-la; se não conseguir, AVISA e segue — o advogado
+ * escolhe na revisão. Nunca clica no escuro.
  */
-async function escolherUnidadeDaCidade(page: Page, cidade: string, avisos: string[]): Promise<void> {
-  const linhas = await page.locator('tr, [role="row"]').filter({ has: page.getByRole('radio') }).all();
-  const opcoes = [];
-  for (const linha of linhas) {
-    opcoes.push({ nome: (await linha.innerText()).replace(/\s+/g, ' '), _loc: linha });
+async function escolherUnidadeDaCidade(
+  page: Page,
+  caso: CasoParaProtocolar,
+  avisos: string[],
+  rotuloEtapa: string,
+): Promise<boolean> {
+  const linhas = await page.evaluate(() => {
+    const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim();
+    const RE = /CEP:\s*\d{2}\.\d{3}-\d{3}/;
+    const todos = Array.from(document.querySelectorAll<HTMLElement>('*'));
+    return todos
+      .filter((e) => {
+        const t = norm(e.innerText || '');
+        if (!RE.test(t) || t.length > 250) return false;
+        return !Array.from(e.children).some((c) =>
+          RE.test(norm((c as HTMLElement).innerText || '')),
+        );
+      })
+      .map((e, i) => ({ indice: i, texto: norm(e.innerText || '') }));
+  });
+
+  if (linhas.length === 0) {
+    avisos.push(`Nenhuma ${rotuloEtapa} foi listada — selecione manualmente.`);
+    return false;
   }
-  const escolhida = escolherUnidadePorCidade(opcoes, cidade);
+
+  const opcoes = linhas.map((l) => ({
+    nome: l.texto,
+    cidade: extrairCidadeDaUnidade(l.texto) ?? undefined,
+    indice: l.indice,
+  }));
+
+  const escolhida = escolherUnidadePorCidade(opcoes, caso.cliente.cidade);
+
   if (!escolhida) {
-    avisos.push(`Nenhuma unidade da cidade "${cidade}" na lista — escolha manualmente antes de concluir.`);
-    return;
+    const cidades = opcoes.map((o) => o.cidade ?? '?').join(', ');
+    avisos.push(
+      `Nenhuma ${rotuloEtapa} da cidade "${caso.cliente.cidade}" na lista (opções: ${cidades}). ` +
+        'Escolha manualmente antes de concluir.',
+    );
+    return false;
   }
-  await escolhida._loc.getByRole('radio').check();
+
+  // Tenta selecionar. Enquanto o elemento clicável não estiver mapeado, isto
+  // pode não surtir efeito — por isso a confirmação explícita logo abaixo.
+  const radio = visivel(page.locator('input[type="radio"]')).nth(escolhida.indice);
+  const selecionou =
+    (await radio.count()) > 0 && (await radio.check({ force: true }).then(() => true, () => false));
+
+  if (!selecionou) {
+    avisos.push(
+      `Identifiquei a ${rotuloEtapa} correta ("${escolhida.cidade}") mas não consegui selecioná-la: ` +
+        'a lista do GERID ainda não está mapeada. Selecione essa opção manualmente.',
+    );
+    return false;
+  }
+  return true;
 }

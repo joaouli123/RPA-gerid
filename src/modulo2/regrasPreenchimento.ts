@@ -1,59 +1,136 @@
 /**
  * REGRAS DE PREENCHIMENTO DO GERID — lógica pura, sem navegador.
  *
- * Aqui moram as decisões que o Fabrício confirmou em 23/07/2026 sobre COMO
- * preencher cada campo. Ficam separadas do Playwright de propósito: assim dá
- * para TESTAR a regra sem abrir navegador, e o robô só executa o que já foi
- * validado aqui. Nada de "chutar" na hora de preencher.
+ * Aqui moram as decisões do escritório sobre COMO preencher cada campo.
+ * Ficam separadas do Playwright de propósito: assim dá para TESTAR a regra sem
+ * abrir navegador, e o robô só executa o que já foi validado aqui.
  *
- * Fonte das telas: docs/gerid-fluxo-real.md.
+ * FONTE DOS RÓTULOS: docs/gerid-mapeamento-real.md — capturado do DOM da
+ * aplicação em produção em 28/07/2026, com o Fabrício ao vivo. NADA aqui é
+ * inferido de print.
+ *
+ * ⚠️ Os ids numéricos das opções SE REPETEM entre dropdowns diferentes:
+ * o radio `1` é "Solteiro" no estado civil e "Cônjuge" no parentesco. Por isso
+ * cada opção carrega o id E o rótulo, e o robô SEMPRE escopa a busca no
+ * container do próprio combobox (`{idDoCombobox}-itens`).
  */
 
 import { ehTitular } from '../domain/grupoFamiliar';
 import { normalizar } from '../domain/texto';
 import type { GrupoFamiliar, Integrante } from '../domain/types';
 
+/** Uma opção de combobox do GERID: id do radio + rótulo exato exibido. */
+export interface OpcaoGerid {
+  id: string;
+  rotulo: string;
+}
+
+// ---------------------------------------------------------------------------
+// Passo 1 — serviço
+// ---------------------------------------------------------------------------
+
 /**
- * Respostas que o Fabrício confirmou serem SEMPRE as mesmas (não variam por
- * cliente). O que varia por caso é só o grupo familiar e se mora sozinho —
- * tratados à parte.
+ * Código do serviço no GERID. É o id do radio dentro de
+ * `#idSelecionarServico-itens` — código numérico do INSS, bem mais estável que
+ * digitar o nome do serviço num combobox.
+ */
+export const SERVICO_BPC_PCD: OpcaoGerid = {
+  id: '1655',
+  rotulo: 'Benefício Assistencial à Pessoa com Deficiência',
+};
+
+// ---------------------------------------------------------------------------
+// Passos 5, 6 e 7 — respostas que não variam por cliente
+// ---------------------------------------------------------------------------
+
+/**
+ * Respostas confirmadas pelo escritório como SEMPRE iguais.
+ * O `id` do combobox (hash) vem do DOM real; o `pergunta` é o texto visível ao
+ * lado, que é como o robô localiza o campo — o hash serve só de conferência,
+ * porque id gerado não é contrato (ver checklist de seletor).
  */
 export const RESPOSTAS_FIXAS = {
   /** Passo 5. "Gastos com a deficiência negados pelo poder público?" */
   comprometimentoDeRenda: 'Não',
   /** Passo 6. "Proteção Especial SUAS (Centro-Dia) negada?" */
   protecaoEspecialSuas: 'Não',
-  /** Passo 7. Aceita acompanhar o processo. */
+  /** Passo 7. Aceita acompanhar o andamento (Meu INSS / 135 / e-mail). */
   acompanhaProcesso: 'Sim',
-  /** Passo 7. "Estrangeiro em situação regular?" (a opção vem rotulada "B) Não"). */
-  estrangeiro: 'Não',
-  /** Passo 7. Não se cadastra representante legal (o procurador é o advogado). */
+  /** Passo 7. "Você é estrangeiro em situação regular no Brasil?" */
+  estrangeiro: 'B) Não',
+  /** Passo 7. "Deseja cadastrar Representante Legal para este pedido?" */
   representanteLegal: 'Não',
-  /** Passo 7. Cadastra procurador (o próprio Fabrício). */
+  /** Passo 7. "Deseja cadastrar Procurador para este pedido?" (o advogado). */
   procurador: 'Sim',
-  /** Passo 7. Onde mora. */
+  /** Passo 7. "Onde você mora?" */
   ondeMora: 'Moro em residência',
-  /** Passo 7. "Recebe algum benefício?" (a opção vem rotulada "C) Não"). */
-  recebeBeneficio: 'Não',
-  /** Passo 7. Autoriza desligamento do Bolsa Família se o BPC for aprovado. */
-  desligamentoBolsaFamilia: 'Sim',
-  /** Passo 7. Autoriza o INSS a alterar a data do pedido para atender requisitos. */
+  /** Passo 7. "Recebe algum tipo de benefício?" — atenção ao espaço final. */
+  recebeBeneficio: 'C) Não',
+  /** Passo 7. "...autoriza o INSS a alterar a data do pedido...?" */
   alterarDataPedido: 'Sim',
 } as const;
 
 /**
- * Forma de convívio (passo 7) — a ÚNICA resposta do requerente que varia por
- * caso, derivada do próprio grupo familiar: mora sozinho ou com a família.
+ * Perguntas exatas do passo 7, como aparecem na tela. O robô localiza o
+ * combobox por este texto (e não pelo id, que é hash).
+ */
+export const PERGUNTAS_PASSO7 = {
+  estrangeiro: 'Você é estrangeiro em situação regular no Brasil?',
+  representanteLegal: 'Deseja cadastrar Representante Legal para este pedido?',
+  procurador: 'Deseja cadastrar Procurador para este pedido?',
+  ondeMora: 'Onde você mora?',
+  recebeBeneficio: 'Recebe algum tipo de benefício?',
+  alterarDataPedido:
+    'autoriza o INSS a alterar a data do pedido para atender às condições para o benefício?',
+  bolsaFamilia: 'bolsa família',
+  ciencia:
+    'Estou ciente de que devo acompanhar o pedido pelos canais de atendimento',
+  apelido: 'Conhecido por/Apelido',
+} as const;
+
+/**
+ * 🔴 BOLSA FAMÍLIA — NÃO é Sim/Não.
  *
- * "Mora sozinho" = o grupo familiar tem só o Titular.
+ * O DOM revelou 4 opções, não 2. O código antigo respondia 'Sim' fixo
+ * (autorizando o desligamento voluntário). Se a família NÃO recebe Bolsa
+ * Família, "Sim" é resposta errada — a correta é "Não há recebimento de Bolsa
+ * Família".
  *
- * ⚠️ VERIFICAR no run supervisionado o rótulo EXATO da opção "sozinho" no
- * GERID (só vimos "Com pessoas da família" nos prints). Por isso o rótulo fica
- * aqui isolado, fácil de corrigir.
+ * Enquanto o escritório não define a regra, o robô NÃO responde: registra um
+ * aviso e deixa para o advogado marcar na revisão. É preferível um campo em
+ * branco na tela de Confirmar a uma declaração errada ao INSS.
+ */
+export const OPCOES_BOLSA_FAMILIA: OpcaoGerid[] = [
+  { id: 'Sim', rotulo: 'Sim' },
+  { id: 'Não', rotulo: 'Não' },
+  {
+    id: 'Não há recebimento de Bolsa Família ',
+    rotulo: 'Não há recebimento de Bolsa Família',
+  },
+  {
+    id: 'O titular do BPC ou o seu representante legal não é o responsável familiar no CadÚnico',
+    rotulo:
+      'O titular do BPC ou o seu representante legal não é o responsável familiar no CadÚnico',
+  },
+];
+
+/** null = sem regra definida; o robô deixa em branco e avisa. */
+export const RESPOSTA_BOLSA_FAMILIA: string | null = null;
+
+/**
+ * ⚠️ FORMA DE CONVÍVIO — campo NÃO ENCONTRADO no DOM (28/07/2026).
+ *
+ * Nenhum combobox do passo 7 tem estas opções, e nenhum rótulo menciona
+ * convívio. O docs/gerid-fluxo-real.md (reconstruído de prints) lista o campo,
+ * mas ele não existe na tela atual.
+ *
+ * Mantido por ora porque pode ser condicional. O robô tenta preencher; se o
+ * campo não existir, segue em frente com um aviso — nunca falha por causa
+ * dele. Se a próxima sessão confirmar a ausência, remover isto e os 2 testes.
  */
 export const FORMA_CONVIVIO = {
   comFamilia: 'Com pessoas da família',
-  sozinho: 'Sozinho', // VERIFICAR rótulo exato
+  sozinho: 'Sozinho', // nunca confirmado no DOM
 } as const;
 
 export function formaDeConvivio(grupo: GrupoFamiliar): string {
@@ -61,93 +138,188 @@ export function formaDeConvivio(grupo: GrupoFamiliar): string {
   return moraSozinho ? FORMA_CONVIVIO.sozinho : FORMA_CONVIVIO.comFamilia;
 }
 
-/**
- * Estado civil de cada integrante (passo 4).
- *
- * Regra do Fabrício: "todo mundo Solteiro por padrão, mesmo quem tem
- * companheiro no CadÚnico. Só muda quando o cliente apresenta certidão de
- * casamento". Então: usa o que estiver na planilha SE fizer sentido; na
- * dúvida ou em branco, Solteiro.
- */
+// ---------------------------------------------------------------------------
+// Passo 4 — estado civil
+// ---------------------------------------------------------------------------
+
 export const ESTADO_CIVIL_PADRAO = 'Solteiro';
 
-/** Opções de estado civil do GERID (rótulos como aparecem no select). */
+/**
+ * Opções REAIS do combobox `selectEstadoCivil{i}` (container
+ * `selectEstadoCivil{i}-itens`), capturadas do DOM.
+ *
+ * Correção importante: o comentário antigo dizia que "o GERID não distingue"
+ * união estável de casado, e mapeava união estável -> Casado e separado ->
+ * Divorciado. É FALSO: existem opções próprias para "União Estável" e
+ * "Separado". Isso gravava estado civil errado em requerimento real.
+ */
+export const OPCOES_ESTADO_CIVIL: OpcaoGerid[] = [
+  { id: '1', rotulo: 'Solteiro' },
+  { id: '2', rotulo: 'Casado' },
+  { id: '3', rotulo: 'Viúvo' },
+  { id: '4', rotulo: 'Divorciado' },
+  { id: '5', rotulo: 'Separado' },
+  { id: '6', rotulo: 'União Estável' },
+];
+
 const ESTADOS_CIVIS_GERID: Record<string, string> = {
   solteiro: 'Solteiro',
   casado: 'Casado',
   viuvo: 'Viúvo',
   divorciado: 'Divorciado',
-  'uniao estavel': 'Casado', // GERID não distingue; união estável entra como casado
-  separado: 'Divorciado',
+  separado: 'Separado', // CORRIGIDO: existe opção própria (id 5)
+  'uniao estavel': 'União Estável', // CORRIGIDO: existe opção própria (id 6)
+  amasiado: 'União Estável',
+  concubinato: 'União Estável',
 };
 
+/**
+ * DECISÃO DO ESCRITÓRIO (28/07/2026): estado civil é SEMPRE "Solteiro",
+ * independente do que a planilha diz.
+ *
+ * ⚠️ Isto descarta a coluna "Estado civil" da planilha, inclusive quando ela
+ * diz "Casado", e é uma declaração ao INSS dentro do requerimento. Fica nesta
+ * constante, isolada, para ser fácil de reverter: com `false`, volta a usar a
+ * planilha e cai em Solteiro só quando o valor estiver vazio ou irreconhecível.
+ */
+export const ESTADO_CIVIL_SEMPRE_PADRAO = true;
+
 export function estadoCivilGerid(valorPlanilha?: string): string {
+  if (ESTADO_CIVIL_SEMPRE_PADRAO) return ESTADO_CIVIL_PADRAO;
+
   const chave = normalizar(valorPlanilha);
   if (!chave) return ESTADO_CIVIL_PADRAO;
   return ESTADOS_CIVIS_GERID[chave] ?? ESTADO_CIVIL_PADRAO;
 }
 
+// ---------------------------------------------------------------------------
+// Passo 4 — parentesco
+// ---------------------------------------------------------------------------
+
 /**
- * Grau de parentesco (passo 4): traduz o parentesco fino da planilha para os
- * grupos AGRUPADOS do GERID.
+ * Opções REAIS do combobox `selectParentesco{i}`, capturadas do DOM.
  *
- * Confirmados nos prints: "Pai / Mãe / Padrasto / Madrasta" e "Irmão / Irmã".
- * Os demais rótulos estão marcados VERIFICAR — o robô NÃO deve escolher um
- * grupo que não tenha certeza; se não casar, retorna null e o caso vira
- * pendência (nunca chuta um parentesco errado).
+ * Correções em relação ao que estava no código:
+ *  - "Cônjuge / Companheiro(a)" não existe: são DUAS opções separadas.
+ *  - "Filho / Filha / Enteado(a)" não existe: são DUAS opções separadas.
+ *  - "Avô / Avó" NÃO EXISTE no GERID.
+ *  - Existem "Menor Tutelado" e "Outros", que não estavam mapeados.
  */
+export const OPCOES_PARENTESCO: OpcaoGerid[] = [
+  { id: '1', rotulo: 'Cônjuge' },
+  { id: '2', rotulo: 'Filho(a)' },
+  { id: '3', rotulo: 'Pai / Mãe / Padrasto / Madrasta' },
+  { id: '4', rotulo: 'Irmão / Irmã' },
+  { id: '6', rotulo: 'Companheiro (a)' },
+  { id: '8', rotulo: 'Enteado' },
+  { id: '9', rotulo: 'Menor Tutelado' },
+  { id: '17', rotulo: 'Outros' },
+];
+
 const GRUPOS_PARENTESCO_GERID = {
   paisPadrastos: 'Pai / Mãe / Padrasto / Madrasta',
   irmaos: 'Irmão / Irmã',
-  conjuge: 'Cônjuge / Companheiro(a)', // VERIFICAR rótulo exato
-  filhos: 'Filho / Filha / Enteado(a)', // VERIFICAR rótulo exato
-  avos: 'Avô / Avó', // VERIFICAR rótulo exato
+  companheiro: 'Companheiro (a)',
+  conjuge: 'Cônjuge',
+  filhos: 'Filho(a)',
+  enteado: 'Enteado',
+  menorTutelado: 'Menor Tutelado',
+  outros: 'Outros',
 } as const;
 
-const MAPA_PARENTESCO: Array<{ termos: string[]; grupo: string; confirmado: boolean }> = [
-  { termos: ['mae', 'pai', 'padrasto', 'madrasta'], grupo: GRUPOS_PARENTESCO_GERID.paisPadrastos, confirmado: true },
-  { termos: ['irmao', 'irma'], grupo: GRUPOS_PARENTESCO_GERID.irmaos, confirmado: true },
-  { termos: ['conjuge', 'companheir', 'esposa', 'esposo', 'marido'], grupo: GRUPOS_PARENTESCO_GERID.conjuge, confirmado: false },
-  { termos: ['filho', 'filha', 'entead'], grupo: GRUPOS_PARENTESCO_GERID.filhos, confirmado: false },
-  { termos: ['avo', 'avó'], grupo: GRUPOS_PARENTESCO_GERID.avos, confirmado: false },
+/**
+ * DECISÃO DO ESCRITÓRIO (28/07/2026): quando a planilha indica cônjuge,
+ * companheiro, esposa, marido etc., marcar SEMPRE "Companheiro (a)".
+ * A opção "Cônjuge" existe mas não é usada.
+ */
+const MAPA_PARENTESCO: Array<{ termos: string[]; grupo: string }> = [
+  { termos: ['mae', 'pai', 'padrasto', 'madrasta'], grupo: GRUPOS_PARENTESCO_GERID.paisPadrastos },
+  { termos: ['irmao', 'irma'], grupo: GRUPOS_PARENTESCO_GERID.irmaos },
+  {
+    termos: ['conjuge', 'companheir', 'esposa', 'esposo', 'marido'],
+    grupo: GRUPOS_PARENTESCO_GERID.companheiro,
+  },
+  { termos: ['entead'], grupo: GRUPOS_PARENTESCO_GERID.enteado },
+  { termos: ['filho', 'filha'], grupo: GRUPOS_PARENTESCO_GERID.filhos },
+  { termos: ['tutelad'], grupo: GRUPOS_PARENTESCO_GERID.menorTutelado },
 ];
 
 export interface ParentescoResolvido {
-  /** O grupo do GERID a selecionar, ou null se não deu para resolver com segurança. */
-  grupo: string | null;
-  /** True se o rótulo já foi confirmado nos prints; false = precisa conferir. */
-  confirmado: boolean;
-}
-
-export function mapearParentesco(parentescoPlanilha: string): ParentescoResolvido {
-  const p = normalizar(parentescoPlanilha);
-
-  // O Titular é o próprio requerente — o GERID já o marca como "Requerente".
-  if (ehTitular(parentescoPlanilha)) return { grupo: 'Requerente', confirmado: true };
-
-  for (const entrada of MAPA_PARENTESCO) {
-    if (entrada.termos.some((t) => p.includes(t))) {
-      return { grupo: entrada.grupo, confirmado: entrada.confirmado };
-    }
-  }
-  return { grupo: null, confirmado: false };
+  /** O rótulo do GERID a selecionar. */
+  grupo: string;
+  /**
+   * False quando o parentesco da planilha não tem correspondente direto e caiu
+   * no fallback "Outros" — o robô registra aviso para conferência no Confirmar.
+   */
+  exato: boolean;
 }
 
 /**
- * Órgão pagador / unidade (passos 8 e 9): quando o CEP retorna mais de uma
- * agência, escolher a da MESMA CIDADE do cliente — mesmo que a primeira da
- * lista seja de outra cidade (regra do Fabrício).
+ * DECISÃO DO ESCRITÓRIO (28/07/2026): parentesco sem opção própria no GERID
+ * (avô, avó, tio, sobrinho, neto, primo...) vai para "Outros". Antes o caso
+ * virava pendência; agora o robô resolve e apenas avisa.
  *
- * Casa por cidade ignorando acento/caixa. Se nenhuma casar, retorna null: o
- * robô não escolhe uma cidade errada — o caso vira pendência.
+ * O Titular continua sendo o único caso especial: o GERID já o marca como
+ * "Requerente" e a linha dele nem tem combobox de parentesco.
  */
+export function mapearParentesco(parentescoPlanilha: string): ParentescoResolvido {
+  if (ehTitular(parentescoPlanilha)) return { grupo: 'Requerente', exato: true };
+
+  const p = normalizar(parentescoPlanilha);
+  for (const entrada of MAPA_PARENTESCO) {
+    if (entrada.termos.some((t) => p.includes(t))) {
+      return { grupo: entrada.grupo, exato: true };
+    }
+  }
+  return { grupo: GRUPOS_PARENTESCO_GERID.outros, exato: false };
+}
+
+// ---------------------------------------------------------------------------
+// Passos 8 e 9 — unidade e órgão pagador
+// ---------------------------------------------------------------------------
+
 export interface OpcaoUnidade {
+  /** Texto completo da linha, como o GERID renderiza. */
   nome: string;
   cidade?: string;
   bairro?: string;
   endereco?: string;
 }
 
+/**
+ * Extrai a cidade de uma linha de unidade do GERID.
+ *
+ * O DOM real mostra que a cidade vem SEMPRE no padrão `CIDADE-UF` logo antes
+ * de `CEP:`. Exemplo capturado em 28/07/2026:
+ *
+ *   AGÊNCIA SANTALUZ AVENIDA NILTON OLIVEIRA SANTOS, SANTALUZ-BA CEP: 48.880-000
+ *   AGÊNCIA QUEIMADAS/BA ALTO DA CHACRINHA QUEIMADAS-BA CEP: 48.860-000
+ *
+ * Cuidados que o padrão resolve:
+ *  - o NOME da agência às vezes traz "/BA" colado ("AGÊNCIA QUEIMADAS/BA"),
+ *    então o nome não serve para extrair cidade;
+ *  - o endereço vem sem acento ("CONCEICAO DO COITE-BA") e o nome com acento —
+ *    `normalizar()` resolve;
+ *  - o endereço pode conter nome de cidade em nome de rua, e era exatamente
+ *    isso que fazia o casamento por texto inteiro escolher a agência errada.
+ */
+export function extrairCidadeDaUnidade(textoLinha: string): string | null {
+  const m = /([A-Za-zÀ-ÿ0-9'.\s]+?)\s*-\s*([A-Z]{2})\s+CEP\s*:/u.exec(textoLinha);
+  const cidade = m?.[1]?.trim();
+  return cidade ? cidade : null;
+}
+
+/**
+ * Escolhe a unidade da MESMA cidade do cliente (regra do Fabrício: o CEP
+ * costuma trazer a agência da cidade e mais várias de cidades vizinhas).
+ *
+ * Mudança em relação à versão anterior: a comparação é por IGUALDADE da cidade
+ * extraída do padrão `CIDADE-UF`, e não mais `includes()` sobre o texto inteiro
+ * da linha. Com `includes()`, uma agência de outra cidade cujo ENDEREÇO citasse
+ * a cidade do cliente era escolhida por engano.
+ *
+ * Nenhuma casar => null. O robô não escolhe cidade errada; vira pendência.
+ */
 export function escolherUnidadePorCidade<T extends OpcaoUnidade>(
   opcoes: T[],
   cidadeCliente: string,
@@ -155,24 +327,49 @@ export function escolherUnidadePorCidade<T extends OpcaoUnidade>(
   const alvo = normalizar(cidadeCliente);
   if (!alvo) return null;
 
-  // Casa pela cidade explícita; se a opção não trouxer cidade, tenta pelo nome
-  // (as unidades costumam se chamar pelo nome da cidade, ex.: "AGÊNCIA CASTRO ALVES").
-  const casa = (o: T): boolean => {
-    const cidade = normalizar(o.cidade);
-    if (cidade) return cidade === alvo || cidade.includes(alvo) || alvo.includes(cidade);
-    return normalizar(o.nome).includes(alvo);
-  };
+  const cidadeDa = (o: T): string =>
+    normalizar(o.cidade ?? extrairCidadeDaUnidade(o.nome) ?? '');
 
-  return opcoes.find(casa) ?? null;
+  // 1) igualdade exata da cidade — o caso normal.
+  const exata = opcoes.find((o) => cidadeDa(o) === alvo);
+  if (exata) return exata;
+
+  // 2) tolerância a sufixo de UF grudado no nome da cidade ("QUEIMADAS/BA").
+  const semUf = (s: string): string => s.replace(/[\/-][a-z]{2}$/u, '').trim();
+  return opcoes.find((o) => semUf(cidadeDa(o)) === semUf(alvo)) ?? null;
 }
 
+// ---------------------------------------------------------------------------
+// Passo 7 — anexos
+// ---------------------------------------------------------------------------
+
 /**
- * Anexos (passo 7): cada tipo de documento nosso vai numa CAIXA nomeada
- * específica do GERID. Não é upload genérico — mandar no slot errado seria
- * um documento "faltando" para o analista do INSS.
+ * Os 11 slots nomeados de anexo do GERID, na ORDEM em que aparecem no DOM.
+ * Confirmado em 28/07/2026. `obrigatorio` reflete o asterisco na tela.
  *
- * Baseado nos slots vistos nos prints. Slots opcionais sem documento
- * correspondente na pasta ficam vazios (o GERID aceita).
+ * Observação: só 2 slots são obrigatórios para o INSS (0 e 4). A nossa regra
+ * exige 4 documentos — é mais restritiva de propósito, decisão do escritório.
+ */
+export const SLOTS_GERID: Array<{ indice: number; rotulo: string; obrigatorio: boolean }> = [
+  { indice: 0, rotulo: 'Termo de representação da entidade conveniada', obrigatorio: true },
+  { indice: 1, rotulo: 'Documento de identificação do procurador (OAB/RG/CNH/CTPS)', obrigatorio: false },
+  { indice: 2, rotulo: 'Comprovante da representação legal, se for o caso', obrigatorio: false },
+  { indice: 3, rotulo: 'Documentos de identificação do representante legal, se for o caso', obrigatorio: false },
+  { indice: 4, rotulo: 'Documentos de identificação do interessado', obrigatorio: true },
+  { indice: 5, rotulo: 'Documento de identificação de todos os membros do grupo familiar', obrigatorio: false },
+  { indice: 6, rotulo: 'Comprovantes das relações previdenciárias do interessado e do grupo familiar', obrigatorio: false },
+  { indice: 7, rotulo: 'Outros documentos', obrigatorio: false },
+  { indice: 8, rotulo: 'Documento Médico', obrigatorio: false },
+  { indice: 9, rotulo: 'Comprovante do cadastro biométrico do titular', obrigatorio: false },
+  { indice: 10, rotulo: 'Comprovante do cadastro biométrico do representante legal', obrigatorio: false },
+];
+
+/** Extensões aceitas por TODOS os slots (confirmado no DOM). Não aceita .doc/.docx. */
+export const EXTENSOES_ACEITAS = ['.pdf', '.png', '.jpg', '.jpeg', '.bmp'];
+
+/**
+ * Mapeia nosso tipo de documento para o slot do GERID.
+ * ✅ Conferido contra o DOM em 28/07/2026: os 6 tipos casam 1:1. Sem correção.
  */
 export const SLOT_GERID_POR_TIPO: Record<string, string> = {
   TERMO_REPRESENTACAO: 'Termo de representação da entidade conveniada',
@@ -187,11 +384,22 @@ export function slotGeridDoDocumento(tipo: string): string | null {
   return SLOT_GERID_POR_TIPO[tipo] ?? null;
 }
 
-/**
- * Monta o plano de preenchimento do grupo familiar (passo 4): para cada
- * integrante que o GERID listou (casado por CPF com a nossa planilha), diz qual
- * parentesco e estado civil marcar. O Titular não tem parentesco a escolher.
- */
+/** Índice do slot (0-10) a partir do nosso tipo — usado como conferência cruzada. */
+export function indiceSlotDoDocumento(tipo: string): number | null {
+  const rotulo = slotGeridDoDocumento(tipo);
+  if (!rotulo) return null;
+  return SLOTS_GERID.find((s) => s.rotulo === rotulo)?.indice ?? null;
+}
+
+export function extensaoAceita(nomeArquivo: string): boolean {
+  const ext = /\.[a-z0-9]+$/i.exec(nomeArquivo)?.[0]?.toLowerCase();
+  return ext ? EXTENSOES_ACEITAS.includes(ext) : false;
+}
+
+// ---------------------------------------------------------------------------
+// Plano do grupo familiar (passo 4)
+// ---------------------------------------------------------------------------
+
 export interface LinhaGrupoFamiliarPlano {
   cpf: string;
   titular: boolean;
@@ -199,6 +407,13 @@ export interface LinhaGrupoFamiliarPlano {
   estadoCivil: string;
 }
 
+/**
+ * Plano de preenchimento do grupo familiar. O GERID já lista as pessoas
+ * (vindas do CadÚnico) — o robô só marca parentesco e estado civil por CPF.
+ *
+ * A linha do requerente (índice 0) NÃO tem combobox de parentesco: o DOM real
+ * não tem `selectParentesco0`, só `selectEstadoCivil0`.
+ */
 export function planoGrupoFamiliar(integrantes: Integrante[]): LinhaGrupoFamiliarPlano[] {
   return integrantes.map((i) => ({
     cpf: i.cpf ?? '',

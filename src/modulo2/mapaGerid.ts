@@ -1,68 +1,89 @@
 /**
- * MAPEAMENTO DAS TELAS DO GERID.
+ * MAPEAMENTO DAS TELAS DO GERID — seletores reais.
  *
- * Este arquivo é o ÚNICO ponto que precisa de acesso ao Gerid real. Todo o
- * resto do Módulo 2 (navegador, sessão, erros, screenshots, relatório) já está
- * implementado e testado.
+ * Preenchido em 28/07/2026 a partir do DOM da aplicação em produção
+ * (`https://atendimento.inss.gov.br`), com o Fabrício ao vivo.
+ * Fonte completa: docs/gerid-mapeamento-real.md.
  *
- * ⚠️ NÃO INVENTE SELETOR. Preencher isto "no chute" faria o robô protocolar
- * dados errados no INSS em nome de pessoas com deficiência. Enquanto
- * `mapeamentoCompleto()` for false, o robô se recusa a protocolar.
+ * ⚠️ NÃO INVENTE SELETOR. Enquanto `mapeamentoCompleto()` for false, o robô se
+ * recusa a protocolar sozinho — de propósito.
  *
- * Como preencher: abra o Gerid logado, siga
- * docs/checklists/revisao-seletor-playwright.md e anote os rótulos EXATOS.
+ * TRÊS ARMADILHAS ESTRUTURAIS QUE VALEM PARA TODO SELETOR AQUI:
+ *
+ * 1. É uma SPA e o DOM NUNCA é limpo. O conteúdo de todas as etapas já
+ *    visitadas continua no HTML, apenas oculto. No passo 3 já havia 3 pares de
+ *    "Voltar/Avançar" simultâneos. Por isso:
+ *      - navegação usa os ids estáveis `#btn-prev` / `#btn-next`;
+ *      - qualquer busca por texto/role exige visibilidade.
+ *
+ * 2. IDs SE REPETEM entre componentes. O radio `1` é "Solteiro" no estado
+ *    civil e "Cônjuge" no parentesco; os 11 `input[type=file]` compartilham
+ *    `id="single-file"`. Sempre escopar no container do componente.
+ *
+ * 3. Os "selects" NÃO são `<select>`. São comboboxes customizados
+ *    (`<input type="text" role="combobox">`) com um container irmão
+ *    `{id}-itens` guardando as opções como `<input type="radio">`.
+ *    `page.selectOption()` não funciona: é clicar no combobox e clicar na opção.
  */
 
-export interface CampoGerid {
-  /** Rótulo acessível do campo, como aparece na tela do Gerid. */
-  rotulo: string;
-  /** Tipo do controle, para o robô saber como preencher. */
-  tipo: 'texto' | 'select' | 'data' | 'arquivo' | 'botao' | 'radio';
-}
+/** Convenção de id observada no GERID. */
+export const PADROES_ID = {
+  /** Container de opções de qualquer combobox. */
+  itens: (idCombobox: string) => `${idCombobox}-itens`,
+  /** Checkbox: sempre começa com "campo-". */
+  checkbox: (sufixo: string) => `campo-${sufixo}`,
+} as const;
+
+export const NAVEGACAO = {
+  avancar: '#btn-next',
+  voltar: '#btn-prev',
+  novoRequerimento: 'Novo Requerimento',
+} as const;
 
 export interface MapaGerid {
-  /** URL da tela inicial (após login). */
   url: string;
+  urlTarefas: string;
 
-  /** Caminho até o formulário: "Novo Requerimento" > "Assistencial à PcD". */
-  navegacao: {
-    novoRequerimento: CampoGerid | null;
-    servicoAssistencialPcD: CampoGerid | null;
+  passo1: {
+    campoBusca: string;
+    containerOpcoes: string;
+    /** id do radio do serviço BPC PcD. */
+    servicoBpcPcd: string;
   };
 
-  /** Campos do requerente. */
-  requerente: {
-    cpf: CampoGerid | null;
-    autorizacaoCadUnico: CampoGerid | null;
-    telefone: CampoGerid | null;
+  passo2: {
+    cpf: string;
+    dataNascimento: string;
+    nome: string;
   };
 
-  /**
-   * Campos POR INTEGRANTE do grupo familiar.
-   * ❗ É a principal pendência: não sabemos quais campos o Gerid pede por
-   * integrante (só nome+CPF? parentesco? renda?). Precisa de print da tela.
-   */
-  grupoFamiliar: {
-    adicionarIntegrante: CampoGerid | null;
-    campos: CampoGerid[];
+  passo3: {
+    autorizacaoCadUnico: string;
   };
 
-  /** Anexos. */
-  documentos: {
-    inputArquivo: CampoGerid | null;
+  passo4: {
+    /** Comboboxes indexados por linha. Requerente = índice 0. */
+    parentesco: (i: number) => string;
+    estadoCivil: (i: number) => string;
+    /** Checkbox "Há alguém que você queira incluir ou excluir?" */
+    incluirExcluirNao: string;
+    incluirExcluirSim: string;
   };
 
-  /** Seleção de agência (pelo CEP, confirmado com o cliente). */
-  agencia: {
-    campoCep: CampoGerid | null;
-    confirmar: CampoGerid | null;
+  passo7: {
+    tipoContato: string;
+    /** Os anexos não têm id único: todos são `input[type=file]#single-file`. */
+    inputArquivo: string;
+    totalSlots: number;
   };
 
-  /** Finalização e comprovante. */
-  finalizacao: {
-    finalizar: CampoGerid | null;
-    numeroProtocolo: CampoGerid | null;
-    baixarComprovante: CampoGerid | null;
+  passo8: {
+    /** ⚠️ único campo do fluxo SEM id — localizar pelo rótulo. */
+    cepRotulo: string;
+    cepPlaceholder: string;
+    abaCep: string;
+    abaMunicipio: string;
+    buscar: string;
   };
 
   /** O que ainda falta confirmar. Vazio = mapeamento completo. */
@@ -70,67 +91,88 @@ export interface MapaGerid {
 }
 
 export const mapaGerid: MapaGerid = {
-  url: process.env.RPA_GERID_URL ?? 'https://gerid.dataprev.gov.br',
+  url: process.env.RPA_GERID_URL ?? 'https://atendimento.inss.gov.br',
+  urlTarefas: 'https://atendimento.inss.gov.br/tarefas',
 
-  navegacao: {
-    novoRequerimento: null,
-    servicoAssistencialPcD: null,
-  },
-  requerente: {
-    cpf: null,
-    autorizacaoCadUnico: null,
-    telefone: null,
-  },
-  grupoFamiliar: {
-    adicionarIntegrante: null,
-    campos: [],
-  },
-  documentos: {
-    inputArquivo: null,
-  },
-  agencia: {
-    campoCep: null,
-    confirmar: null,
-  },
-  finalizacao: {
-    finalizar: null,
-    numeroProtocolo: null,
-    baixarComprovante: null,
+  passo1: {
+    campoBusca: 'input[id="idSelecionarServico"]',
+    containerOpcoes: '#idSelecionarServico-itens',
+    servicoBpcPcd: '1655',
   },
 
-  // 23/07/2026 — telas mapeadas (docs/gerid-fluxo-real.md) e DECISÕES do
-  // escritório já codificadas e testadas em src/modulo2/regrasPreenchimento.ts:
-  //   - respostas fixas (Não/Não/residência/...); estado civil padrão Solteiro;
-  //   - forma de convívio derivada do grupo; parentesco -> grupos do GERID;
-  //   - unidade escolhida pela cidade do cliente; biometria = seguir até o fim
-  //     (o Fabrício resolve em cumprimento de exigência); humano-no-laço.
-  //
-  // O preenchimento dos passos 1–9 (parando no Confirmar) já está ESCRITO em
-  // src/modulo2/preencherGerid.ts, sobre as regras testadas. Mas os seletores
-  // vieram dos PRINTS, não do DOM ao vivo — falta validá-los numa sessão
-  // acompanhada (`pnpm gerid:testar`, na máquina do advogado com o GERID
-  // logado). Enquanto essa validação não passar, o robô continua se recusando
-  // a protocolar — de propósito.
+  passo2: {
+    // ⚠️ o id TEM um ponto: `#idRequerente.cpf` em CSS vira id + classe.
+    cpf: 'input[id="idRequerente.cpf"]',
+    dataNascimento: 'input[id="nascimentoRequerente"]',
+    nome: 'input[id="nomeRequerente"]',
+  },
+
+  passo3: {
+    autorizacaoCadUnico: 'input[id="campo-autorizacaoCadunico"]',
+  },
+
+  passo4: {
+    parentesco: (i: number) => `#selectParentesco${i}`,
+    estadoCivil: (i: number) => `#selectEstadoCivil${i}`,
+    // ⚠️ o prefixo "undefined-" é bug de template do INSS; pode sumir se
+    // corrigirem. Por isso o robô tenta por id e cai para o rótulo.
+    incluirExcluirNao: 'input[id="undefined-Nao"]',
+    incluirExcluirSim: 'input[id="undefined-Sim"]',
+  },
+
+  passo7: {
+    tipoContato: '#selectTipoContato',
+    inputArquivo: 'input[type="file"]',
+    totalSlots: 11,
+  },
+
+  passo8: {
+    cepRotulo: 'CEP',
+    cepPlaceholder: '__.___-___',
+    abaCep: 'Consultar por CEP',
+    abaMunicipio: 'Consultar por Município',
+    buscar: 'Buscar',
+  },
+
+  // -------------------------------------------------------------------------
+  // 28/07/2026 — passos 1 a 7 mapeados a partir do DOM real e validados com o
+  // Fabrício. Correções aplicadas em regrasPreenchimento.ts (estado civil,
+  // parentesco, escolha de unidade). O que falta é só o fim do fluxo:
+  // -------------------------------------------------------------------------
   pendencias: [
-    'VALIDAR os seletores do preenchimento numa sessão acompanhada no GERID real ' +
-      '(`pnpm gerid:testar`): eles vieram de prints, não do DOM. Conferir os rótulos ' +
-      'marcados VALIDAR em preencherGerid.ts (opção "sozinho", parentescos cônjuge/' +
-      'filho/avô, disparo da busca de CPF).',
+    'PASSO 8/9: descobrir QUAL elemento representa cada agência na lista de ' +
+      'resultados. Não são radio, button, a, li nem td — provavelmente div com ' +
+      'onClick. Sem isso o robô lê a lista e identifica a agência certa, mas não ' +
+      'consegue selecioná-la: para e devolve o controle ao advogado.',
+    'PASSO 10 (Confirmar): tela não capturada.',
+    'PASSO 11 (Comprovante): não capturado — botão "Gerar Comprovante" e onde ' +
+      'aparece o número do protocolo. Bloqueia protocolar() de ponta a ponta.',
+    'Regra do Bolsa Família: o campo tem 4 opções, não Sim/Não. Sem regra do ' +
+      'escritório o robô deixa em branco e avisa.',
+    'Confirmar se "Forma de Convívio" existe: não apareceu no DOM do passo 7.',
   ],
 };
 
-/** True quando o mapeamento foi confirmado no Gerid real e o robô pode operar. */
+/**
+ * True quando o robô pode protocolar SOZINHO, de ponta a ponta.
+ *
+ * Hoje é false, e vai continuar false enquanto o passo 11 não for mapeado —
+ * sem ele não há como ler o número do protocolo, e a regra do projeto é que um
+ * caso só vira sucesso quando o GERID devolve o protocolo.
+ */
 export function mapeamentoCompleto(mapa: MapaGerid = mapaGerid): boolean {
-  if (mapa.pendencias.length > 0) return false;
+  return mapa.pendencias.length === 0;
+}
 
-  const obrigatorios = [
-    mapa.navegacao.novoRequerimento,
-    mapa.navegacao.servicoAssistencialPcD,
-    mapa.requerente.cpf,
-    mapa.documentos.inputArquivo,
-    mapa.agencia.campoCep,
-    mapa.finalizacao.finalizar,
-    mapa.finalizacao.numeroProtocolo,
-  ];
-  return obrigatorios.every((c) => c !== null) && mapa.grupoFamiliar.campos.length > 0;
+/**
+ * True quando o robô pode PREENCHER até a tela de Confirmar e parar.
+ *
+ * Este é o modo de operação escolhido pelo escritório (humano no laço) e não
+ * depende das pendências acima: preencher e parar não envia nada ao INSS, e
+ * o que não der para preencher vira aviso na tela de revisão.
+ *
+ * Os passos 1 a 7 estão mapeados contra o DOM real — por isso é true.
+ */
+export function preenchimentoAteConfirmarDisponivel(): boolean {
+  return true;
 }
