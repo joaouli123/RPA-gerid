@@ -27,6 +27,9 @@ gerid-telas/
 *.log
 npm-debug.log*
 
+# Perfil/sessão do Playwright (sessão autenticada do GERID — nunca versionar)
+.perfil-gerid/
+
 # SO / editor
 .DS_Store
 Thumbs.db
