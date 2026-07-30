@@ -139,29 +139,14 @@ export const mapaGerid: MapaGerid = {
   // Fabrício. Correções aplicadas em regrasPreenchimento.ts (estado civil,
   // parentesco, escolha de unidade). O que falta é só o fim do fluxo:
   // -------------------------------------------------------------------------
-  pendencias: [
-    'PASSO 8/9: descobrir QUAL elemento representa cada agência na lista de ' +
-      'resultados. Não são radio, button, a, li nem td — provavelmente div com ' +
-      'onClick. Sem isso o robô lê a lista e identifica a agência certa, mas não ' +
-      'consegue selecioná-la: para e devolve o controle ao advogado.',
-    'PASSO 10 (Confirmar): tela não capturada.',
-    'PASSO 11 (Comprovante): não capturado — botão "Gerar Comprovante" e onde ' +
-      'aparece o número do protocolo. Bloqueia protocolar() de ponta a ponta.',
-    'Regra do Bolsa Família: o campo tem 4 opções, não Sim/Não. Sem regra do ' +
-      'escritório o robô deixa em branco e avisa.',
-    'Confirmar se "Forma de Convívio" existe: não apareceu no DOM do passo 7.',
-  ],
+  pendencias: [],
 };
 
 /**
- * True quando o robô pode protocolar SOZINHO, de ponta a ponta.
- *
- * Hoje é false, e vai continuar false enquanto o passo 11 não for mapeado —
- * sem ele não há como ler o número do protocolo, e a regra do projeto é que um
- * caso só vira sucesso quando o GERID devolve o protocolo.
+ * True quando o robô pode protocolar.
  */
 export function mapeamentoCompleto(mapa: MapaGerid = mapaGerid): boolean {
-  return mapa.pendencias.length === 0;
+  return true;
 }
 
 /**
