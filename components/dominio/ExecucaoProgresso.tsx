@@ -58,14 +58,20 @@ export function ExecucaoProgresso({
 
   // Enquanto o job roda no servidor, consulta o progresso periodicamente.
   useEffect(() => {
-    if (!rodando) return;
+    // Se estiver concluída, não precisa consultar.
+    if (concluida) return;
+    
+    // Se estiver rodando, consulta rápido (800ms). Se não, consulta devagar (3s)
+    // para descobrir se a extensão iniciou o processo por fora.
+    const interval = rodando ? 800 : 3000;
+    
     const timer = setInterval(() => {
       buscarProgresso().catch((e: unknown) => {
         setErro(e instanceof Error ? e.message : 'Falha ao consultar o progresso.');
       });
-    }, 800);
+    }, interval);
     return () => clearInterval(timer);
-  }, [rodando, buscarProgresso]);
+  }, [rodando, concluida, buscarProgresso]);
 
   // Quando termina, atualiza as outras telas (histórico/relatórios).
   useEffect(() => {
@@ -103,10 +109,9 @@ export function ExecucaoProgresso({
         <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
           <Icone nome="alerta" className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
-            <strong>Faça login no Gerid antes de disparar.</strong> O robô abre o navegador
-            reaproveitando a sessão já autenticada e protocola de verdade. Um caso só aparece como
-            <strong> Protocolado</strong> quando o Gerid devolve o número do protocolo — nunca por
-            suposição. Qualquer problema vira <strong>Erro</strong> com o motivo.
+            <strong>Automação via Extensão.</strong> O robô agora roda diretamente no seu navegador
+            através da Extensão do RPA. Faça login no Gerid, abra a extensão e clique em Iniciar. 
+            O status será atualizado aqui em tempo real.
           </div>
         </div>
       ) : (
@@ -138,7 +143,7 @@ export function ExecucaoProgresso({
             <div className="text-2xl font-semibold tabular-nums">{casos.length}</div>
           </div>
           <div className="flex items-center gap-2">
-            {rodando && <StatusPill tom="azul">Executando</StatusPill>}
+            {rodando && <StatusPill tom="azul">Executando via Extensão</StatusPill>}
             {concluida && <StatusPill tom="verde">Concluída</StatusPill>}
             {!rodando && casos.some((c) => c.status !== 'pendente') && (
               <Botao
@@ -149,21 +154,12 @@ export function ExecucaoProgresso({
                 Limpar Histórico
               </Botao>
             )}
-            <Botao
-              onClick={disparar}
-              disabled={!geridPronto || rodando || iniciando || casos.length === 0}
-            >
-              <Icone nome="raio" className="h-4 w-4" />
-              {!geridPronto
-                ? 'Em desenvolvimento'
-                : rodando
-                  ? 'Executando…'
-                  : iniciando
-                    ? 'Iniciando…'
-                    : concluida
-                      ? 'Executar de novo'
-                      : 'Disparar robô'}
-            </Botao>
+            {!rodando && !concluida && casos.length > 0 && (
+              <div className="text-sm font-medium text-amber-600 dark:text-amber-400 flex items-center gap-2">
+                <Icone nome="raio" className="h-4 w-4" />
+                Inicie pela Extensão no Gerid
+              </div>
+            )}
           </div>
         </div>
 

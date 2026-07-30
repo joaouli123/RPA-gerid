@@ -403,6 +403,39 @@ export async function limparAcaoRevisao(chave: string): Promise<void> {
   await persistir();
 }
 
+export async function limparExecucaoAtual(): Promise<void> {
+  const estado = await carregarEstado();
+  estado.execucaoAtual = null;
+  await persistir();
+}
+
+/**
+ * Atualiza o status de um caso específico durante a execução atual.
+ * Utilizado pela API da Extensão do Chrome.
+ */
+export async function atualizarStatusCaso(
+  idExecucao: string,
+  cpf: string,
+  status: 'sucesso' | 'erro',
+  motivoErro?: string,
+  protocolo?: string,
+): Promise<void> {
+  const estado = await carregarEstado();
+  const atual = estado.execucaoAtual;
+  if (!atual || atual.id !== idExecucao) return;
+
+  const caso = atual.casos.find((c) => c.cpf === cpf);
+  if (!caso) return;
+
+  caso.status = status;
+  if (status === 'erro') {
+    caso.motivoErro = motivoErro;
+  } else if (status === 'sucesso') {
+    caso.protocolo = protocolo;
+  }
+  await persistir();
+}
+
 // ---------------------------------------------------------------------------
 // Execuções
 // ---------------------------------------------------------------------------
