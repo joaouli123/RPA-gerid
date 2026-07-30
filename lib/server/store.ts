@@ -511,7 +511,7 @@ async function processarExecucao(id: string): Promise<void> {
     urlGerid: process.env.RPA_GERID_URL ?? 'https://gerid.dataprev.gov.br',
     perfilNavegador:
       process.env.RPA_PERFIL_NAVEGADOR ?? path.join(process.cwd(), '.perfil-gerid'),
-    headless: process.env.RPA_HEADLESS === '1',
+    headless: process.env.RPA_HEADLESS ? process.env.RPA_HEADLESS === '1' : true,
     pastaSaida: path.join(process.cwd(), 'saida'),
     timeoutMs: Number(process.env.RPA_TIMEOUT_MS ?? 30000),
   });

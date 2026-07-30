@@ -6,7 +6,8 @@
   "description": "RPA que protocola requerimentos de BPC/LOAS no Gerid (INSS/Dataprev) a partir de dados no Google Drive.",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "postinstall": "npx playwright install chromium",
+    "build": "npx playwright install chromium && next build",
     "start": "next start",
     "test": "vitest run",
     "test:watch": "vitest",

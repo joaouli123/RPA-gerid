@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
+import { execSync } from 'node:child_process';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import {
   ErroGerid,
@@ -52,13 +53,41 @@ export class RoboGeridPlaywright implements RoboGerid {
 
     await fs.mkdir(this.opcoes.pastaSaida, { recursive: true });
 
-    // Perfil persistente: herda a sessão que o operador já autenticou.
-    this.contexto = await chromium.launchPersistentContext(this.opcoes.perfilNavegador, {
+    const opcoesContexto = {
       headless: this.opcoes.headless,
       acceptDownloads: true,
       downloadsPath: this.opcoes.pastaSaida,
       viewport: null,
-    });
+    };
+
+    // Perfil persistente: herda a sessão que o operador já autenticou.
+    try {
+      this.contexto = await chromium.launchPersistentContext(
+        this.opcoes.perfilNavegador,
+        opcoesContexto,
+      );
+    } catch (erro) {
+      const msg = erro instanceof Error ? erro.message : String(erro);
+      if (
+        msg.includes("Executable doesn't exist") ||
+        msg.includes('playwright install') ||
+        msg.includes('chrome-linux64')
+      ) {
+        console.info('[rpa-gerid] Binários do Chromium não encontrados. Baixando Playwright Chromium...');
+        try {
+          execSync('npx playwright install chromium', { stdio: 'inherit' });
+        } catch (eInstalacao) {
+          console.error('[rpa-gerid] Falha no npx playwright install chromium:', eInstalacao);
+        }
+        this.contexto = await chromium.launchPersistentContext(
+          this.opcoes.perfilNavegador,
+          opcoesContexto,
+        );
+      } else {
+        throw erro;
+      }
+    }
+
     this.pagina = this.contexto.pages()[0] ?? (await this.contexto.newPage());
     this.pagina.setDefaultTimeout(this.opcoes.timeoutMs);
 

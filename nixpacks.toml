@@ -1,0 +1,27 @@
+[providers]
+provider = "node"
+
+[phases.setup]
+nixPkgs = [
+  "chromium",
+  "glib",
+  "nss",
+  "nspr",
+  "atk",
+  "cups",
+  "dbus",
+  "expat",
+  "fontconfig",
+  "freetype",
+  "gdk-pixbuf",
+  "gtk3",
+  "pango",
+  "cairo",
+  "alsa-lib"
+]
+
+[phases.build]
+cmds = [
+  "npx playwright install chromium",
+  "pnpm build"
+]
