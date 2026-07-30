@@ -508,7 +508,7 @@ async function processarExecucao(id: string): Promise<void> {
   }
 
   const robo = new RoboGeridPlaywright({
-    urlGerid: process.env.RPA_GERID_URL ?? 'https://gerid.dataprev.gov.br',
+    urlGerid: process.env.RPA_GERID_URL ?? 'https://novorequerimento.inss.gov.br/',
     perfilNavegador:
       process.env.RPA_PERFIL_NAVEGADOR ?? path.join(process.cwd(), '.perfil-gerid'),
     headless: process.env.RPA_HEADLESS ? process.env.RPA_HEADLESS === '1' : true,
