@@ -74,11 +74,11 @@ export async function middleware(req: NextRequest) {
   cabecalhos.set('x-nonce', nonce);
   const seguir = () => NextResponse.next({ request: { headers: cabecalhos } });
 
-  const publica = ROTAS_PUBLICAS.has(pathname);
+  const publica = ROTAS_PUBLICAS.has(pathname) || pathname.startsWith('/api/ext/');
   const sessao = await lerSessao(req.cookies.get(COOKIE_SESSAO)?.value).catch(() => null);
 
   // Já logado tentando abrir /login -> manda para o painel.
-  if (publica && sessao) {
+  if (ROTAS_PUBLICAS.has(pathname) && sessao) {
     return comSeguranca(NextResponse.redirect(new URL('/painel', req.url)), req, nonce);
   }
 
