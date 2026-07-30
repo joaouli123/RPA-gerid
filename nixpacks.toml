@@ -1,8 +1,0 @@
-[providers]
-provider = "node"
-
-[phases.build]
-cmds = [
-  "npx playwright install --with-deps chromium",
-  "pnpm build"
-]
