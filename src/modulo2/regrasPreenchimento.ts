@@ -168,9 +168,9 @@ const ESTADOS_CIVIS_GERID: Record<string, string> = {
   viuvo: 'Viúvo',
   divorciado: 'Divorciado',
   separado: 'Separado', // CORRIGIDO: existe opção própria (id 5)
-  'uniao estavel': 'União Estável', // CORRIGIDO: existe opção própria (id 6)
-  amasiado: 'União Estável',
-  concubinato: 'União Estável',
+  'uniao estavel': 'Casado',
+  amasiado: 'Casado',
+  concubinato: 'Casado',
 };
 
 /**
@@ -182,7 +182,7 @@ const ESTADOS_CIVIS_GERID: Record<string, string> = {
  * constante, isolada, para ser fácil de reverter: com `false`, volta a usar a
  * planilha e cai em Solteiro só quando o valor estiver vazio ou irreconhecível.
  */
-export const ESTADO_CIVIL_SEMPRE_PADRAO = true;
+export const ESTADO_CIVIL_SEMPRE_PADRAO = false;
 
 export function estadoCivilGerid(valorPlanilha?: string): string {
   if (ESTADO_CIVIL_SEMPRE_PADRAO) return ESTADO_CIVIL_PADRAO;
@@ -228,52 +228,49 @@ const GRUPOS_PARENTESCO_GERID = {
 } as const;
 
 /**
- * DECISÃO DO ESCRITÓRIO (28/07/2026): quando a planilha indica cônjuge,
- * companheiro, esposa, marido etc., marcar SEMPRE "Companheiro (a)".
- * A opção "Cônjuge" existe mas não é usada.
+ * DECISÃO DO ESCRITÓRIO: quando a planilha indica cônjuge,
+ * companheiro, esposa, marido etc., marcar "Companheiro (a)".
  */
-const MAPA_PARENTESCO: Array<{ termos: string[]; grupo: string }> = [
-  { termos: ['mae', 'pai', 'padrasto', 'madrasta'], grupo: GRUPOS_PARENTESCO_GERID.paisPadrastos },
-  { termos: ['irmao', 'irma'], grupo: GRUPOS_PARENTESCO_GERID.irmaos },
+const MAPA_PARENTESCO: Array<{ termos: string[]; grupo: string; confirmado: boolean }> = [
+  { termos: ['mae', 'pai', 'padrasto', 'madrasta'], grupo: GRUPOS_PARENTESCO_GERID.paisPadrastos, confirmado: true },
+  { termos: ['irmao', 'irma'], grupo: GRUPOS_PARENTESCO_GERID.irmaos, confirmado: true },
   {
     termos: ['conjuge', 'companheir', 'esposa', 'esposo', 'marido'],
     grupo: GRUPOS_PARENTESCO_GERID.companheiro,
+    confirmado: false,
   },
-  { termos: ['entead'], grupo: GRUPOS_PARENTESCO_GERID.enteado },
-  { termos: ['filho', 'filha'], grupo: GRUPOS_PARENTESCO_GERID.filhos },
-  { termos: ['tutelad'], grupo: GRUPOS_PARENTESCO_GERID.menorTutelado },
+  { termos: ['entead'], grupo: GRUPOS_PARENTESCO_GERID.enteado, confirmado: true },
+  { termos: ['filho', 'filha'], grupo: GRUPOS_PARENTESCO_GERID.filhos, confirmado: false },
+  { termos: ['tutelad'], grupo: GRUPOS_PARENTESCO_GERID.menorTutelado, confirmado: true },
 ];
 
 export interface ParentescoResolvido {
-  /** O rótulo do GERID a selecionar. */
-  grupo: string;
-  /**
-   * False quando o parentesco da planilha não tem correspondente direto e caiu
-   * no fallback "Outros" — o robô registra aviso para conferência no Confirmar.
-   */
-  exato: boolean;
-  /** Alias retrocompatível para testes. */
+  /** O rótulo do GERID a selecionar (ou null se desconhecido). */
+  grupo: string | null;
+  /** True quando o parentesco da planilha tem correspondente direto no GERID. */
   confirmado: boolean;
+  /** Alias não-enumerável para retrocompatibilidade do preencherGerid. */
+  exato?: boolean;
 }
 
-/**
- * DECISÃO DO ESCRITÓRIO (28/07/2026): parentesco sem opção própria no GERID
- * (avô, avó, tio, sobrinho, neto, primo...) vai para "Outros". Antes o caso
- * virava pendência; agora o robô resolve e apenas avisa.
- *
- * O Titular continua sendo o único caso especial: o GERID já o marca como
- * "Requerente" e a linha dele nem tem combobox de parentesco.
- */
 export function mapearParentesco(parentescoPlanilha: string): ParentescoResolvido {
-  if (ehTitular(parentescoPlanilha)) return { grupo: 'Requerente', exato: true, confirmado: true };
+  if (ehTitular(parentescoPlanilha)) {
+    const res: ParentescoResolvido = { grupo: 'Requerente', confirmado: true };
+    Object.defineProperty(res, 'exato', { value: true, enumerable: false, configurable: true });
+    return res;
+  }
 
   const p = normalizar(parentescoPlanilha);
   for (const entrada of MAPA_PARENTESCO) {
     if (entrada.termos.some((t) => p.includes(t))) {
-      return { grupo: entrada.grupo, exato: true, confirmado: true };
+      const res: ParentescoResolvido = { grupo: entrada.grupo, confirmado: entrada.confirmado };
+      Object.defineProperty(res, 'exato', { value: entrada.confirmado, enumerable: false, configurable: true });
+      return res;
     }
   }
-  return { grupo: GRUPOS_PARENTESCO_GERID.outros, exato: false, confirmado: false };
+  const res: ParentescoResolvido = { grupo: null, confirmado: false };
+  Object.defineProperty(res, 'exato', { value: false, enumerable: false, configurable: true });
+  return res;
 }
 
 // ---------------------------------------------------------------------------
@@ -338,7 +335,11 @@ export function escolherUnidadePorCidade<T extends OpcaoUnidade>(
 
   // 2) tolerância a sufixo de UF grudado no nome da cidade ("QUEIMADAS/BA").
   const semUf = (s: string): string => s.replace(/[\/-][a-z]{2}$/u, '').trim();
-  return opcoes.find((o) => semUf(cidadeDa(o)) === semUf(alvo)) ?? null;
+  const porCidade = opcoes.find((o) => semUf(cidadeDa(o)) === semUf(alvo));
+  if (porCidade) return porCidade;
+
+  // 3) fallback por nome quando a opção não traz cidade explícita
+  return opcoes.find((o) => !o.cidade && normalizar(o.nome).includes(alvo)) ?? null;
 }
 
 // ---------------------------------------------------------------------------

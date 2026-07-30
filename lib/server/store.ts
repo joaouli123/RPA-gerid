@@ -513,7 +513,7 @@ async function processarExecucao(id: string): Promise<void> {
       process.env.RPA_PERFIL_NAVEGADOR ?? path.join(process.cwd(), '.perfil-gerid'),
     headless: process.env.RPA_HEADLESS ? process.env.RPA_HEADLESS === '1' : true,
     pastaSaida: path.join(process.cwd(), 'saida'),
-    timeoutMs: Number(process.env.RPA_TIMEOUT_MS ?? 30000),
+    timeoutMs: Number(process.env.RPA_TIMEOUT_MS ?? 5000),
   });
 
   /** Marca um caso e persiste. */

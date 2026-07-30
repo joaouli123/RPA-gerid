@@ -382,7 +382,7 @@ async function passo4GrupoFamiliar(
     const okP = await escolherNoCombobox(
       page,
       mapaGerid.passo4.parentesco(linha.indice),
-      resolvido.grupo,
+      resolvido.grupo ?? '',
     );
 
     if (!okP) {
