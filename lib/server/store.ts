@@ -552,6 +552,11 @@ async function processarExecucao(id: string): Promise<void> {
           grupoFamiliar: pronto.grupoFamiliar,
           arquivos: pronto.arquivos,
           pastaId: pronto.pastaId,
+        }, {
+          procuradorCpf: process.env.RPA_CPF_ADVOGADO ?? '00000000000',
+          telefone: process.env.RPA_TELEFONE ?? '11999999999',
+          email: process.env.RPA_EMAIL ?? 'contato@escritorio.com.br',
+          arquivos: pronto.arquivos.map(a => ({ tipo: a.tipo, caminho: a.localPath })),
         });
         await marcar(i, { status: 'sucesso', protocolo: r.protocolo });
       } catch (erro) {

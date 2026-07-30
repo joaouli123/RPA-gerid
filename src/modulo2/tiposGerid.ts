@@ -52,7 +52,7 @@ export interface RoboGerid {
   /** Prepara o navegador e confirma que há sessão autenticada no Gerid. */
   iniciar(): Promise<void>;
   /** Protocola UM caso e devolve o número do protocolo. */
-  protocolar(caso: CasoParaProtocolar): Promise<ResultadoProtocolo>;
+  protocolar(caso: CasoParaProtocolar, opcoes: import('../modulo2/preencherGerid').OpcoesPreenchimento): Promise<ResultadoProtocolo>;
   /** Fecha o navegador. */
   encerrar(): Promise<void>;
 }

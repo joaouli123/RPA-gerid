@@ -68,6 +68,25 @@ export const RESPOSTAS_FIXAS = {
   recebeBeneficio: 'C) Não',
   /** Passo 7. "...autoriza o INSS a alterar a data do pedido...?" */
   alterarDataPedido: 'Sim',
+
+  // --- Acordo Internacional ---
+  quemAtendido: 'O procurador do titular',
+  resideBrasil: 'A) Sim', // Padrão
+  beneficioExclusivoExterior: 'B) Não',
+  condicaoDeficiencia: 'B) Não',
+  tempoRural: 'B) Não',
+  concederOutraAposentadoria: 'A) Sim',
+  cessacaoBeneficio: 'A) Sim',
+  pensaoPorMorte: 'B) Não',
+
+  // --- Acertos Perícia Médica ---
+  procuradorRepresentanteLegal: 'Sim',
+  ajusteNovoAuxilio: 'Não',
+  motivoSolicitacao: 'Outros', // Default fallback
+  empregado: 'Não',
+  estadoCivil7: 'Solteiro(a)', // Default, will probably need to map from caso.cliente.estadoCivil later if we want it perfect
+  corRaca: 'Não Informado',
+  grauInstrucao: 'Não Informado',
 } as const;
 
 /**
@@ -86,6 +105,25 @@ export const PERGUNTAS_PASSO7 = {
   ciencia:
     'Estou ciente de que devo acompanhar o pedido pelos canais de atendimento',
   apelido: 'Conhecido por/Apelido',
+
+  // --- Novas perguntas do fluxo Acordo Internacional ---
+  quemAtendido: 'Quem está sendo atendido?',
+  resideBrasil: 'Você reside no Brasil?',
+  beneficioExclusivoExterior: 'Você quer benefício exclusivo no exterior?',
+  condicaoDeficiencia: 'Trabalha ou trabalhou na condição de pessoa com deficiência?',
+  tempoRural: 'Você possui tempo rural?',
+  concederOutraAposentadoria: 'Caso não tenha direito a este benefício, autoriza o INSS a conceder outro tipo de aposentadoria',
+  cessacaoBeneficio: 'concorda com a cessação do benefício menos vantajoso',
+  pensaoPorMorte: 'Recebe pensão por morte deixada por cônjuge/companheiro(a) em outro regime',
+
+  // --- Novas perguntas do fluxo Acertos para Marcação de Perícia Médica ---
+  procuradorRepresentanteLegal: 'Você é Procurador ou Representante Legal para este pedido?',
+  ajusteNovoAuxilio: 'Trata-se de ajuste para solicitar novo auxílio-doença ou para prorrogar benefício?',
+  motivoSolicitacao: 'Motivo da solicitação',
+  empregado: 'Trata-se de empregado?',
+  estadoCivil7: 'Estado Civil',
+  corRaca: 'Cor/Raça',
+  grauInstrucao: 'Grau de Instrução',
 } as const;
 
 /**

@@ -207,10 +207,13 @@ async function responderPergunta(
   trechoPergunta: string,
   resposta: string,
   avisos: string[],
+  opcional = false
 ): Promise<void> {
   const id = await comboPorPergunta(page, trechoPergunta);
   if (!id) {
-    avisos.push(`Não encontrei a pergunta "${trechoPergunta}" — responda manualmente.`);
+    if (!opcional) {
+      avisos.push(`Não encontrei a pergunta "${trechoPergunta}" — responda manualmente.`);
+    }
     return;
   }
   const ok = await escolherNoCombobox(page, id, resposta);
@@ -494,6 +497,25 @@ async function passo7DadosRequerente(
     RESPOSTAS_FIXAS.alterarDataPedido,
     avisos,
   );
+
+  // --- Perguntas dinâmicas (ex: Acordo Internacional) ---
+  await responderPergunta(page, PERGUNTAS_PASSO7.quemAtendido, RESPOSTAS_FIXAS.quemAtendido, avisos, true);
+  await responderPergunta(page, PERGUNTAS_PASSO7.resideBrasil, RESPOSTAS_FIXAS.resideBrasil, avisos, true);
+  await responderPergunta(page, PERGUNTAS_PASSO7.beneficioExclusivoExterior, RESPOSTAS_FIXAS.beneficioExclusivoExterior, avisos, true);
+  await responderPergunta(page, PERGUNTAS_PASSO7.condicaoDeficiencia, RESPOSTAS_FIXAS.condicaoDeficiencia, avisos, true);
+  await responderPergunta(page, PERGUNTAS_PASSO7.tempoRural, RESPOSTAS_FIXAS.tempoRural, avisos, true);
+  await responderPergunta(page, PERGUNTAS_PASSO7.concederOutraAposentadoria, RESPOSTAS_FIXAS.concederOutraAposentadoria, avisos, true);
+  await responderPergunta(page, PERGUNTAS_PASSO7.cessacaoBeneficio, RESPOSTAS_FIXAS.cessacaoBeneficio, avisos, true);
+  await responderPergunta(page, PERGUNTAS_PASSO7.pensaoPorMorte, RESPOSTAS_FIXAS.pensaoPorMorte, avisos, true);
+
+  // --- Perguntas dinâmicas (Acertos para Marcação de Perícia Médica) ---
+  await responderPergunta(page, PERGUNTAS_PASSO7.procuradorRepresentanteLegal, RESPOSTAS_FIXAS.procuradorRepresentanteLegal, avisos, true);
+  await responderPergunta(page, PERGUNTAS_PASSO7.ajusteNovoAuxilio, RESPOSTAS_FIXAS.ajusteNovoAuxilio, avisos, true);
+  await responderPergunta(page, PERGUNTAS_PASSO7.motivoSolicitacao, RESPOSTAS_FIXAS.motivoSolicitacao, avisos, true);
+  await responderPergunta(page, PERGUNTAS_PASSO7.empregado, RESPOSTAS_FIXAS.empregado, avisos, true);
+  await responderPergunta(page, PERGUNTAS_PASSO7.estadoCivil7, RESPOSTAS_FIXAS.estadoCivil7, avisos, true);
+  await responderPergunta(page, PERGUNTAS_PASSO7.corRaca, RESPOSTAS_FIXAS.corRaca, avisos, true);
+  await responderPergunta(page, PERGUNTAS_PASSO7.grauInstrucao, RESPOSTAS_FIXAS.grauInstrucao, avisos, true);
 
   // --- Bolsa Família: 4 opções, e o escritório ainda não definiu a regra.
   // Deixar em branco e avisar é melhor do que declarar errado ao INSS.

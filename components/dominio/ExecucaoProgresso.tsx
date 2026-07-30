@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CasoExecucao, ExecucaoAtual } from '@/lib/types';
-import { acaoIniciarExecucao } from '@/lib/server/actions';
+import { acaoIniciarExecucao, acaoLimparExecucao } from '@/lib/server/actions';
 import { Card } from '@/components/ui/Card';
 import { Botao } from '@/components/ui/Botao';
 import { StatusPill, type Tom } from '@/components/ui/Badge';
@@ -85,6 +85,18 @@ export function ExecucaoProgresso({
     });
   }
 
+  function limpar() {
+    setErro(null);
+    startTransition(async () => {
+      try {
+        await acaoLimparExecucao();
+        setAtual(null);
+      } catch (e: unknown) {
+        setErro(e instanceof Error ? e.message : 'Não foi possível limpar a execução.');
+      }
+    });
+  }
+
   return (
     <div className="space-y-4">
       {geridPronto ? (
@@ -128,6 +140,15 @@ export function ExecucaoProgresso({
           <div className="flex items-center gap-2">
             {rodando && <StatusPill tom="azul">Executando</StatusPill>}
             {concluida && <StatusPill tom="verde">Concluída</StatusPill>}
+            {!rodando && casos.some((c) => c.status !== 'pendente') && (
+              <Botao
+                variante="fantasma"
+                onClick={limpar}
+                disabled={iniciando}
+              >
+                Limpar Histórico
+              </Botao>
+            )}
             <Botao
               onClick={disparar}
               disabled={!geridPronto || rodando || iniciando || casos.length === 0}

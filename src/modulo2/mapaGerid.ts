@@ -55,6 +55,9 @@ export interface MapaGerid {
     cpf: string;
     dataNascimento: string;
     nome: string;
+    acompanharProcessoSim?: string;
+    acompanharProcessoNao?: string;
+    paisesAcordo?: string;
   };
 
   passo3: {
@@ -86,6 +89,10 @@ export interface MapaGerid {
     buscar: string;
   };
 
+  passo10: {
+    declaracaoConfirmar: string;
+  };
+
   /** O que ainda falta confirmar. Vazio = mapeamento completo. */
   pendencias: string[];
 }
@@ -105,6 +112,10 @@ export const mapaGerid: MapaGerid = {
     cpf: 'input[id="idRequerente.cpf"]',
     dataNascimento: 'input[id="nascimentoRequerente"]',
     nome: 'input[id="nomeRequerente"]',
+    // Mapeamentos novos (ex: Acordo Internacional / Acompanhar Processo)
+    acompanharProcessoSim: 'input[id="acompanharProcesso-Sim"]',
+    acompanharProcessoNao: 'input[id="acompanharProcesso-Nao"]',
+    paisesAcordo: 'input[id="paisesAcordo"]',
   },
 
   passo3: {
@@ -132,6 +143,10 @@ export const mapaGerid: MapaGerid = {
     abaCep: 'Consultar por CEP',
     abaMunicipio: 'Consultar por Município',
     buscar: 'Buscar',
+  },
+
+  passo10: {
+    declaracaoConfirmar: 'input[id="campo-declaracaoConfirmar"]',
   },
 
   // -------------------------------------------------------------------------

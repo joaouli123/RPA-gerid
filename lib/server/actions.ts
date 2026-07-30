@@ -10,6 +10,7 @@ import {
   registrarAcaoRevisao,
   salvarClienteNaPlanilha,
   salvarConfig,
+  limparExecucaoAtual,
 } from '@/lib/server/store';
 import type { EntradaCadastro } from '@/src/domain/validacaoCadastro';
 import type { AcaoRevisao, OverridesConfig } from '@/lib/types';
@@ -45,6 +46,12 @@ export async function acaoIniciarExecucao(): Promise<void> {
   await iniciarExecucao();
   revalidatePath('/execucao');
   revalidatePath('/relatorios');
+  revalidatePath('/painel');
+}
+
+export async function acaoLimparExecucao(): Promise<void> {
+  await limparExecucaoAtual();
+  revalidatePath('/execucao');
   revalidatePath('/painel');
 }
 
