@@ -98,7 +98,7 @@ async function carregarEstado(): Promise<Estado> {
 // estiver lendo recebe JSON inválido.
 let filaGravacao: Promise<void> = Promise.resolve();
 
-async function persistir(): Promise<void> {
+export async function persistir(): Promise<void> {
   filaGravacao = filaGravacao.then(gravar, gravar);
   return filaGravacao;
 }
@@ -632,7 +632,7 @@ async function processarExecucao(id: string): Promise<void> {
  * o status. Vale tanto para a execução que rodou quanto para a que foi
  * recusada de saída.
  */
-async function finalizarExecucao(id: string): Promise<void> {
+export async function finalizarExecucao(id: string): Promise<void> {
   const estado = await carregarEstado();
   const atual = estado.execucaoAtual;
   if (!atual || atual.id !== id) return;
