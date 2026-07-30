@@ -252,6 +252,8 @@ export interface ParentescoResolvido {
    * no fallback "Outros" — o robô registra aviso para conferência no Confirmar.
    */
   exato: boolean;
+  /** Alias retrocompatível para testes. */
+  confirmado: boolean;
 }
 
 /**
@@ -263,15 +265,15 @@ export interface ParentescoResolvido {
  * "Requerente" e a linha dele nem tem combobox de parentesco.
  */
 export function mapearParentesco(parentescoPlanilha: string): ParentescoResolvido {
-  if (ehTitular(parentescoPlanilha)) return { grupo: 'Requerente', exato: true };
+  if (ehTitular(parentescoPlanilha)) return { grupo: 'Requerente', exato: true, confirmado: true };
 
   const p = normalizar(parentescoPlanilha);
   for (const entrada of MAPA_PARENTESCO) {
     if (entrada.termos.some((t) => p.includes(t))) {
-      return { grupo: entrada.grupo, exato: true };
+      return { grupo: entrada.grupo, exato: true, confirmado: true };
     }
   }
-  return { grupo: GRUPOS_PARENTESCO_GERID.outros, exato: false };
+  return { grupo: GRUPOS_PARENTESCO_GERID.outros, exato: false, confirmado: false };
 }
 
 // ---------------------------------------------------------------------------
