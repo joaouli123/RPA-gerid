@@ -145,13 +145,13 @@ export function ExecucaoProgresso({
           <div className="flex items-center gap-2">
             {rodando && <StatusPill tom="azul">Executando via Extensão</StatusPill>}
             {concluida && <StatusPill tom="verde">Concluída</StatusPill>}
-            {!rodando && casos.some((c) => c.status !== 'pendente') && (
+            {atual && (
               <Botao
                 variante="fantasma"
                 onClick={limpar}
                 disabled={iniciando}
               >
-                Limpar Histórico
+                Limpar Execução
               </Botao>
             )}
             {!rodando && !concluida && casos.length > 0 && (

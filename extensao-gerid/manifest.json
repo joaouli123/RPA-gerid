@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Gerid RPA Automator",
+  "version": "1.0.0",
+  "description": "Automatiza o preenchimento de requerimentos BPC/LOAS no Gerid.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://novorequerimento.inss.gov.br/*",
+    "http://localhost:3000/*",
+    "https://*.railway.app/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://novorequerimento.inss.gov.br/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}
