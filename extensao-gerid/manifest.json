@@ -10,9 +10,9 @@
     "downloads"
   ],
   "host_permissions": [
-    "https://novorequerimento.inss.gov.br/*",
     "http://localhost:3000/*",
-    "https://*.railway.app/*"
+    "https://*.up.railway.app/*",
+    "*://*.inss.gov.br/*"
   ],
   "action": {
     "default_popup": "popup.html"
@@ -22,7 +22,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://novorequerimento.inss.gov.br/*"],
+      "matches": ["*://*.inss.gov.br/*"],
       "js": ["content.js"],
       "run_at": "document_end"
     }

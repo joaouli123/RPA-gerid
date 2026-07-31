@@ -35,8 +35,8 @@ async function processQueue(apiUrl) {
     for (const caso of casos) {
       sendLog(`Processando: ${caso.nome}`);
       
-      // Encontra a aba do Gerid
-      const tabs = await chrome.tabs.query({ url: "*://novorequerimento.inss.gov.br/*" });
+      // Encontra a aba do Gerid (atendimento, novorequerimento, etc)
+      const tabs = await chrome.tabs.query({ url: "*://*.inss.gov.br/*" });
       if (tabs.length === 0) {
         throw new Error("Nenhuma aba do Gerid aberta!");
       }
