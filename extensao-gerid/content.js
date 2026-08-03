@@ -48,6 +48,17 @@
           }
           throw new Error(`Timeout waiting for selector: ${this.selector}`);
         }
+        async waitFor(options) {
+          await this._waitForElement(options?.timeout || 5e3);
+        }
+        async count() {
+          try {
+            const el = await this._getElement();
+            return el ? 1 : 0;
+          } catch {
+            return 0;
+          }
+        }
         locator(subSelector) {
           return new _MockLocator(subSelector, this);
         }
@@ -123,6 +134,43 @@
             }) || null;
           };
           return l;
+        }
+        getByLabel(text) {
+          const l = new MockLocator("label");
+          l._getElement = async () => {
+            const els = Array.from(document.querySelectorAll("label"));
+            const str = typeof text === "string" ? text : text.source;
+            const label = els.find((e) => e.textContent?.match(new RegExp(str, "i")));
+            if (label && label.htmlFor) {
+              return document.getElementById(label.htmlFor);
+            }
+            return null;
+          };
+          return l;
+        }
+        getByPlaceholder(text) {
+          const l = new MockLocator("input, textarea");
+          l._getElement = async () => {
+            const els = Array.from(document.querySelectorAll("input, textarea"));
+            const str = typeof text === "string" ? text : text.source;
+            return els.find((e) => e.placeholder && e.placeholder.match(new RegExp(str, "i"))) || null;
+          };
+          return l;
+        }
+        getByRole(role, options) {
+          const l = new MockLocator(`[role="${role}"], button, input[type="${role}"]`);
+          l._getElement = async () => {
+            let els = Array.from(document.querySelectorAll(`button, [role="${role}"], input[type="${role}"]`));
+            if (options?.name) {
+              const str = typeof options.name === "string" ? options.name : options.name.source;
+              els = els.filter((e) => (e.textContent || e.value || "").match(new RegExp(str, "i")));
+            }
+            return els[0] || null;
+          };
+          return l;
+        }
+        async waitForLoadState() {
+          await new Promise((r) => setTimeout(r, 1e3));
         }
       };
     }
@@ -900,33 +948,13 @@
       function logToBackground(message) {
         console.log(message);
         try {
-          chrome.runtime.sendMessage({ action: "log", message });
+          chrome.runtime.sendMessage({ action: "log", message }).catch(() => {
+          });
         } catch (e) {
         }
       }
-      chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-        if (request.action === "process_case") {
-          const caso = request.caso;
-          logToBackground(`Recebido comando para processar: ${caso.nome}`);
-          iniciarProcessamento(caso).then((res) => {
-            logToBackground(`Processamento conclu\xEDdo com status: ${res.status}`);
-            chrome.runtime.sendMessage({
-              action: "case_result",
-              status: res.status,
-              protocolo: res.protocolo,
-              erro: res.erro
-            });
-          }).catch((err) => {
-            logToBackground(`Erro fatal no content script: ${err.message}`);
-            chrome.runtime.sendMessage({
-              action: "case_result",
-              status: "erro",
-              erro: err.message
-            });
-          });
-        }
-      });
-      async function iniciarProcessamento(caso) {
+      window.iniciarProcessamento = async (caso) => {
+        logToBackground(`[ROB\xD4 INICIADO] Processando caso: ${caso.nome}`);
         const page = new MockPage();
         try {
           const opcoes = {
@@ -934,25 +962,37 @@
             telefonePadrao: "11999999999",
             emailEscritorio: "contato@escritorio.com.br",
             arquivos: []
+            // não estamos enviando arquivos ainda
           };
           const dados = {
             cpf: caso.cpf,
             nome: caso.nome,
             pericia: caso.pericia
           };
+          const originalLog = console.log;
+          console.log = (...args) => {
+            originalLog(...args);
+            logToBackground(args.join(" "));
+          };
           const res = await preencherRequerimento(page, dados, opcoes);
+          console.log = originalLog;
           if (res.pronto) {
+            logToBackground(`[ROB\xD4 FINALIZADO] Sucesso.`);
             return { status: "sucesso", protocolo: "EXTENSAO_FINALIZOU_SUCESSO" };
           } else {
-            return { status: "erro", erro: res.avisos.map((a) => a.mensagem).join(" | ") || "N\xE3o finalizado" };
+            const msgs = res.avisos.map((a) => a.mensagem).join(" | ");
+            logToBackground(`[ROB\xD4 FINALIZADO] Falha: ${msgs}`);
+            return { status: "erro", erro: msgs || "N\xE3o finalizado" };
           }
         } catch (e) {
+          const errorMsg = e instanceof Error ? e.message : "Erro interno no rob\xF4";
+          logToBackground(`[ROB\xD4 FINALIZADO com ERRO FATAL]: ${errorMsg}`);
           if (e instanceof ErroGerid) {
             return { status: "erro", erro: e.message };
           }
-          return { status: "erro", erro: e instanceof Error ? e.message : "Erro interno no rob\xF4" };
+          return { status: "erro", erro: errorMsg };
         }
-      }
+      };
     }
   });
   require_index();

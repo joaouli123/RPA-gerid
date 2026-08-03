@@ -5,68 +5,59 @@ import { ErroGerid } from './tiposGerid';
 function logToBackground(message: string) {
   console.log(message);
   try {
-    chrome.runtime.sendMessage({ action: 'log', message });
+    // Envia o log para o popup. Se der erro de contexto inválido, engole.
+    chrome.runtime.sendMessage({ action: 'log', message }).catch(() => {});
   } catch (e) {}
 }
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'process_case') {
-    const caso = request.caso;
-    logToBackground(`Recebido comando para processar: ${caso.nome}`);
-    
-    // Inicia o processo assíncrono
-    iniciarProcessamento(caso)
-      .then(res => {
-        logToBackground(`Processamento concluído com status: ${res.status}`);
-        chrome.runtime.sendMessage({
-          action: 'case_result',
-          status: res.status,
-          protocolo: res.protocolo,
-          erro: res.erro
-        });
-      })
-      .catch(err => {
-        logToBackground(`Erro fatal no content script: ${err.message}`);
-        chrome.runtime.sendMessage({
-          action: 'case_result',
-          status: 'erro',
-          erro: err.message
-        });
-      });
-  }
-});
-
-async function iniciarProcessamento(caso: any) {
+// Expõe a função no window do ISOLATED WORLD para ser chamada pelo executeScript
+(window as any).iniciarProcessamento = async (caso: any) => {
+  logToBackground(`[ROBÔ INICIADO] Processando caso: ${caso.nome}`);
+  
   const page = new MockPage();
   
-  // O content script já está na página do Gerid.
   try {
-    // Para a extensão, nós passamos um procurador genérico nas opções por enquanto
+    // Opções baseadas no código original de configuração
     const opcoes = {
       procuradorCpf: '', 
-      telefonePadrao: '11999999999',
+      telefonePadrao: '11999999999', 
       emailEscritorio: 'contato@escritorio.com.br',
-      arquivos: []
+      arquivos: [] // não estamos enviando arquivos ainda
     };
-    
-    // Mapeia os dados do cliente para o formato esperado pelo preencherGerid
+
     const dados = {
       cpf: caso.cpf,
       nome: caso.nome,
       pericia: caso.pericia
     };
 
+    // Sobrescreve o console.log temporariamente para capturar os logs do preencherRequerimento
+    const originalLog = console.log;
+    console.log = (...args) => {
+      originalLog(...args);
+      logToBackground(args.join(' '));
+    };
+
     const res = await preencherRequerimento(page, dados, opcoes);
     
+    // Restaura console
+    console.log = originalLog;
+
     if (res.pronto) {
+      logToBackground(`[ROBÔ FINALIZADO] Sucesso.`);
       return { status: 'sucesso', protocolo: 'EXTENSAO_FINALIZOU_SUCESSO' };
     } else {
-      return { status: 'erro', erro: res.avisos.map(a => a.mensagem).join(' | ') || 'Não finalizado' };
+      const msgs = res.avisos.map(a => a.mensagem).join(' | ');
+      logToBackground(`[ROBÔ FINALIZADO] Falha: ${msgs}`);
+      return { status: 'erro', erro: msgs || 'Não finalizado' };
     }
   } catch (e) {
+    const errorMsg = e instanceof Error ? e.message : 'Erro interno no robô';
+    logToBackground(`[ROBÔ FINALIZADO com ERRO FATAL]: ${errorMsg}`);
+    
     if (e instanceof ErroGerid) {
       return { status: 'erro', erro: e.message };
     }
-    return { status: 'erro', erro: e instanceof Error ? e.message : 'Erro interno no robô' };
+    return { status: 'erro', erro: errorMsg };
   }
-}
+};

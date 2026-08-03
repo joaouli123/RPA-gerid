@@ -40,29 +40,43 @@ async function processQueue(apiUrl) {
       if (tabs.length === 0) {
         throw new Error("Nenhuma aba do Gerid aberta!");
       }
-      const geridTab = tabs[0];
+      // Pega a aba ativa primeiro, se não tiver ativa pega a primeira
+      const geridTab = tabs.find(t => t.active) || tabs[0];
       
-      // Injeta o comando para o content script processar o caso
-      chrome.tabs.sendMessage(geridTab.id, {
-        action: 'process_case',
-        caso: caso
-      });
+      // Injeta o content.js programaticamente para garantir que ele exista sem precisar de F5
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: geridTab.id },
+          files: ['content.js']
+        });
+        await new Promise(r => setTimeout(r, 500)); // dá um tempinho pra inicializar
+      } catch (e) {
+        sendLog("Aviso: falha ao injetar script, pode já estar rodando. " + e.message);
+      }
 
-      // Aguarda o resultado do content.js (pode demorar minutos)
-      const result = await new Promise((resolve) => {
-        const listener = (msg, sender) => {
-          if (sender.tab?.id === geridTab.id && msg.action === 'case_result') {
-            chrome.runtime.onMessage.removeListener(listener);
-            resolve(msg);
-          } else if (msg.action === 'log') {
-            sendLog(msg.message); // repassa logs do content para o popup
-          }
-        };
-        chrome.runtime.onMessage.addListener(listener);
-      });
+      // Aguarda o resultado executando a função diretamente na página (bypass do chrome.tabs.sendMessage que é bugado no v3)
+      let result;
+      try {
+        const injectionResults = await chrome.scripting.executeScript({
+          target: { tabId: geridTab.id },
+          func: async (dadosCaso) => {
+             // Chama a função global que definimos no index.ts
+             return await window.iniciarProcessamento(dadosCaso);
+          },
+          args: [caso]
+        });
+        
+        result = injectionResults[0].result;
+        
+        if (!result) {
+           throw new Error("O script não retornou resultado. A página pode ter recarregado durante a execução.");
+        }
+      } catch (e) {
+        result = { status: 'erro', erro: 'Erro fatal na injeção ou execução: ' + (e.message || e) };
+      }
 
       // Envia resultado para o servidor
-      sendLog(`Enviando resultado do ${caso.nome}: ${result.status}`);
+      sendLog(`Enviando resultado do ${caso.nome}: ${result.status}` + (result.erro ? ` - ${result.erro}` : ''));
       await fetch(apiUrl.replace(/\/$/, '') + '/api/ext/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -86,3 +100,10 @@ async function processQueue(apiUrl) {
     chrome.runtime.sendMessage({ action: 'finished' }).catch(() => {});
   }
 }
+
+// Global listener para logs vindos do content script
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.action === 'log') {
+    sendLog(msg.message); // repassa para o popup da extensão
+  }
+});

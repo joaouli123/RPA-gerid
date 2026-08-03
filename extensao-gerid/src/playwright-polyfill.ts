@@ -34,6 +34,19 @@ class MockLocator {
     throw new Error(`Timeout waiting for selector: ${this.selector}`);
   }
 
+  async waitFor(options?: { state?: 'visible' | 'hidden' | 'attached' | 'detached', timeout?: number }) {
+    await this._waitForElement(options?.timeout || 5000);
+  }
+
+  async count() {
+    try {
+      const el = await this._getElement();
+      return el ? 1 : 0;
+    } catch {
+      return 0;
+    }
+  }
+
   locator(subSelector: string) {
     return new MockLocator(subSelector, this);
   }
@@ -124,6 +137,47 @@ export class MockPage {
       }) || null;
     };
     return l;
+  }
+
+  getByLabel(text: string | RegExp) {
+    const l = new MockLocator('label');
+    l._getElement = async () => {
+      const els = Array.from(document.querySelectorAll('label'));
+      const str = typeof text === 'string' ? text : text.source;
+      const label = els.find(e => e.textContent?.match(new RegExp(str, 'i')));
+      if (label && label.htmlFor) {
+        return document.getElementById(label.htmlFor) as HTMLElement;
+      }
+      return null;
+    };
+    return l;
+  }
+
+  getByPlaceholder(text: string | RegExp) {
+    const l = new MockLocator('input, textarea');
+    l._getElement = async () => {
+      const els = Array.from(document.querySelectorAll('input, textarea')) as HTMLInputElement[];
+      const str = typeof text === 'string' ? text : text.source;
+      return els.find(e => e.placeholder && e.placeholder.match(new RegExp(str, 'i'))) || null;
+    };
+    return l;
+  }
+
+  getByRole(role: string, options?: { name?: string | RegExp }) {
+    const l = new MockLocator(`[role="${role}"], button, input[type="${role}"]`);
+    l._getElement = async () => {
+      let els = Array.from(document.querySelectorAll(`button, [role="${role}"], input[type="${role}"]`)) as HTMLElement[];
+      if (options?.name) {
+        const str = typeof options.name === 'string' ? options.name : options.name.source;
+        els = els.filter(e => (e.textContent || (e as HTMLInputElement).value || '').match(new RegExp(str, 'i')));
+      }
+      return els[0] || null;
+    };
+    return l;
+  }
+
+  async waitForLoadState() {
+    await new Promise(r => setTimeout(r, 1000));
   }
 }
 
