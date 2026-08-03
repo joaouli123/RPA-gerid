@@ -20,6 +20,8 @@ secrets/
 .data/
 backups/
 comprovantes/
+# ...mas a rota de download é código-fonte, não comprovante gerado
+!app/api/comprovantes/
 # Prints das telas do GERID enviados pelo cliente (podem ter CPF/nome/laudo)
 gerid-telas/
 
