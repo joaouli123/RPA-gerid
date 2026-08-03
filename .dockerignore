@@ -1,0 +1,34 @@
+# Dependências e artefatos de build (reconstruídos dentro da imagem)
+node_modules
+.next
+dist
+out
+*.tsbuildinfo
+
+# === SENSÍVEL — nunca entra na imagem ===
+# Credenciais do Google (chave privada da service account)
+secrets/
+*.pem
+*.key
+# Variáveis de ambiente — em produção vêm do Coolify, não do arquivo
+.env
+.env.local
+.env.*.local
+
+# Dados pessoais do cliente (CPF, nomes, laudos)
+.data/
+backups/
+comprovantes/
+gerid-telas/
+saida/
+
+# Sessão autenticada do Gerid (perfil do Playwright)
+.perfil-gerid/
+
+# Histórico e ferramental que não servem em runtime
+.git
+.claude
+
+# Logs
+*.log
+npm-debug.log*
