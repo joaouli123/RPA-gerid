@@ -12,6 +12,7 @@
   "host_permissions": [
     "http://localhost:3000/*",
     "https://*.up.railway.app/*",
+    "*://*.sslip.io/*",
     "*://*.inss.gov.br/*"
   ],
   "action": {
