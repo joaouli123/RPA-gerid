@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package.json ./
 
 # Instala as dependências usando npm para evitar conflitos de bloqueio do pnpm no Docker
-RUN npm install
+RUN npm install --include=dev
 
 # Copia o resto do código
 COPY . .
