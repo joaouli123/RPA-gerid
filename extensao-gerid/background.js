@@ -168,6 +168,14 @@ async function enviarResultado(apiUrl, apiToken, idExecucao, caso, resultado) {
   if (!resposta.ok) throw new Error(`Não foi possível registrar o resultado (HTTP ${resposta.status}).`);
 }
 
+function erroDefinitivoDoRequerente(resultado) {
+  if (resultado?.status !== 'erro') return false;
+  const texto = String(resultado.erro || '').toLowerCase();
+  // Só um bloqueio inequívoco do próprio Gerid encerra automaticamente o caso.
+  // Falhas de tela, rede ou mapeamento precisam permanecer pendentes para retry.
+  return /pedido\s+\d+.*em aberto|existe pedido em aberto|cpf inv[aá]lido/.test(texto);
+}
+
 async function processQueue(apiUrl, apiToken, modoTeste, tabIdPreferido) {
   try {
     if (!apiToken) throw new Error('A chave da extensão não foi informada.');
@@ -210,6 +218,13 @@ async function processQueue(apiUrl, apiToken, modoTeste, tabIdPreferido) {
         anexos: await baixarAnexos(apiUrl, apiToken, data.idExecucao, caso.anexos),
       };
       const resultado = await executarCasoNoGerid(aba.id, casoComAnexos);
+
+      if (resultado.status === 'erro' && !erroDefinitivoDoRequerente(resultado)) {
+        sendLog(
+          `Pausa técnica no caso ${caso.nome}. Ele continua na fila para retomar após a correção: ${resultado.erro}`,
+        );
+        break;
+      }
       await enviarResultado(apiUrl, apiToken, data.idExecucao, caso, resultado);
 
       // Revisão é uma parada intencional: preserva a tela preenchida para o
