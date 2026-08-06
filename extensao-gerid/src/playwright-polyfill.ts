@@ -239,7 +239,15 @@ export class MockPage {
       els = els.filter(estaInteragivel);
       if (options?.name) {
         els = els.filter((e) => {
-          const nome = e.textContent || (e as HTMLInputElement).value || '';
+          // O GERID adiciona espaços e quebras de linha ao texto de alguns
+          // botões. Normalizar aqui evita perder "Novo Requerimento".
+          const nome = (
+            e.getAttribute('aria-label') ||
+            e.innerText ||
+            e.textContent ||
+            (e as HTMLInputElement).value ||
+            ''
+          ).trim().replace(/\s+/g, ' ');
           if (typeof options.name === 'string') return nome.includes(options.name);
           options.name.lastIndex = 0;
           return options.name.test(nome);

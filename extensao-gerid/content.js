@@ -223,7 +223,7 @@
             els = els.filter(estaInteragivel);
             if (options?.name) {
               els = els.filter((e) => {
-                const nome = e.textContent || e.value || "";
+                const nome = (e.getAttribute("aria-label") || e.innerText || e.textContent || e.value || "").trim().replace(/\s+/g, " ");
                 if (typeof options.name === "string") return nome.includes(options.name);
                 options.name.lastIndex = 0;
                 return options.name.test(nome);
