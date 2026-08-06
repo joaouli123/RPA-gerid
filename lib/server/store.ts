@@ -504,9 +504,18 @@ export async function iniciarExecucao(): Promise<ExecucaoAtual> {
  * Qualquer problema vira "erro" com o motivo — nunca sucesso falso.
  */
 async function processarExecucao(id: string): Promise<void> {
-  // ATENÇÃO: Na nova arquitetura, o servidor NÃO roda mais o Playwright.
-  // A execução é feita pela Extensão do Chrome.
-  // Esta função não faz mais nada. O status será atualizado via API /api/ext/status.
+  // A execução é feita pela extensão no navegador do operador. Ainda assim,
+  // a execução no servidor precisa expirar: se o navegador/extensão cair, nenhum
+  // caso pode ficar "pendente" ou "processando" indefinidamente.
+  const bruto = Number(
+    process.env.RPA_TEMPO_LIMITE_EXECUCAO_MS ??
+      process.env.RPA_PAUSA_EXECUCAO_MS ??
+      30 * 60 * 1000,
+  );
+  const prazoMs = Number.isFinite(bruto) && bruto > 0 ? bruto : 30 * 60 * 1000;
+
+  await new Promise<void>((resolve) => setTimeout(resolve, prazoMs));
+  await finalizarExecucao(id);
 }
 
 /**

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getExecucaoAtual, iniciarExecucao, persistir } from '@/lib/server/store';
+import { getExecucaoAtual } from '@/lib/server/store';
 
 // Permite chamadas do navegador (CORS) caso a extensão chame diretamente
 const corsHeaders = {
@@ -14,16 +14,12 @@ export async function OPTIONS() {
 
 export async function GET() {
   try {
-    let atual = await getExecucaoAtual();
-    
-    // Se não tiver execução atual rodando, cria uma nova com os clientes prontos
-    if (!atual || atual.casos.length === 0) {
-      atual = await iniciarExecucao();
-    }
+    const atual = await getExecucaoAtual();
 
-    if (atual.status !== 'rodando') {
-      atual.status = 'rodando';
-      await persistir();
+    // Consultar a fila nunca pode iniciar um protocolo. A extensão chama esta
+    // rota ao abrir o popup; uma execução só nasce por ação explícita no painel.
+    if (!atual || atual.status !== 'rodando') {
+      return NextResponse.json({ sucesso: true, idExecucao: null, casos: [] }, { headers: corsHeaders });
     }
 
     // Retorna apenas os casos que ainda estão pendentes
