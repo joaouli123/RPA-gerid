@@ -1,6 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
   const API_URL_PADRAO = 'https://vmkcogtpgc1dgd5ae6gjfz1n.179.198.98.63.sslip.io';
-  const API_URL_LEGADA_RAILWAY = 'https://rpa-gerid-production.up.railway.app';
   const btnStart = document.getElementById('btnStart');
   const statusLabel = document.getElementById('statusLabel');
   const countLabel = document.getElementById('countLabel');
@@ -13,7 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Migra automaticamente a configuração que apontava para o Railway.
   chrome.storage.local.get(['apiUrl'], (result) => {
-    if (result.apiUrl && result.apiUrl !== API_URL_LEGADA_RAILWAY) {
+    if (result.apiUrl && !/\.railway\.app(?:\/|$)/i.test(result.apiUrl)) {
       apiUrlInput.value = result.apiUrl;
     } else {
       apiUrlInput.value = API_URL_PADRAO;
