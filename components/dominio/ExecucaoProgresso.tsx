@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CasoExecucao, ExecucaoAtual } from '@/lib/types';
-import { acaoIniciarExecucao, acaoLimparExecucao } from '@/lib/server/actions';
+import {
+  acaoIniciarExecucao,
+  acaoLimparExecucao,
+  acaoObterExecucaoAtual,
+} from '@/lib/server/actions';
 import { Card } from '@/components/ui/Card';
 import { Botao } from '@/components/ui/Botao';
 import { StatusPill, type Tom } from '@/components/ui/Badge';
@@ -53,11 +57,10 @@ export function ExecucaoProgresso({
   const progresso = casos.length > 0 ? Math.round((concluidos / casos.length) * 100) : 0;
 
   const buscarProgresso = useCallback(async (): Promise<ExecucaoAtual | null> => {
-    const res = await fetch('/api/execucao/atual', { cache: 'no-store' });
-    if (!res.ok) throw new Error(`Falha ao consultar progresso (HTTP ${res.status})`);
-    const dados = (await res.json()) as { execucao: ExecucaoAtual | null };
-    setAtual(dados.execucao);
-    return dados.execucao;
+    const execucao = await acaoObterExecucaoAtual();
+    setAtual(execucao);
+    setErro(null);
+    return execucao;
   }, []);
 
   // Enquanto o job roda no servidor, consulta o progresso periodicamente.

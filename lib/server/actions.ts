@@ -11,9 +11,10 @@ import {
   salvarClienteNaPlanilha,
   salvarConfig,
   limparExecucaoAtual,
+  getExecucaoAtual,
 } from '@/lib/server/store';
 import type { EntradaCadastro } from '@/src/domain/validacaoCadastro';
-import type { AcaoRevisao, OverridesConfig } from '@/lib/types';
+import type { AcaoRevisao, ExecucaoAtual, OverridesConfig } from '@/lib/types';
 
 /**
  * SERVER ACTIONS — o que os botões da UI realmente chamam.
@@ -53,6 +54,11 @@ export async function acaoLimparExecucao(): Promise<void> {
   await limparExecucaoAtual();
   revalidatePath('/execucao');
   revalidatePath('/painel');
+}
+
+/** Snapshot leve usado pelo painel para acompanhar a execução da extensão. */
+export async function acaoObterExecucaoAtual(): Promise<ExecucaoAtual | null> {
+  return getExecucaoAtual();
 }
 
 /**
