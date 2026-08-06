@@ -681,15 +681,19 @@
   }
   async function passo1SelecionarServico(page) {
     await esperarTela(page, /Sele..o de Servi.os/i);
+    const busca = visivel(page.locator(mapaGerid.passo1.campoBusca)).first();
+    await busca.waitFor({ state: "visible" });
+    await busca.click();
     const radio = page.locator(
       `${mapaGerid.passo1.containerOpcoes} input[id="${SERVICO_BPC_PCD.id}"]`
     );
-    if (await radio.count()) {
-      await radio.first().check({ force: true });
-    } else {
-      await visivel(page.locator(mapaGerid.passo1.campoBusca)).first().fill("Assistencial");
-      await visivel(page.getByText(SERVICO_BPC_PCD.rotulo, { exact: false })).first().click();
-    }
+    await radio.first().waitFor({ state: "visible", timeout: 1e4 }).catch(() => {
+      throw new ErroGerid(
+        FalhaGerid.CAMPO_NAO_ENCONTRADO,
+        "A lista de servi\xE7os do Gerid n\xE3o exibiu o BPC \xE0 Pessoa com Defici\xEAncia."
+      );
+    });
+    await radio.first().check({ force: true });
     await avancar(page);
   }
   async function passo2InformarRequerente(page, caso) {

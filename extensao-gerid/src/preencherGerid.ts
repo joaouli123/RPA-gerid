@@ -237,17 +237,22 @@ async function passo1SelecionarServico(page: Page): Promise<void> {
 
   // O serviço tem código numérico fixo do INSS — mais estável que digitar o
   // nome no combobox (que era o que o código antigo fazia).
+  // O GERID só renderiza as opções depois que a lista do combobox é aberta.
+  const busca = visivel(page.locator(mapaGerid.passo1.campoBusca)).first();
+  await busca.waitFor({ state: 'visible' });
+  await busca.click();
+
   const radio = page.locator(
     `${mapaGerid.passo1.containerOpcoes} input[id="${SERVICO_BPC_PCD.id}"]`,
   );
 
-  if (await radio.count()) {
-    await radio.first().check({ force: true });
-  } else {
-    // Fallback: filtra pelo nome e clica no resultado.
-    await visivel(page.locator(mapaGerid.passo1.campoBusca)).first().fill('Assistencial');
-    await visivel(page.getByText(SERVICO_BPC_PCD.rotulo, { exact: false })).first().click();
-  }
+  await radio.first().waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {
+    throw new ErroGerid(
+      FalhaGerid.CAMPO_NAO_ENCONTRADO,
+      'A lista de serviços do Gerid não exibiu o BPC à Pessoa com Deficiência.',
+    );
+  });
+  await radio.first().check({ force: true });
 
   await avancar(page);
 }
