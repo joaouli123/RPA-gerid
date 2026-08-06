@@ -1009,6 +1009,7 @@
       init_playwright_polyfill();
       init_preencherGerid();
       init_tiposGerid();
+      init_mapaGerid();
       function logToBackground(message) {
         console.log(message);
         try {
@@ -1016,6 +1017,19 @@
           });
         } catch (e) {
         }
+      }
+      async function abrirNovoRequerimentoSeNecessario(page) {
+        const seletorServico = page.locator(mapaGerid.passo1.campoBusca);
+        if (await seletorServico.isVisible().catch(() => false)) return;
+        const novoRequerimento = page.getByRole("button", { name: /^Novo Requerimento$/i });
+        if (!await novoRequerimento.isVisible().catch(() => false)) {
+          throw new Error(
+            'N\xC3\xA3o encontrei a tela de servi\xC3\xA7os nem o bot\xC3\xA3o "Novo Requerimento". Abra a lista de requerimentos do Gerid e tente novamente.'
+          );
+        }
+        logToBackground("Abrindo Novo Requerimento no Gerid...");
+        await novoRequerimento.click();
+        await seletorServico.waitFor({ state: "visible", timeout: 1e4 });
       }
       window.iniciarProcessamento = async (caso) => {
         logToBackground(`[ROB\xD4 INICIADO] Processando caso: ${caso.nome}`);
@@ -1034,6 +1048,7 @@
               caminho: anexo
             }))
           };
+          await abrirNovoRequerimentoSeNecessario(page);
           const originalLog = console.log;
           console.log = (...args) => {
             originalLog(...args);

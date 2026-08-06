@@ -1,6 +1,7 @@
 import { MockPage } from './playwright-polyfill';
 import { preencherRequerimento } from './preencherGerid';
 import { ErroGerid } from './tiposGerid';
+import { mapaGerid } from './mapaGerid';
 
 function logToBackground(message: string) {
   console.log(message);
@@ -8,6 +9,22 @@ function logToBackground(message: string) {
     // Envia o log para o popup. Se der erro de contexto inválido, engole.
     chrome.runtime.sendMessage({ action: 'log', message }).catch(() => {});
   } catch (e) {}
+}
+
+async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> {
+  const seletorServico = page.locator(mapaGerid.passo1.campoBusca);
+  if (await seletorServico.isVisible().catch(() => false)) return;
+
+  const novoRequerimento = page.getByRole('button', { name: /^Novo Requerimento$/i });
+  if (!(await novoRequerimento.isVisible().catch(() => false))) {
+    throw new Error(
+      'NÃ£o encontrei a tela de serviÃ§os nem o botÃ£o "Novo Requerimento". Abra a lista de requerimentos do Gerid e tente novamente.',
+    );
+  }
+
+  logToBackground('Abrindo Novo Requerimento no Gerid...');
+  await novoRequerimento.click();
+  await seletorServico.waitFor({ state: 'visible', timeout: 10_000 });
 }
 
 // Expõe a função no window do ISOLATED WORLD para ser chamada pelo executeScript
@@ -30,6 +47,8 @@ function logToBackground(message: string) {
         caminho: anexo,
       })),
     };
+
+    await abrirNovoRequerimentoSeNecessario(page);
 
     // Sobrescreve o console.log temporariamente para capturar os logs do preencherRequerimento
     const originalLog = console.log;
