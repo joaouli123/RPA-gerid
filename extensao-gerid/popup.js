@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const countLabel = document.getElementById('countLabel');
   const apiUrlInput = document.getElementById('apiUrl');
   const apiTokenInput = document.getElementById('apiToken');
+  const modoTesteInput = document.getElementById('modoTeste');
   const logDiv = document.getElementById('log');
 
   function log(msg) {
@@ -12,7 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Migra automaticamente a configuração que apontava para o Railway.
-  chrome.storage.local.get(['apiUrl', 'apiToken'], (result) => {
+  chrome.storage.local.get(['apiUrl', 'apiToken', 'modoTeste'], (result) => {
     if (result.apiUrl && !/\.railway\.app(?:\/|$)/i.test(result.apiUrl)) {
       apiUrlInput.value = result.apiUrl;
     } else {
@@ -20,11 +21,12 @@ document.addEventListener('DOMContentLoaded', () => {
       chrome.storage.local.set({ apiUrl: API_URL_PADRAO });
     }
     if (result.apiToken) apiTokenInput.value = result.apiToken;
+    modoTesteInput.checked = result.modoTeste !== false;
     checkQueue();
   });
 
   function salvarConfiguracao() {
-    chrome.storage.local.set({ apiUrl: apiUrlInput.value, apiToken: apiTokenInput.value });
+    chrome.storage.local.set({ apiUrl: apiUrlInput.value, apiToken: apiTokenInput.value, modoTeste: modoTesteInput.checked });
   }
 
   apiUrlInput.addEventListener('change', () => {
@@ -35,6 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
     salvarConfiguracao();
     checkQueue();
   });
+  modoTesteInput.addEventListener('change', salvarConfiguracao);
 
   async function checkQueue() {
     const url = apiUrlInput.value.replace(/\/$/, '') + '/api/ext/fila';
@@ -73,6 +76,7 @@ document.addEventListener('DOMContentLoaded', () => {
       action: 'start',
       apiUrl: apiUrlInput.value,
       apiToken: apiTokenInput.value.trim(),
+      modoTeste: modoTesteInput.checked,
     });
   });
 

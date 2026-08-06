@@ -9,7 +9,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'start') {
     if (!isRunning) {
       isRunning = true;
-      processQueue(request.apiUrl, request.apiToken);
+      processQueue(request.apiUrl, request.apiToken, request.modoTeste !== false);
     }
   } else if (request.action === 'case_result') {
     // Tratado pelo processQueue que estará aguardando
@@ -48,7 +48,7 @@ async function baixarAnexos(apiUrl, apiToken, idExecucao, anexos) {
   return baixados;
 }
 
-async function processQueue(apiUrl, apiToken) {
+async function processQueue(apiUrl, apiToken, modoTeste) {
   try {
     if (!apiToken) throw new Error('A chave da extensão não foi informada.');
     sendLog('Iniciando processamento...');
@@ -60,10 +60,14 @@ async function processQueue(apiUrl, apiToken) {
       throw new Error(data.erro || 'Erro ao buscar fila');
     }
 
-    const casos = data.casos;
+    const casos = modoTeste ? data.casos.slice(0, 1) : data.casos;
     const idExecucao = data.idExecucao;
 
-    sendLog(`Fila carregada: ${casos.length} casos pendentes.`);
+    sendLog(
+      modoTeste
+        ? `Modo teste: processando 1 de ${data.casos.length} caso(s) pendente(s).`
+        : `Fila carregada: ${casos.length} casos pendentes.`,
+    );
 
     for (const caso of casos) {
       sendLog(`Processando: ${caso.nome}`);
