@@ -153,8 +153,8 @@ export const OPCOES_BOLSA_FAMILIA: OpcaoGerid[] = [
   },
 ];
 
-/** null = sem regra definida; o robô deixa em branco e avisa. */
-export const RESPOSTA_BOLSA_FAMILIA: string | null = null;
+/** Regra definida pelo escritório para os casos processados pelo robô. */
+export const RESPOSTA_BOLSA_FAMILIA: string | null = 'Não há recebimento de Bolsa Família';
 
 /**
  * ⚠️ FORMA DE CONVÍVIO — campo NÃO ENCONTRADO no DOM (28/07/2026).

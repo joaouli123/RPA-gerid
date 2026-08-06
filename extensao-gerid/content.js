@@ -517,7 +517,7 @@
         corRaca: "Cor/Ra\xE7a",
         grauInstrucao: "Grau de Instru\xE7\xE3o"
       };
-      RESPOSTA_BOLSA_FAMILIA = null;
+      RESPOSTA_BOLSA_FAMILIA = "N\xE3o h\xE1 recebimento de Bolsa Fam\xEDlia";
       FORMA_CONVIVIO = {
         comFamilia: "Com pessoas da fam\xEDlia",
         sozinho: "Sozinho(a)"
