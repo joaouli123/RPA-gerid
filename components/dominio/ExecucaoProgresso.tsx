@@ -14,6 +14,7 @@ import { formatarCpf } from '@/lib/format';
 const TOM_CASO: Record<CasoExecucao['status'], Tom> = {
   pendente: 'cinza',
   processando: 'azul',
+  revisao: 'ambar',
   sucesso: 'verde',
   erro: 'vermelho',
 };
@@ -21,6 +22,7 @@ const TOM_CASO: Record<CasoExecucao['status'], Tom> = {
 const ROTULO_CASO: Record<CasoExecucao['status'], string> = {
   pendente: 'Na fila',
   processando: 'Processando',
+  revisao: 'Revisar e confirmar',
   sucesso: 'Protocolado',
   erro: 'Erro',
 };
@@ -45,7 +47,9 @@ export function ExecucaoProgresso({
   const rodando = atual?.status === 'rodando';
   const concluida = atual?.status === 'concluida';
 
-  const concluidos = casos.filter((c) => c.status === 'sucesso' || c.status === 'erro').length;
+  const concluidos = casos.filter(
+    (c) => c.status === 'sucesso' || c.status === 'erro' || c.status === 'revisao',
+  ).length;
   const progresso = casos.length > 0 ? Math.round((concluidos / casos.length) * 100) : 0;
 
   const buscarProgresso = useCallback(async (): Promise<ExecucaoAtual | null> => {

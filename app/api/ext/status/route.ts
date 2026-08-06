@@ -3,6 +3,7 @@ import { atualizarStatusCaso, finalizarExecucao, getExecucaoAtual } from '@/lib/
 import { revalidatePath } from 'next/cache';
 import fs from 'fs';
 import path from 'path';
+import { autorizarExtensao } from '@/lib/server/extensaoAuth';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,9 +17,13 @@ export async function OPTIONS() {
 
 export async function POST(req: Request) {
   try {
+    const auth = autorizarExtensao(req);
+    if (!auth.ok) {
+      return NextResponse.json({ sucesso: false, erro: auth.erro }, { status: 401, headers: corsHeaders });
+    }
     const { idExecucao, cpf, status, motivoErro, protocolo, pdfBase64, pdfNome } = await req.json();
 
-    if (!idExecucao || !cpf || !status) {
+    if (!idExecucao || !cpf || !['sucesso', 'erro', 'revisao'].includes(status)) {
       return NextResponse.json({ sucesso: false, erro: 'Dados incompletos' }, { status: 400, headers: corsHeaders });
     }
 
@@ -40,7 +45,9 @@ export async function POST(req: Request) {
     // Checa se todos terminaram para finalizar a execução
     const atual = await getExecucaoAtual();
     if (atual && atual.id === idExecucao) {
-      const todosConcluidos = atual.casos.every(c => c.status === 'sucesso' || c.status === 'erro');
+      const todosConcluidos = atual.casos.every(c =>
+        c.status === 'sucesso' || c.status === 'erro' || c.status === 'revisao',
+      );
       if (todosConcluidos) {
         await finalizarExecucao(idExecucao);
       }

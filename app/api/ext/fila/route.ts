@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getExecucaoAtual } from '@/lib/server/store';
+import { getConfig, getExecucaoAtual, getResultado } from '@/lib/server/store';
+import { classificarDocumentos } from '@/src/domain/validacaoDocs';
+import { apenasDigitos } from '@/src/domain/texto';
+import { autorizarExtensao } from '@/lib/server/extensaoAuth';
 
 // Permite chamadas do navegador (CORS) caso a extensão chame diretamente
 const corsHeaders = {
@@ -12,8 +15,12 @@ export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders });
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    const auth = autorizarExtensao(req);
+    if (!auth.ok) {
+      return NextResponse.json({ sucesso: false, erro: auth.erro }, { status: 401, headers: corsHeaders });
+    }
     const atual = await getExecucaoAtual();
 
     // Consultar a fila nunca pode iniciar um protocolo. A extensão chama esta
@@ -22,13 +29,42 @@ export async function GET() {
       return NextResponse.json({ sucesso: true, idExecucao: null, casos: [] }, { headers: corsHeaders });
     }
 
-    // Retorna apenas os casos que ainda estão pendentes
+    const [resultado, config] = await Promise.all([getResultado(), getConfig()]);
+    const prontosPorCpf = new Map(
+      resultado.clientesProntos.map((c) => [apenasDigitos(c.cliente.cpf), c]),
+    );
+
+    // Retorna apenas os casos pendentes, com o payload completo necessário ao
+    // preenchimento. Arquivos vão por URL autenticada e só durante esta execução.
     const pendentes = atual.casos.filter(c => c.status === 'pendente' || c.status === 'processando');
+    const casos = pendentes.map((caso) => {
+      const completo = prontosPorCpf.get(apenasDigitos(caso.cpf));
+      if (!completo) throw new Error(`Caso ${caso.cpf} não foi encontrado entre os prontos.`);
+
+      const anexos = classificarDocumentos(completo.arquivos, config.documentosEsperados)
+        .flatMap(({ doc, arquivos }) => arquivos.map((arquivo) => ({
+          id: arquivo.id,
+          nome: arquivo.nome,
+          mimeType: arquivo.mimeType,
+          tipo: doc.tipo,
+        })));
+
+      return {
+        ...caso,
+        dados: completo,
+        configuracao: {
+          procuradorCpf: config.procurador.cpf,
+          telefonePadrao: completo.cliente.telefone || config.telefonePadrao,
+          emailEscritorio: config.procurador.email,
+        },
+        anexos,
+      };
+    });
 
     return NextResponse.json({ 
       sucesso: true, 
       idExecucao: atual.id,
-      casos: pendentes 
+      casos
     }, { headers: corsHeaders });
   } catch (error) {
     console.error('Erro na API de fila:', error);

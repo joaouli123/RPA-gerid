@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusLabel = document.getElementById('statusLabel');
   const countLabel = document.getElementById('countLabel');
   const apiUrlInput = document.getElementById('apiUrl');
+  const apiTokenInput = document.getElementById('apiToken');
   const logDiv = document.getElementById('log');
 
   function log(msg) {
@@ -11,26 +12,36 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Migra automaticamente a configuração que apontava para o Railway.
-  chrome.storage.local.get(['apiUrl'], (result) => {
+  chrome.storage.local.get(['apiUrl', 'apiToken'], (result) => {
     if (result.apiUrl && !/\.railway\.app(?:\/|$)/i.test(result.apiUrl)) {
       apiUrlInput.value = result.apiUrl;
     } else {
       apiUrlInput.value = API_URL_PADRAO;
       chrome.storage.local.set({ apiUrl: API_URL_PADRAO });
     }
+    if (result.apiToken) apiTokenInput.value = result.apiToken;
     checkQueue();
   });
 
+  function salvarConfiguracao() {
+    chrome.storage.local.set({ apiUrl: apiUrlInput.value, apiToken: apiTokenInput.value });
+  }
+
   apiUrlInput.addEventListener('change', () => {
-    chrome.storage.local.set({ apiUrl: apiUrlInput.value });
+    salvarConfiguracao();
+    checkQueue();
+  });
+  apiTokenInput.addEventListener('change', () => {
+    salvarConfiguracao();
     checkQueue();
   });
 
   async function checkQueue() {
     const url = apiUrlInput.value.replace(/\/$/, '') + '/api/ext/fila';
     try {
+      if (!apiTokenInput.value.trim()) throw new Error('Informe a chave da extensão configurada no Coolify.');
       log('Buscando fila em ' + url);
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${apiTokenInput.value.trim()}` } });
       const data = await res.json();
       
       if (data.sucesso && data.casos) {
@@ -58,7 +69,11 @@ document.addEventListener('DOMContentLoaded', () => {
   btnStart.addEventListener('click', () => {
     btnStart.disabled = true;
     log('Iniciando processamento...');
-    chrome.runtime.sendMessage({ action: 'start', apiUrl: apiUrlInput.value });
+    chrome.runtime.sendMessage({
+      action: 'start',
+      apiUrl: apiUrlInput.value,
+      apiToken: apiTokenInput.value.trim(),
+    });
   });
 
   // Escuta logs do background

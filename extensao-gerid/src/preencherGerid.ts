@@ -34,7 +34,7 @@ export interface ArquivoLocal {
   /** Tipo do documento (TERMO_REPRESENTACAO, DOCUMENTOS_MEDICOS, ...). */
   tipo: string;
   /** Caminho no disco local do arquivo já baixado do Drive. */
-  caminho: string;
+  caminho: string | { nome: string; mimeType?: string; base64: string };
   /** Nome original, para validar extensão. */
   nome?: string;
 }
@@ -93,7 +93,8 @@ export async function preencherRequerimento(
  * estoura com "resolved to N elements").
  */
 function visivel(loc: Locator): Locator {
-  return loc.locator('visible=true');
+  // O polyfill da extensão já espera e interage apenas com elementos visíveis.
+  return loc;
 }
 
 /** Avança usando o id estável — nunca por texto, que existe várias vezes. */

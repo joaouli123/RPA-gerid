@@ -1,7 +1,7 @@
 // Tipos usados SÓ pelo frontend (execução, relatórios). Os tipos de domínio
 // (Cliente, GrupoFamiliar, MotivoRevisao...) vêm do core em src/domain.
 
-export type StatusCaso = 'pendente' | 'processando' | 'sucesso' | 'erro';
+export type StatusCaso = 'pendente' | 'processando' | 'revisao' | 'sucesso' | 'erro';
 
 export interface CasoExecucao {
   cpf: string;

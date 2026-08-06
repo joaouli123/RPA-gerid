@@ -98,7 +98,7 @@ export interface MapaGerid {
 }
 
 export const mapaGerid: MapaGerid = {
-  url: process.env.RPA_GERID_URL ?? 'https://atendimento.inss.gov.br',
+  url: 'https://atendimento.inss.gov.br',
   urlTarefas: 'https://atendimento.inss.gov.br/tarefas',
 
   passo1: {

@@ -53,8 +53,8 @@
         }
         async count() {
           try {
-            const el = await this._getElement();
-            return el ? 1 : 0;
+            const root = this.parent ? await this.parent._getElement() : document;
+            return root ? root.querySelectorAll(this.selector).length : 0;
           } catch {
             return 0;
           }
@@ -64,6 +64,18 @@
         }
         first() {
           return this;
+        }
+        last() {
+          const sel = this.selector;
+          const parent = this.parent;
+          const l = new _MockLocator(sel, parent);
+          l._getElement = async () => {
+            const root = parent ? await parent._getElement() : document;
+            if (!root) return null;
+            const els = root.querySelectorAll(sel);
+            return els[els.length - 1] || null;
+          };
+          return l;
         }
         nth(index) {
           const sel = this.selector;
@@ -98,8 +110,37 @@
           const el = await this._waitForElement();
           return el.checked;
         }
-        async setInputFiles(path) {
-          console.log("setInputFiles n\xE3o suporta arquivos locais na extens\xE3o sem File object", path);
+        async check() {
+          const el = await this._waitForElement();
+          if (!el.checked) el.click();
+          if (!el.checked) {
+            el.checked = true;
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        }
+        async getAttribute(name) {
+          return (await this._getElement())?.getAttribute(name) ?? null;
+        }
+        async innerText() {
+          return (await this._waitForElement()).innerText;
+        }
+        async evaluate(fn, arg) {
+          return fn(await this._waitForElement(), arg);
+        }
+        async setInputFiles(arquivo) {
+          if (typeof arquivo === "string") {
+            throw new Error("A extens\xE3o precisa receber o conte\xFAdo do anexo, n\xE3o um caminho local.");
+          }
+          const el = await this._waitForElement();
+          const binario = atob(arquivo.base64);
+          const bytes = Uint8Array.from(binario, (c) => c.charCodeAt(0));
+          const file = new File([bytes], arquivo.nome, { type: arquivo.mimeType || "application/octet-stream" });
+          const transferencia = new DataTransfer();
+          transferencia.items.add(file);
+          el.files = transferencia.files;
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
         }
         filter(options) {
           const sel = this.selector;
@@ -121,6 +162,9 @@
         }
         async waitForSelector(selector) {
           return new MockLocator(selector)._waitForElement();
+        }
+        async evaluate(fn, arg) {
+          return fn(arg);
         }
         getByText(text, options) {
           const l = new MockLocator("*");
@@ -236,7 +280,7 @@
         novoRequerimento: "Novo Requerimento"
       };
       mapaGerid = {
-        url: process.env.RPA_GERID_URL ?? "https://atendimento.inss.gov.br",
+        url: "https://atendimento.inss.gov.br",
         urlTarefas: "https://atendimento.inss.gov.br/tarefas",
         passo1: {
           campoBusca: 'input[id="idSelecionarServico"]',
@@ -528,7 +572,7 @@
     return { pronto: true, telaAtual: "Confirmar", avisos };
   }
   function visivel(loc) {
-    return loc.locator("visible=true");
+    return loc;
   }
   async function avancar(page) {
     await visivel(page.locator(NAVEGACAO.avancar)).first().click();
@@ -957,30 +1001,39 @@
         logToBackground(`[ROB\xD4 INICIADO] Processando caso: ${caso.nome}`);
         const page = new MockPage();
         try {
+          if (!caso?.dados?.cliente || !caso?.dados?.grupoFamiliar || !caso?.configuracao) {
+            throw new Error("A extens\xE3o n\xE3o recebeu os dados completos do caso. Atualize o painel e tente novamente.");
+          }
           const opcoes = {
-            procuradorCpf: "",
-            telefonePadrao: "11999999999",
-            emailEscritorio: "contato@escritorio.com.br",
-            arquivos: []
-            // não estamos enviando arquivos ainda
-          };
-          const dados = {
-            cpf: caso.cpf,
-            nome: caso.nome,
-            pericia: caso.pericia
+            procuradorCpf: caso.configuracao.procuradorCpf,
+            telefonePadrao: caso.configuracao.telefonePadrao,
+            emailEscritorio: caso.configuracao.emailEscritorio,
+            arquivos: (caso.anexos || []).map((anexo) => ({
+              tipo: anexo.tipo,
+              nome: anexo.nome,
+              caminho: anexo
+            }))
           };
           const originalLog = console.log;
           console.log = (...args) => {
             originalLog(...args);
             logToBackground(args.join(" "));
           };
-          const res = await preencherRequerimento(page, dados, opcoes);
-          console.log = originalLog;
+          let res;
+          try {
+            res = await preencherRequerimento(page, caso.dados, opcoes);
+          } finally {
+            console.log = originalLog;
+          }
           if (res.pronto) {
-            logToBackground(`[ROB\xD4 FINALIZADO] Sucesso.`);
-            return { status: "sucesso", protocolo: "EXTENSAO_FINALIZOU_SUCESSO" };
+            const aviso = res.avisos.join(" | ");
+            logToBackground(`[ROB\xD4 FINALIZADO] Preenchido para revis\xE3o humana.`);
+            return {
+              status: "revisao",
+              erro: aviso || "Preenchido at\xE9 Confirmar. Revise os dados e conclua manualmente no Gerid."
+            };
           } else {
-            const msgs = res.avisos.map((a) => a.mensagem).join(" | ");
+            const msgs = res.avisos.join(" | ");
             logToBackground(`[ROB\xD4 FINALIZADO] Falha: ${msgs}`);
             return { status: "erro", erro: msgs || "N\xE3o finalizado" };
           }

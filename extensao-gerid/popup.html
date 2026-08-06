@@ -39,6 +39,7 @@
     .config { margin-top: 16px; border-top: 1px solid #e5e7eb; padding-top: 12px; }
     .config label { display: block; font-size: 12px; margin-bottom: 4px; color: #6b7280; }
     .config input { width: 100%; padding: 6px; box-sizing: border-box; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px; }
+    .config label + input { margin-bottom: 10px; }
     
     #log {
       margin-top: 16px;
@@ -67,6 +68,8 @@
   <div class="config">
     <label for="apiUrl">URL do Sistema (Coolify ou Localhost):</label>
     <input type="text" id="apiUrl" value="https://vmkcogtpgc1dgd5ae6gjfz1n.179.198.98.63.sslip.io">
+    <label for="apiToken">Chave da extensão:</label>
+    <input type="password" id="apiToken" autocomplete="off" placeholder="Configurada no Coolify">
   </div>
 
   <script src="popup.js"></script>

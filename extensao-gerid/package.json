@@ -4,7 +4,8 @@
   "description": "",
   "main": "background.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "esbuild src/index.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=content.js",
+    "test": "echo \"Ainda não há testes isolados para a extensão.\""
   },
   "keywords": [],
   "author": "",

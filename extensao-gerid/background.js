@@ -9,21 +9,54 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'start') {
     if (!isRunning) {
       isRunning = true;
-      processQueue(request.apiUrl);
+      processQueue(request.apiUrl, request.apiToken);
     }
   } else if (request.action === 'case_result') {
     // Tratado pelo processQueue que estará aguardando
   }
 });
 
-async function processQueue(apiUrl) {
+function headersAutorizacao(apiToken, json = false) {
+  const headers = { Authorization: `Bearer ${apiToken}` };
+  return json ? { ...headers, 'Content-Type': 'application/json' } : headers;
+}
+
+function paraBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binario = '';
+  const tamanhoBloco = 0x8000;
+  for (let inicio = 0; inicio < bytes.length; inicio += tamanhoBloco) {
+    binario += String.fromCharCode(...bytes.subarray(inicio, inicio + tamanhoBloco));
+  }
+  return btoa(binario);
+}
+
+async function baixarAnexos(apiUrl, apiToken, idExecucao, anexos) {
+  const base = apiUrl.replace(/\/$/, '');
+  const baixados = [];
+  for (const anexo of anexos || []) {
+    const url = `${base}/api/ext/arquivo?execucao=${encodeURIComponent(idExecucao)}&id=${encodeURIComponent(anexo.id)}`;
+    const res = await fetch(url, { headers: headersAutorizacao(apiToken) });
+    if (!res.ok) throw new Error(`Não foi possível baixar "${anexo.nome}" (HTTP ${res.status}).`);
+    baixados.push({
+      tipo: anexo.tipo,
+      nome: anexo.nome,
+      mimeType: anexo.mimeType,
+      base64: paraBase64(await res.arrayBuffer()),
+    });
+  }
+  return baixados;
+}
+
+async function processQueue(apiUrl, apiToken) {
   try {
+    if (!apiToken) throw new Error('A chave da extensão não foi informada.');
     sendLog('Iniciando processamento...');
     const url = apiUrl.replace(/\/$/, '') + '/api/ext/fila';
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: headersAutorizacao(apiToken) });
     const data = await res.json();
 
-    if (!data.sucesso || !data.casos) {
+    if (!res.ok || !data.sucesso || !data.casos) {
       throw new Error(data.erro || 'Erro ao buscar fila');
     }
 
@@ -34,6 +67,10 @@ async function processQueue(apiUrl) {
 
     for (const caso of casos) {
       sendLog(`Processando: ${caso.nome}`);
+      const casoComAnexos = {
+        ...caso,
+        anexos: await baixarAnexos(apiUrl, apiToken, idExecucao, caso.anexos),
+      };
       
       // Encontra a aba do Gerid (atendimento, novorequerimento, etc)
       const tabs = await chrome.tabs.query({ url: "*://*.inss.gov.br/*" });
@@ -63,7 +100,7 @@ async function processQueue(apiUrl) {
              // Chama a função global que definimos no index.ts
              return await window.iniciarProcessamento(dadosCaso);
           },
-          args: [caso]
+          args: [casoComAnexos]
         });
         
         result = injectionResults[0].result;
@@ -79,7 +116,7 @@ async function processQueue(apiUrl) {
       sendLog(`Enviando resultado do ${caso.nome}: ${result.status}` + (result.erro ? ` - ${result.erro}` : ''));
       await fetch(apiUrl.replace(/\/$/, '') + '/api/ext/status', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: headersAutorizacao(apiToken, true),
         body: JSON.stringify({
           idExecucao,
           cpf: caso.cpf,

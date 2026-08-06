@@ -416,7 +416,7 @@ export async function limparExecucaoAtual(): Promise<void> {
 export async function atualizarStatusCaso(
   idExecucao: string,
   cpf: string,
-  status: 'sucesso' | 'erro',
+  status: 'sucesso' | 'erro' | 'revisao',
   motivoErro?: string,
   protocolo?: string,
 ): Promise<void> {
@@ -428,12 +428,39 @@ export async function atualizarStatusCaso(
   if (!caso) return;
 
   caso.status = status;
-  if (status === 'erro') {
+  if (status === 'erro' || status === 'revisao') {
     caso.motivoErro = motivoErro;
   } else if (status === 'sucesso') {
     caso.protocolo = protocolo;
   }
   await persistir();
+}
+
+/**
+ * Baixa um documento que pertence a um caso ainda ativo. Esta é a única forma
+ * de a extensão receber anexos: ela nunca recebe acesso amplo ao Google Drive.
+ */
+export async function baixarArquivoParaExtensao(
+  idExecucao: string,
+  arquivoId: string,
+): Promise<{ bytes: Uint8Array; nome: string; mimeType: string }> {
+  const atual = (await carregarEstado()).execucaoAtual;
+  if (!atual || atual.id !== idExecucao || atual.status !== 'rodando') {
+    throw new Error('A execução informada não está ativa.');
+  }
+
+  const resultado = await getResultado();
+  const cpfsAtivos = new Set(atual.casos.map((c) => apenasDigitos(c.cpf)));
+  const dono = resultado.clientesProntos.find(
+    (c) =>
+      cpfsAtivos.has(apenasDigitos(c.cliente.cpf)) &&
+      c.arquivos.some((a) => a.id === arquivoId),
+  );
+  const arquivo = dono?.arquivos.find((a) => a.id === arquivoId);
+  if (!arquivo) throw new Error('Documento não pertence à execução atual.');
+
+  const { drive } = await criarGateways(await getConfig());
+  return { bytes: await drive.baixarArquivo(arquivoId), nome: arquivo.nome, mimeType: arquivo.mimeType };
 }
 
 // ---------------------------------------------------------------------------
@@ -538,6 +565,7 @@ export async function finalizarExecucao(id: string): Promise<void> {
 
   const sucesso = atual.casos.filter((c) => c.status === 'sucesso').length;
   const erro = atual.casos.filter((c) => c.status === 'erro').length;
+  const revisao = atual.casos.filter((c) => c.status === 'revisao').length;
 
   // Grava no histórico ANTES de marcar como concluída: quando a UI vir
   // "concluida", o relatório correspondente já existe.
@@ -550,6 +578,6 @@ export async function finalizarExecucao(id: string): Promise<void> {
     erro,
     casos: atual.casos,
   });
-  atual.status = erro > 0 && sucesso === 0 ? 'erro' : 'concluida';
+  atual.status = erro > 0 && sucesso === 0 && revisao === 0 ? 'erro' : 'concluida';
   await persistir();
 }

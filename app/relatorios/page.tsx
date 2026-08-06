@@ -11,6 +11,7 @@ import { formatarCpf, formatarData } from '@/lib/format';
 const TOM_CASO: Record<CasoExecucao['status'], Tom> = {
   pendente: 'cinza',
   processando: 'azul',
+  revisao: 'ambar',
   sucesso: 'verde',
   erro: 'vermelho',
 };

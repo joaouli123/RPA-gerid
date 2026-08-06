@@ -13,22 +13,22 @@ function logToBackground(message: string) {
 // Expõe a função no window do ISOLATED WORLD para ser chamada pelo executeScript
 (window as any).iniciarProcessamento = async (caso: any) => {
   logToBackground(`[ROBÔ INICIADO] Processando caso: ${caso.nome}`);
-  
   const page = new MockPage();
-  
-  try {
-    // Opções baseadas no código original de configuração
-    const opcoes = {
-      procuradorCpf: '', 
-      telefonePadrao: '11999999999', 
-      emailEscritorio: 'contato@escritorio.com.br',
-      arquivos: [] // não estamos enviando arquivos ainda
-    };
 
-    const dados = {
-      cpf: caso.cpf,
-      nome: caso.nome,
-      pericia: caso.pericia
+  try {
+    if (!caso?.dados?.cliente || !caso?.dados?.grupoFamiliar || !caso?.configuracao) {
+      throw new Error('A extensão não recebeu os dados completos do caso. Atualize o painel e tente novamente.');
+    }
+
+    const opcoes = {
+      procuradorCpf: caso.configuracao.procuradorCpf,
+      telefonePadrao: caso.configuracao.telefonePadrao,
+      emailEscritorio: caso.configuracao.emailEscritorio,
+      arquivos: (caso.anexos || []).map((anexo: any) => ({
+        tipo: anexo.tipo,
+        nome: anexo.nome,
+        caminho: anexo,
+      })),
     };
 
     // Sobrescreve o console.log temporariamente para capturar os logs do preencherRequerimento
@@ -38,16 +38,22 @@ function logToBackground(message: string) {
       logToBackground(args.join(' '));
     };
 
-    const res = await preencherRequerimento(page, dados, opcoes);
+    let res;
+    try {
+      res = await preencherRequerimento(page, caso.dados, opcoes);
+    } finally {
+      console.log = originalLog;
+    }
     
-    // Restaura console
-    console.log = originalLog;
-
     if (res.pronto) {
-      logToBackground(`[ROBÔ FINALIZADO] Sucesso.`);
-      return { status: 'sucesso', protocolo: 'EXTENSAO_FINALIZOU_SUCESSO' };
+      const aviso = res.avisos.join(' | ');
+      logToBackground(`[ROBÔ FINALIZADO] Preenchido para revisão humana.`);
+      return {
+        status: 'revisao',
+        erro: aviso || 'Preenchido até Confirmar. Revise os dados e conclua manualmente no Gerid.',
+      };
     } else {
-      const msgs = res.avisos.map(a => a.mensagem).join(' | ');
+      const msgs = res.avisos.join(' | ');
       logToBackground(`[ROBÔ FINALIZADO] Falha: ${msgs}`);
       return { status: 'erro', erro: msgs || 'Não finalizado' };
     }

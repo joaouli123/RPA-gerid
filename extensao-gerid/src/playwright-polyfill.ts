@@ -40,8 +40,8 @@ class MockLocator {
 
   async count() {
     try {
-      const el = await this._getElement();
-      return el ? 1 : 0;
+      const root = this.parent ? await this.parent._getElement() : document;
+      return root ? root.querySelectorAll(this.selector).length : 0;
     } catch {
       return 0;
     }
@@ -54,6 +54,19 @@ class MockLocator {
   first() {
     // simplificação: querySelector já pega o primeiro
     return this;
+  }
+
+  last() {
+    const sel = this.selector;
+    const parent = this.parent;
+    const l = new MockLocator(sel, parent);
+    l._getElement = async () => {
+      const root = parent ? await parent._getElement() : document;
+      if (!root) return null;
+      const els = root.querySelectorAll(sel);
+      return (els[els.length - 1] as HTMLElement) || null;
+    };
+    return l;
   }
 
   nth(index: number) {
@@ -95,10 +108,41 @@ class MockLocator {
     return el.checked;
   }
 
-  async setInputFiles(path: string | any) {
-    // Na extensão, o File já será passado do background script
-    console.log('setInputFiles não suporta arquivos locais na extensão sem File object', path);
-    // Para simplificar agora, ignoramos upload
+  async check() {
+    const el = await this._waitForElement() as HTMLInputElement;
+    if (!el.checked) el.click();
+    if (!el.checked) {
+      el.checked = true;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }
+
+  async getAttribute(name: string) {
+    return (await this._getElement())?.getAttribute(name) ?? null;
+  }
+
+  async innerText() {
+    return (await this._waitForElement()).innerText;
+  }
+
+  async evaluate(fn: (element: HTMLElement, arg?: unknown) => unknown, arg?: unknown) {
+    return fn(await this._waitForElement(), arg);
+  }
+
+  async setInputFiles(arquivo: string | { nome: string; mimeType?: string; base64: string }) {
+    if (typeof arquivo === 'string') {
+      throw new Error('A extensão precisa receber o conteúdo do anexo, não um caminho local.');
+    }
+    const el = await this._waitForElement() as HTMLInputElement;
+    const binario = atob(arquivo.base64);
+    const bytes = Uint8Array.from(binario, (c) => c.charCodeAt(0));
+    const file = new File([bytes], arquivo.nome, { type: arquivo.mimeType || 'application/octet-stream' });
+    const transferencia = new DataTransfer();
+    transferencia.items.add(file);
+    el.files = transferencia.files;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
   filter(options: { hasText: string | RegExp }) {
@@ -123,6 +167,10 @@ export class MockPage {
   
   async waitForSelector(selector: string) {
     return new MockLocator(selector)._waitForElement();
+  }
+
+  async evaluate<T>(fn: (arg?: any) => T, arg?: any): Promise<T> {
+    return fn(arg);
   }
 
   getByText(text: string | RegExp, options?: { exact?: boolean }) {
