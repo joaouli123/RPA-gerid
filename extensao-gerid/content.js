@@ -18,6 +18,15 @@
   };
 
   // src/playwright-polyfill.ts
+  function estaInteragivel(elemento) {
+    return elemento instanceof HTMLInputElement && elemento.type === "file" || elemento.offsetParent !== null;
+  }
+  function casaTexto(elemento, esperado, exato = false) {
+    const texto = elemento.textContent?.trim() ?? "";
+    if (typeof esperado === "string") return exato ? texto === esperado : texto.includes(esperado);
+    esperado.lastIndex = 0;
+    return esperado.test(texto);
+  }
   var MockLocator, MockPage;
   var init_playwright_polyfill = __esm({
     "src/playwright-polyfill.ts"() {
@@ -33,7 +42,8 @@
         async _getElement() {
           const root = this.parent ? await this.parent._getElement() : document;
           if (!root) return null;
-          return root.querySelector(this.selector);
+          const elementos = Array.from(root.querySelectorAll(this.selector));
+          return elementos.find(estaInteragivel) ?? elementos[0] ?? null;
         }
         // Wait with timeout
         async _waitForElement(timeout = 5e3) {
@@ -72,8 +82,9 @@
           l._getElement = async () => {
             const root = parent ? await parent._getElement() : document;
             if (!root) return null;
-            const els = root.querySelectorAll(sel);
-            return els[els.length - 1] || null;
+            const els = Array.from(root.querySelectorAll(sel));
+            const visiveis = els.filter(estaInteragivel);
+            return visiveis[visiveis.length - 1] ?? els[els.length - 1] ?? null;
           };
           return l;
         }
@@ -150,8 +161,7 @@
             const root = parent ? await parent._getElement() : document;
             if (!root) return null;
             const els = Array.from(root.querySelectorAll(sel));
-            const txt = typeof options.hasText === "string" ? options.hasText : options.hasText.source;
-            return els.find((e) => (e.textContent || "").includes(txt)) || null;
+            return els.find((e) => estaInteragivel(e) && casaTexto(e, options.hasText)) || null;
           };
           return l;
         }
@@ -169,12 +179,10 @@
         getByText(text, options) {
           const l = new MockLocator("*");
           l._getElement = async () => {
-            const str = typeof text === "string" ? text : text.source;
             const els = Array.from(document.querySelectorAll("*"));
             return els.find((e) => {
               if (e.children.length > 0) return false;
-              if (options?.exact) return e.textContent?.trim() === str;
-              return e.textContent?.includes(str);
+              return estaInteragivel(e) && casaTexto(e, text, options?.exact);
             }) || null;
           };
           return l;
@@ -183,8 +191,7 @@
           const l = new MockLocator("label");
           l._getElement = async () => {
             const els = Array.from(document.querySelectorAll("label"));
-            const str = typeof text === "string" ? text : text.source;
-            const label = els.find((e) => e.textContent?.match(new RegExp(str, "i")));
+            const label = els.find((e) => estaInteragivel(e) && casaTexto(e, text));
             if (label && label.htmlFor) {
               return document.getElementById(label.htmlFor);
             }
@@ -196,8 +203,12 @@
           const l = new MockLocator("input, textarea");
           l._getElement = async () => {
             const els = Array.from(document.querySelectorAll("input, textarea"));
-            const str = typeof text === "string" ? text : text.source;
-            return els.find((e) => e.placeholder && e.placeholder.match(new RegExp(str, "i"))) || null;
+            return els.find((e) => {
+              if (!estaInteragivel(e) || !e.placeholder) return false;
+              if (typeof text === "string") return e.placeholder.includes(text);
+              text.lastIndex = 0;
+              return text.test(e.placeholder);
+            }) || null;
           };
           return l;
         }
@@ -205,9 +216,14 @@
           const l = new MockLocator(`[role="${role}"], button, input[type="${role}"]`);
           l._getElement = async () => {
             let els = Array.from(document.querySelectorAll(`button, [role="${role}"], input[type="${role}"]`));
+            els = els.filter(estaInteragivel);
             if (options?.name) {
-              const str = typeof options.name === "string" ? options.name : options.name.source;
-              els = els.filter((e) => (e.textContent || e.value || "").match(new RegExp(str, "i")));
+              els = els.filter((e) => {
+                const nome = e.textContent || e.value || "";
+                if (typeof options.name === "string") return nome.includes(options.name);
+                options.name.lastIndex = 0;
+                return options.name.test(nome);
+              });
             }
             return els[0] || null;
           };
@@ -328,7 +344,7 @@
         // Fabrício. Correções aplicadas em regrasPreenchimento.ts (estado civil,
         // parentesco, escolha de unidade). O que falta é só o fim do fluxo:
         // -------------------------------------------------------------------------
-        pendencias: []
+        pendencias: ["Mapear o elemento clicavel das listas de unidade e orgao pagador."]
       };
     }
   });
@@ -963,6 +979,10 @@
       return false;
     }
     const radio = visivel(page.locator('input[type="radio"]')).nth(escolhida.indice);
+    avisos.push(
+      `Identifiquei a ${rotuloEtapa} da cidade "${escolhida.cidade}", mas a lista ainda nao esta mapeada. Selecione essa opcao manualmente antes de concluir.`
+    );
+    return false;
     const selecionou = await radio.count() > 0 && await radio.check({ force: true }).then(() => true, () => false);
     if (!selecionou) {
       avisos.push(
@@ -1025,7 +1045,8 @@
           } finally {
             console.log = originalLog;
           }
-          if (res.pronto) {
+          const parouParaRevisao = res.pronto || res.telaAtual === "Selecionar Unidade" || res.telaAtual === "\xD3rg\xE3o Pagador";
+          if (parouParaRevisao) {
             const aviso = res.avisos.join(" | ");
             logToBackground(`[ROB\xD4 FINALIZADO] Preenchido para revis\xE3o humana.`);
             return {

@@ -45,7 +45,9 @@ function logToBackground(message: string) {
       console.log = originalLog;
     }
     
-    if (res.pronto) {
+    const parouParaRevisao =
+      res.pronto || res.telaAtual === 'Selecionar Unidade' || res.telaAtual === 'Órgão Pagador';
+    if (parouParaRevisao) {
       const aviso = res.avisos.join(' | ');
       logToBackground(`[ROBÔ FINALIZADO] Preenchido para revisão humana.`);
       return {

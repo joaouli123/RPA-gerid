@@ -154,14 +154,14 @@ export const mapaGerid: MapaGerid = {
   // Fabrício. Correções aplicadas em regrasPreenchimento.ts (estado civil,
   // parentesco, escolha de unidade). O que falta é só o fim do fluxo:
   // -------------------------------------------------------------------------
-  pendencias: [],
+  pendencias: ['Mapear o elemento clicavel das listas de unidade e orgao pagador.'],
 };
 
 /**
  * True quando o robô pode protocolar.
  */
 export function mapeamentoCompleto(mapa: MapaGerid = mapaGerid): boolean {
-  return true;
+  return mapa.pendencias.length === 0;
 }
 
 /**

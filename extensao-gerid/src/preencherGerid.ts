@@ -746,6 +746,14 @@ async function escolherUnidadeDaCidade(
   // Tenta selecionar. Enquanto o elemento clicável não estiver mapeado, isto
   // pode não surtir efeito — por isso a confirmação explícita logo abaixo.
   const radio = visivel(page.locator('input[type="radio"]')).nth(escolhida.indice);
+  // Sem um seletor estavel, clicar por indice pode escolher uma agencia errada.
+  // Identificamos a cidade, mas deixamos a escolha para a revisao humana.
+  avisos.push(
+    `Identifiquei a ${rotuloEtapa} da cidade "${escolhida.cidade}", mas a lista ainda nao esta mapeada. ` +
+      'Selecione essa opcao manualmente antes de concluir.',
+  );
+  return false;
+
   const selecionou =
     (await radio.count()) > 0 && (await radio.check({ force: true }).then(() => true, () => false));
 

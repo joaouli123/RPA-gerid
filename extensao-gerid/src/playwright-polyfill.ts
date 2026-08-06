@@ -3,6 +3,20 @@
  * direto no DOM do Chrome (Extensão).
  */
 
+function estaInteragivel(elemento: HTMLElement): boolean {
+  return (
+    (elemento instanceof HTMLInputElement && elemento.type === 'file') ||
+    elemento.offsetParent !== null
+  );
+}
+
+function casaTexto(elemento: HTMLElement, esperado: string | RegExp, exato = false): boolean {
+  const texto = elemento.textContent?.trim() ?? '';
+  if (typeof esperado === 'string') return exato ? texto === esperado : texto.includes(esperado);
+  esperado.lastIndex = 0;
+  return esperado.test(texto);
+}
+
 class MockLocator {
   selector: string;
   parent?: MockLocator;
@@ -16,7 +30,8 @@ class MockLocator {
   async _getElement(): Promise<HTMLElement | null> {
     const root = this.parent ? await this.parent._getElement() : document;
     if (!root) return null;
-    return root.querySelector(this.selector) as HTMLElement | null;
+    const elementos = Array.from(root.querySelectorAll(this.selector)) as HTMLElement[];
+    return elementos.find(estaInteragivel) ?? elementos[0] ?? null;
   }
 
   // Wait with timeout
@@ -63,8 +78,9 @@ class MockLocator {
     l._getElement = async () => {
       const root = parent ? await parent._getElement() : document;
       if (!root) return null;
-      const els = root.querySelectorAll(sel);
-      return (els[els.length - 1] as HTMLElement) || null;
+      const els = Array.from(root.querySelectorAll(sel)) as HTMLElement[];
+      const visiveis = els.filter(estaInteragivel);
+      return visiveis[visiveis.length - 1] ?? els[els.length - 1] ?? null;
     };
     return l;
   }
@@ -153,8 +169,7 @@ class MockLocator {
       const root = parent ? await parent._getElement() : document;
       if (!root) return null;
       const els = Array.from(root.querySelectorAll(sel)) as HTMLElement[];
-      const txt = typeof options.hasText === 'string' ? options.hasText : options.hasText.source;
-      return els.find(e => (e.textContent || '').includes(txt)) || null;
+      return els.find((e) => estaInteragivel(e) && casaTexto(e, options.hasText)) || null;
     };
     return l;
   }
@@ -176,12 +191,10 @@ export class MockPage {
   getByText(text: string | RegExp, options?: { exact?: boolean }) {
     const l = new MockLocator('*');
     l._getElement = async () => {
-      const str = typeof text === 'string' ? text : text.source;
       const els = Array.from(document.querySelectorAll('*')) as HTMLElement[];
       return els.find(e => {
         if (e.children.length > 0) return false; // leaf node only
-        if (options?.exact) return e.textContent?.trim() === str;
-        return e.textContent?.includes(str);
+        return estaInteragivel(e) && casaTexto(e, text, options?.exact);
       }) || null;
     };
     return l;
@@ -191,8 +204,7 @@ export class MockPage {
     const l = new MockLocator('label');
     l._getElement = async () => {
       const els = Array.from(document.querySelectorAll('label'));
-      const str = typeof text === 'string' ? text : text.source;
-      const label = els.find(e => e.textContent?.match(new RegExp(str, 'i')));
+      const label = els.find((e) => estaInteragivel(e) && casaTexto(e, text));
       if (label && label.htmlFor) {
         return document.getElementById(label.htmlFor) as HTMLElement;
       }
@@ -205,8 +217,12 @@ export class MockPage {
     const l = new MockLocator('input, textarea');
     l._getElement = async () => {
       const els = Array.from(document.querySelectorAll('input, textarea')) as HTMLInputElement[];
-      const str = typeof text === 'string' ? text : text.source;
-      return els.find(e => e.placeholder && e.placeholder.match(new RegExp(str, 'i'))) || null;
+      return els.find((e) => {
+        if (!estaInteragivel(e) || !e.placeholder) return false;
+        if (typeof text === 'string') return e.placeholder.includes(text);
+        text.lastIndex = 0;
+        return text.test(e.placeholder);
+      }) || null;
     };
     return l;
   }
@@ -215,9 +231,14 @@ export class MockPage {
     const l = new MockLocator(`[role="${role}"], button, input[type="${role}"]`);
     l._getElement = async () => {
       let els = Array.from(document.querySelectorAll(`button, [role="${role}"], input[type="${role}"]`)) as HTMLElement[];
+      els = els.filter(estaInteragivel);
       if (options?.name) {
-        const str = typeof options.name === 'string' ? options.name : options.name.source;
-        els = els.filter(e => (e.textContent || (e as HTMLInputElement).value || '').match(new RegExp(str, 'i')));
+        els = els.filter((e) => {
+          const nome = e.textContent || (e as HTMLInputElement).value || '';
+          if (typeof options.name === 'string') return nome.includes(options.name);
+          options.name.lastIndex = 0;
+          return options.name.test(nome);
+        });
       }
       return els[0] || null;
     };
