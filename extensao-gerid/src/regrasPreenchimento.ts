@@ -51,7 +51,7 @@ export const SERVICO_BPC_PCD: OpcaoGerid = {
  */
 export const RESPOSTAS_FIXAS = {
   /** Passo 5. "Gastos com a deficiência negados pelo poder público?" */
-  comprometimentoDeRenda: 'Não',
+  comprometimentoDeRenda: 'Sim',
   /** Passo 6. "Proteção Especial SUAS (Centro-Dia) negada?" */
   protecaoEspecialSuas: 'Não',
   /** Passo 7. Aceita acompanhar o andamento (Meu INSS / 135 / e-mail). */
@@ -98,6 +98,7 @@ export const PERGUNTAS_PASSO7 = {
   representanteLegal: 'Deseja cadastrar Representante Legal para este pedido?',
   procurador: 'Deseja cadastrar Procurador para este pedido?',
   ondeMora: 'Onde você mora?',
+  formaConvivio: 'Forma de Convívio',
   recebeBeneficio: 'Recebe algum tipo de benefício?',
   alterarDataPedido:
     'autoriza o INSS a alterar a data do pedido para atender às condições para o benefício?',
@@ -168,7 +169,7 @@ export const RESPOSTA_BOLSA_FAMILIA: string | null = null;
  */
 export const FORMA_CONVIVIO = {
   comFamilia: 'Com pessoas da família',
-  sozinho: 'Sozinho', // nunca confirmado no DOM
+  sozinho: 'Sozinho(a)',
 } as const;
 
 export function formaDeConvivio(grupo: GrupoFamiliar): string {

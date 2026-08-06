@@ -10,6 +10,7 @@ import {
   estadoCivilGerid,
   mapearParentesco,
   escolherUnidadePorCidade,
+  formaDeConvivio,
   extrairCidadeDaUnidade,
   slotGeridDoDocumento,
   indiceSlotDoDocumento,
@@ -65,7 +66,9 @@ export async function preencherRequerimento(
   await passo3AutorizacaoCadUnico(page);
   await passo4GrupoFamiliar(page, caso, avisos);
   await passo5e6Perguntas(page, avisos);
-  await passo7DadosRequerente(page, caso, opcoes, avisos);
+  if (!(await passo7DadosRequerente(page, caso, opcoes, avisos))) {
+    return { pronto: false, telaAtual: 'Dados do Requerente', avisos };
+  }
 
   // A partir daqui a seleção depende da lista de agências, que ainda não está
   // mapeada. Se o robô não conseguir selecionar, ele PARA na tela — avançar
@@ -483,7 +486,7 @@ async function passo7DadosRequerente(
   caso: CasoParaProtocolar,
   opcoes: OpcoesPreenchimento,
   avisos: string[],
-): Promise<void> {
+): Promise<boolean> {
   await esperarTela(page, /Dados Adicionais|Interessados/i);
 
   // --- Contatos
@@ -501,6 +504,12 @@ async function passo7DadosRequerente(
   );
   await responderPergunta(page, PERGUNTAS_PASSO7.procurador, RESPOSTAS_FIXAS.procurador, avisos);
   await responderPergunta(page, PERGUNTAS_PASSO7.ondeMora, RESPOSTAS_FIXAS.ondeMora, avisos);
+  await responderPergunta(
+    page,
+    PERGUNTAS_PASSO7.formaConvivio,
+    formaDeConvivio(caso.grupoFamiliar),
+    avisos,
+  );
   await responderPergunta(
     page,
     PERGUNTAS_PASSO7.recebeBeneficio,
@@ -540,8 +549,9 @@ async function passo7DadosRequerente(
   } else {
     avisos.push(
       'Bolsa Família: a pergunta tem 4 opções (não Sim/Não) e o escritório ainda não definiu ' +
-        'a regra. Deixei em branco — responda antes de concluir.',
+      'a regra. Deixei em branco — responda antes de concluir.',
     );
+    return false;
   }
 
   // --- CPF do procurador
@@ -564,6 +574,7 @@ async function passo7DadosRequerente(
 
   await anexarDocumentos(page, opcoes, avisos);
   await avancar(page);
+  return true;
 }
 
 async function adicionarContato(

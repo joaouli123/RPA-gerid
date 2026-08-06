@@ -65,7 +65,10 @@ async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> 
     }
     
     const parouParaRevisao =
-      res.pronto || res.telaAtual === 'Selecionar Unidade' || res.telaAtual === 'Órgão Pagador';
+      res.pronto ||
+      res.telaAtual === 'Dados do Requerente' ||
+      res.telaAtual === 'Selecionar Unidade' ||
+      res.telaAtual === 'Órgão Pagador';
     if (parouParaRevisao) {
       const aviso = res.avisos.join(' | ');
       logToBackground(`[ROBÔ FINALIZADO] Preenchido para revisão humana.`);

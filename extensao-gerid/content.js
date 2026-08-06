@@ -117,6 +117,10 @@
           const el = await this._waitForElement();
           return el.value || "";
         }
+        async isVisible() {
+          const el = await this._getElement();
+          return !!el && estaInteragivel(el);
+        }
         async isChecked() {
           const el = await this._waitForElement();
           return el.checked;
@@ -378,6 +382,10 @@
   });
 
   // src/regrasPreenchimento.ts
+  function formaDeConvivio(grupo) {
+    const moraSozinho = grupo.integrantes.length <= 1;
+    return moraSozinho ? FORMA_CONVIVIO.sozinho : FORMA_CONVIVIO.comFamilia;
+  }
   function estadoCivilGerid(valorPlanilha) {
     if (ESTADO_CIVIL_SEMPRE_PADRAO) return ESTADO_CIVIL_PADRAO;
     const chave = normalizar(valorPlanilha);
@@ -430,7 +438,7 @@
     const ext = /\.[a-z0-9]+$/i.exec(nomeArquivo)?.[0]?.toLowerCase();
     return ext ? EXTENSOES_ACEITAS.includes(ext) : false;
   }
-  var SERVICO_BPC_PCD, RESPOSTAS_FIXAS, PERGUNTAS_PASSO7, RESPOSTA_BOLSA_FAMILIA, ESTADO_CIVIL_PADRAO, ESTADOS_CIVIS_GERID, ESTADO_CIVIL_SEMPRE_PADRAO, GRUPOS_PARENTESCO_GERID, MAPA_PARENTESCO, SLOTS_GERID, EXTENSOES_ACEITAS, SLOT_GERID_POR_TIPO;
+  var SERVICO_BPC_PCD, RESPOSTAS_FIXAS, PERGUNTAS_PASSO7, RESPOSTA_BOLSA_FAMILIA, FORMA_CONVIVIO, ESTADO_CIVIL_PADRAO, ESTADOS_CIVIS_GERID, ESTADO_CIVIL_SEMPRE_PADRAO, GRUPOS_PARENTESCO_GERID, MAPA_PARENTESCO, SLOTS_GERID, EXTENSOES_ACEITAS, SLOT_GERID_POR_TIPO;
   var init_regrasPreenchimento = __esm({
     "src/regrasPreenchimento.ts"() {
       "use strict";
@@ -442,7 +450,7 @@
       };
       RESPOSTAS_FIXAS = {
         /** Passo 5. "Gastos com a deficiência negados pelo poder público?" */
-        comprometimentoDeRenda: "N\xE3o",
+        comprometimentoDeRenda: "Sim",
         /** Passo 6. "Proteção Especial SUAS (Centro-Dia) negada?" */
         protecaoEspecialSuas: "N\xE3o",
         /** Passo 7. Aceita acompanhar o andamento (Meu INSS / 135 / e-mail). */
@@ -485,6 +493,7 @@
         representanteLegal: "Deseja cadastrar Representante Legal para este pedido?",
         procurador: "Deseja cadastrar Procurador para este pedido?",
         ondeMora: "Onde voc\xEA mora?",
+        formaConvivio: "Forma de Conv\xEDvio",
         recebeBeneficio: "Recebe algum tipo de benef\xEDcio?",
         alterarDataPedido: "autoriza o INSS a alterar a data do pedido para atender \xE0s condi\xE7\xF5es para o benef\xEDcio?",
         bolsaFamilia: "bolsa fam\xEDlia",
@@ -509,6 +518,10 @@
         grauInstrucao: "Grau de Instru\xE7\xE3o"
       };
       RESPOSTA_BOLSA_FAMILIA = null;
+      FORMA_CONVIVIO = {
+        comFamilia: "Com pessoas da fam\xEDlia",
+        sozinho: "Sozinho(a)"
+      };
       ESTADO_CIVIL_PADRAO = "Solteiro";
       ESTADOS_CIVIS_GERID = {
         solteiro: "Solteiro",
@@ -577,7 +590,9 @@
     await passo3AutorizacaoCadUnico(page);
     await passo4GrupoFamiliar(page, caso, avisos);
     await passo5e6Perguntas(page, avisos);
-    await passo7DadosRequerente(page, caso, opcoes, avisos);
+    if (!await passo7DadosRequerente(page, caso, opcoes, avisos)) {
+      return { pronto: false, telaAtual: "Dados do Requerente", avisos };
+    }
     if (!await passo8SelecionarUnidade(page, caso, avisos)) {
       return { pronto: false, telaAtual: "Selecionar Unidade", avisos };
     }
@@ -835,6 +850,12 @@
     await responderPergunta(page, PERGUNTAS_PASSO7.ondeMora, RESPOSTAS_FIXAS.ondeMora, avisos);
     await responderPergunta(
       page,
+      PERGUNTAS_PASSO7.formaConvivio,
+      formaDeConvivio(caso.grupoFamiliar),
+      avisos
+    );
+    await responderPergunta(
+      page,
       PERGUNTAS_PASSO7.recebeBeneficio,
       RESPOSTAS_FIXAS.recebeBeneficio,
       avisos
@@ -866,6 +887,7 @@
       avisos.push(
         "Bolsa Fam\xEDlia: a pergunta tem 4 op\xE7\xF5es (n\xE3o Sim/N\xE3o) e o escrit\xF3rio ainda n\xE3o definiu a regra. Deixei em branco \u2014 responda antes de concluir."
       );
+      return false;
     }
     const cpfProc = visivel(page.getByLabel(/CPF do Procurador/i)).first();
     if (await cpfProc.count()) {
@@ -880,6 +902,7 @@
     }
     await anexarDocumentos(page, opcoes, avisos);
     await avancar(page);
+    return true;
   }
   async function adicionarContato(page, tipo, valor, avisos) {
     if (!valor) {
@@ -1072,7 +1095,7 @@
           } finally {
             console.log = originalLog;
           }
-          const parouParaRevisao = res.pronto || res.telaAtual === "Selecionar Unidade" || res.telaAtual === "\xD3rg\xE3o Pagador";
+          const parouParaRevisao = res.pronto || res.telaAtual === "Dados do Requerente" || res.telaAtual === "Selecionar Unidade" || res.telaAtual === "\xD3rg\xE3o Pagador";
           if (parouParaRevisao) {
             const aviso = res.avisos.join(" | ");
             logToBackground(`[ROB\xD4 FINALIZADO] Preenchido para revis\xE3o humana.`);

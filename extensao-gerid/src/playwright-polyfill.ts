@@ -119,6 +119,11 @@ class MockLocator {
     return el.value || '';
   }
 
+  async isVisible() {
+    const el = await this._getElement();
+    return !!el && estaInteragivel(el);
+  }
+
   async isChecked() {
     const el = await this._waitForElement() as HTMLInputElement;
     return el.checked;
