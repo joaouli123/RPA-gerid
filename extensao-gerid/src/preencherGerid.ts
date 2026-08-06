@@ -273,6 +273,21 @@ async function passo2InformarRequerente(page: Page, caso: CasoParaProtocolar): P
     .catch(() => undefined);
 
   await avancar(page);
+  await verificarBloqueioDePedidoAberto(page);
+}
+
+/** O GERID bloqueia um novo BPC quando o requerente ja possui pedido aberto. */
+async function verificarBloqueioDePedidoAberto(page: Page): Promise<void> {
+  const alerta = page.locator('[role="alert"]');
+  if (!(await alerta.isVisible().catch(() => false))) return;
+
+  const mensagem = await alerta.innerText().catch(() => '');
+  if (/n..o e poss.vel continuar|pedido\s+\d+\s+.*em aberto/i.test(mensagem)) {
+    throw new ErroGerid(
+      FalhaGerid.ERRO_PREENCHIMENTO,
+      `O GERID bloqueou este requerente por existir pedido em aberto. ${mensagem}`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

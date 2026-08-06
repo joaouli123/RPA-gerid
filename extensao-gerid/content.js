@@ -688,6 +688,18 @@
     await cpf.fill(apenasDigitos(caso.cliente.cpf));
     await visivel(page.locator(mapaGerid.passo2.nome)).first().waitFor({ state: "visible" }).catch(() => void 0);
     await avancar(page);
+    await verificarBloqueioDePedidoAberto(page);
+  }
+  async function verificarBloqueioDePedidoAberto(page) {
+    const alerta = page.locator('[role="alert"]');
+    if (!await alerta.isVisible().catch(() => false)) return;
+    const mensagem = await alerta.innerText().catch(() => "");
+    if (/n..o e poss.vel continuar|pedido\s+\d+\s+.*em aberto/i.test(mensagem)) {
+      throw new ErroGerid(
+        FalhaGerid.ERRO_PREENCHIMENTO,
+        `O GERID bloqueou este requerente por existir pedido em aberto. ${mensagem}`
+      );
+    }
   }
   async function passo3AutorizacaoCadUnico(page) {
     const check = visivel(page.locator(mapaGerid.passo3.autorizacaoCadUnico)).first();
