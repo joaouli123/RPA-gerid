@@ -159,6 +159,12 @@ export function ExecucaoProgresso({
               </Botao>
             )}
             {!rodando && !concluida && casos.length > 0 && (
+              <Botao onClick={disparar} disabled={iniciando}>
+                <Icone nome="raio" className="h-4 w-4" />
+                {iniciando ? 'Preparando fila...' : 'Preparar fila para a extensão'}
+              </Botao>
+            )}
+            {!rodando && !concluida && casos.length > 0 && (
               <div className="text-sm font-medium text-amber-600 dark:text-amber-400 flex items-center gap-2">
                 <Icone nome="raio" className="h-4 w-4" />
                 Inicie pela Extensão no Gerid
