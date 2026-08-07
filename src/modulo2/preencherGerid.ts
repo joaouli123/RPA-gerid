@@ -9,8 +9,6 @@ import {
   RESPOSTA_BOLSA_FAMILIA,
   estadoCivilGerid,
   mapearParentesco,
-  escolherUnidadePorCidade,
-  extrairCidadeDaUnidade,
   slotGeridDoDocumento,
   indiceSlotDoDocumento,
   extensaoAceita,
@@ -707,7 +705,7 @@ async function passo8SelecionarUnidade(
   await visivel(page.getByRole('button', { name: /^Buscar$/i })).first().click();
   await page.waitForLoadState('networkidle').catch(() => undefined);
 
-  const ok = await escolherUnidadeDaCidade(page, caso, avisos, 'unidade de atendimento');
+  const ok = await selecionarUnidadeDeAtendimento(page, caso, avisos);
   if (ok) await avancar(page);
   return ok;
 }
@@ -718,78 +716,85 @@ async function passo9OrgaoPagador(
   avisos: string[],
 ): Promise<boolean> {
   await esperarTela(page, /.rg.o Pagador|receber o benef.cio/i);
-  const ok = await escolherUnidadeDaCidade(page, caso, avisos, 'órgão pagador');
-  if (ok) await avancar(page);
-  return ok;
+  const municipio = cidadeSemUf(caso.cliente.cidade);
+  const selecionouMunicipio = await escolherNoCombobox(
+    page,
+    mapaGerid.passo9.municipio,
+    municipio,
+  );
+
+  if (!selecionouMunicipio) {
+    avisos.push(`Nao encontrei o municipio "${municipio}" na lista de orgao pagador.`);
+    return false;
+  }
+
+  await page.waitForLoadState('networkidle').catch(() => undefined);
+  const primeiro = visivel(page.locator(mapaGerid.passo9.radioOrgaoPagador)).first();
+  if (!(await primeiro.count())) {
+    avisos.push(`Nenhum orgao pagador foi listado para o municipio "${municipio}".`);
+    return false;
+  }
+
+  const selecionou = await primeiro
+    .check({ force: true })
+    .then(() => primeiro.isChecked().catch(() => true), () => false);
+
+  if (!selecionou) {
+    avisos.push(`Nao consegui selecionar o primeiro orgao pagador de "${municipio}".`);
+    return false;
+  }
+
+  await avancar(page);
+  return true;
 }
 
-/**
- * Lê a lista de unidades e identifica a da cidade do cliente.
- *
- * A cidade vem sempre no padrão `CIDADE-UF` logo antes de `CEP:` — por isso a
- * comparação usa a cidade extraída, e não o texto inteiro da linha (que inclui
- * o endereço e fazia o robô escolher agência de outra cidade cujo logradouro
- * citasse a cidade do cliente).
- *
- * ⚠️ PENDÊNCIA CONHECIDA: ainda não sabemos qual elemento representa cada
- * agência (não são radio, button, a, li nem td). O robô identifica a agência
- * correta e tenta selecioná-la; se não conseguir, AVISA e segue — o advogado
- * escolhe na revisão. Nunca clica no escuro.
- */
-async function escolherUnidadeDaCidade(
+function cidadeSemUf(cidade: string): string {
+  return cidade.replace(/\s*[\/-]\s*[A-Za-z]{2}\s*$/u, '').trim();
+}
+
+/** Seleciona o card real `.unidade` retornado pela consulta de CEP. */
+async function selecionarUnidadeDeAtendimento(
   page: Page,
   caso: CasoParaProtocolar,
   avisos: string[],
-  rotuloEtapa: string,
 ): Promise<boolean> {
-  const linhas = await page.evaluate(() => {
+  const unidades = page.locator(mapaGerid.passo8.cardUnidade);
+  await unidades.first().waitFor({ state: 'visible', timeout: 10_000 }).catch(() => undefined);
+
+  const opcoes = await page.evaluate(() => {
     const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim();
-    const RE = /CEP:\s*\d{2}\.\d{3}-\d{3}/;
-    const todos = Array.from(document.querySelectorAll<HTMLElement>('*'));
-    return todos
-      .filter((e) => {
-        const t = norm(e.innerText || '');
-        if (!RE.test(t) || t.length > 250) return false;
-        return !Array.from(e.children).some((c) =>
-          RE.test(norm((c as HTMLElement).innerText || '')),
-        );
-      })
-      .map((e, i) => ({ indice: i, texto: norm(e.innerText || '') }));
+    return Array.from(document.querySelectorAll<HTMLElement>('.unidade')).map((e, indice) => ({
+      indice,
+      nome: norm(e.querySelector<HTMLElement>('.nome')?.innerText || ''),
+      cidade: norm(e.querySelector<HTMLElement>('.municipio')?.innerText || ''),
+    }));
   });
 
-  if (linhas.length === 0) {
-    avisos.push(`Nenhuma ${rotuloEtapa} foi listada — selecione manualmente.`);
+  if (opcoes.length === 0) {
+    avisos.push('Nenhuma unidade de atendimento foi listada para o CEP informado.');
     return false;
   }
 
-  const opcoes = linhas.map((l) => ({
-    nome: l.texto,
-    cidade: extrairCidadeDaUnidade(l.texto) ?? undefined,
-    indice: l.indice,
-  }));
+  const alvo = normalizar(cidadeSemUf(caso.cliente.cidade));
+  const semUf = (cidade: string) => normalizar(cidade).replace(/\s*-\s*[a-z]{2}$/u, '').trim();
+  const exata = opcoes.find((o) => semUf(o.cidade) === alvo);
+  const escolhida = exata ?? opcoes[0];
+  if (!escolhida) return false;
 
-  const escolhida = escolherUnidadePorCidade(opcoes, caso.cliente.cidade);
-
-  if (!escolhida) {
-    const cidades = opcoes.map((o) => o.cidade ?? '?').join(', ');
+  if (!exata) {
     avisos.push(
-      `Nenhuma ${rotuloEtapa} da cidade "${caso.cliente.cidade}" na lista (opções: ${cidades}). ` +
-        'Escolha manualmente antes de concluir.',
+      `O GERID nao listou unidade no municipio "${cidadeSemUf(caso.cliente.cidade)}"; ` +
+        `foi usada a primeira unidade regional retornada (${escolhida.nome}).`,
     );
-    return false;
   }
 
-  // Tenta selecionar. Enquanto o elemento clicável não estiver mapeado, isto
-  // pode não surtir efeito — por isso a confirmação explícita logo abaixo.
-  const radio = visivel(page.locator('input[type="radio"]')).nth(escolhida.indice);
-  const selecionou =
-    (await radio.count()) > 0 && (await radio.check({ force: true }).then(() => true, () => false));
+  const card = unidades.nth(escolhida.indice);
+  const selecionou = await card
+    .click()
+    .then(async () => (await card.getAttribute('class'))?.split(/\s+/).includes('selected') ?? false, () => false);
 
   if (!selecionou) {
-    avisos.push(
-      `Identifiquei a ${rotuloEtapa} correta ("${escolhida.cidade}") mas não consegui selecioná-la: ` +
-        'a lista do GERID ainda não está mapeada. Selecione essa opção manualmente.',
-    );
+    avisos.push(`Nao consegui selecionar a unidade de atendimento "${escolhida.nome}".`);
     return false;
   }
   return true;

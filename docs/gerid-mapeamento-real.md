@@ -268,9 +268,34 @@ Também não apareceu o checkbox "Comunicarei o óbito… em até 30 dias" citad
 - `multiple=true` em todos os slots.
 - Todos com `id="single-file"` → localizar pela caixa do slot, não pelo id.
 
-## Passos 8, 9, 10 — não capturados
+## Passos 8, 9, 10 — capturados em 07/08/2026
 
-Selecionar Unidade (CEP), Órgão Pagador (lista de agências) e Confirmar.
+### Passo 8 — Selecionar Unidade
+
+- CEP: `input[placeholder="__.___-___"]` (o campo continua sem id).
+- Buscar: botão com nome acessível `Buscar`.
+- Cada agência é um card clicável `.unidade[tabindex="0"]`.
+- O clique confirmado adiciona a classe `.selected` ao card.
+- Nome e município ficam em `.nome` e `.municipio` dentro do card.
+- A busca por CEP pode retornar apenas agências regionais, sem uma agência no
+  município do cliente. Nesse caso o robô usa a primeira opção ordenada pelo
+  próprio GERID e registra aviso para a revisão humana.
+
+### Passo 9 — Órgão Pagador
+
+- Município: combobox customizado `#orgaoPagadorMunicipio`.
+- A cidade do cadastro pode vir como `CIDADE/UF`; o sufixo é removido antes de
+  selecionar a opção do município.
+- Após o filtro, os locais pagadores aparecem em `table tbody`.
+- A seleção correta é o primeiro `input[type="radio"]` da tabela filtrada; a
+  linha recebe a classe `.selecionada` e o radio fica marcado.
+- O filtro de Bairro é opcional e não é necessário para avançar.
+
+### Passo 10 — Confirmar
+
+O resumo real exibe serviço, unidade de protocolo, requerente, órgão pagador e
+anexos. A extensão para nessa tela. Ela não marca
+`#campo-declaracaoConfirmar` e não clica em `Avançar`.
 
 ---
 

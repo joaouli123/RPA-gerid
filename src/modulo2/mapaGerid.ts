@@ -88,6 +88,12 @@ export interface MapaGerid {
     abaCep: string;
     abaMunicipio: string;
     buscar: string;
+    cardUnidade: string;
+  };
+
+  passo9: {
+    municipio: string;
+    radioOrgaoPagador: string;
   };
 
   passo10: {
@@ -145,6 +151,12 @@ export const mapaGerid: MapaGerid = {
     abaCep: 'Consultar por CEP',
     abaMunicipio: 'Consultar por Município',
     buscar: 'Buscar',
+    cardUnidade: '.unidade',
+  },
+
+  passo9: {
+    municipio: '#orgaoPagadorMunicipio',
+    radioOrgaoPagador: 'table tbody input[type="radio"]',
   },
 
   passo10: {
@@ -152,11 +164,10 @@ export const mapaGerid: MapaGerid = {
   },
 
   // -------------------------------------------------------------------------
-  // 28/07/2026 — passos 1 a 7 mapeados a partir do DOM real e validados com o
-  // Fabrício. Correções aplicadas em regrasPreenchimento.ts (estado civil,
-  // parentesco, escolha de unidade). O que falta é só o fim do fluxo:
+  // 07/08/2026 — passos 1 a 10 validados no DOM real. O robô para na revisão
+  // final e nunca marca a declaração nem envia o requerimento sozinho.
   // -------------------------------------------------------------------------
-  pendencias: ['Mapear o elemento clicavel das listas de unidade e orgao pagador.'],
+  pendencias: [],
 };
 
 /**

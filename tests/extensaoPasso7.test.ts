@@ -69,7 +69,18 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
           <div>* Estou ciente de que devo acompanhar o pedido pelos canais de atendimento.<input id="campo-ca-ciencia" type="checkbox"></div>
           <div class="componenteAnexos">${slots.map((slot) => `<div class="containerAnexo"><strong>${slot}</strong><input id="single-file" type="file"></div>`).join('')}</div>
         </section>
-        <section id="passo8" hidden><h2>Selecionar Unidade</h2><span>Consultar por CEP</span><input placeholder="__.___-___"><button>Buscar</button></section>
+        <section id="passo8" hidden>
+          <h2>Selecionar Unidade</h2><span>Consultar por CEP</span>
+          <input placeholder="__.___-___"><button>Buscar</button>
+          <div class="unidade" tabindex="0"><div class="nome">AGÊNCIA REGIONAL UM</div><div class="municipio">CIDADE VIZINHA-SE</div></div>
+          <div class="unidade" tabindex="0"><div class="nome">AGÊNCIA REGIONAL DOIS</div><div class="municipio">OUTRA CIDADE-SE</div></div>
+        </section>
+        <section id="passo9" hidden>
+          <h2>Órgão Pagador</h2><p>Selecione o local em que deseja receber o benefício.</p>
+          ${combo('orgaoPagadorMunicipio', ['CIDADE TESTE'])}
+          <table><tbody><tr><td><input id="orgao-1" type="radio" name="orgao"></td><td>ÓRGÃO PAGADOR TESTE</td><td>RUA DE TESTE</td><td>CENTRO</td></tr></tbody></table>
+        </section>
+        <section id="passo10" hidden><h2>Confirmar</h2><label>Declaro que li e concordo<input id="campo-declaracaoConfirmar" type="checkbox"></label></section>
         <button id="btn-next">Avançar</button>
         <script>
           window.__contatos = [];
@@ -88,6 +99,12 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
           }
           for (const tag of document.querySelectorAll('.interaction-select')) {
             tag.addEventListener('click', () => { tag.querySelector('input').checked = true; });
+          }
+          for (const unidade of document.querySelectorAll('.unidade')) {
+            unidade.addEventListener('click', () => {
+              document.querySelectorAll('.unidade').forEach((u) => u.classList.remove('selected'));
+              unidade.classList.add('selected');
+            });
           }
           document.querySelector('#consultar').addEventListener('click', () => { document.querySelector('#nomeRequerente').value = 'Pessoa de Teste'; });
           document.querySelector('#editar-contatos').addEventListener('click', () => { document.querySelector('#dialog-contatos').hidden = false; });
@@ -112,11 +129,11 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
 
       const bundle = await readFile(path.join(process.cwd(), 'extensao-gerid', 'content.js'), 'utf8');
       await pagina.addScriptTag({ content: bundle });
-      await pagina.evaluate(() => {
+      const resultado = await pagina.evaluate(() =>
         (window as any).iniciarProcessamento({
           nome: 'Pessoa de Teste',
           dados: {
-            cliente: { cpf: '12345678901', nome: 'Pessoa de Teste', cep: '12345678', cidade: 'Cidade Teste', telefone: '62999999999' },
+            cliente: { cpf: '12345678901', nome: 'Pessoa de Teste', cep: '12345678', cidade: 'Cidade Teste/SE', telefone: '62999999999' },
             grupoFamiliar: { requerenteCpf: '12345678901', integrantes: [{ cpf: '12345678901', parentesco: 'Titular' }] },
           },
           configuracao: { procuradorCpf: '04794750161', telefonePadrao: '62999999999', emailEscritorio: 'teste@example.com' },
@@ -124,8 +141,8 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
             { tipo: 'TERMO_REPRESENTACAO', nome: 'termo.pdf', mimeType: 'application/pdf', base64: 'JVBERi0xLjQK' },
             { tipo: 'DOCUMENTOS_PESSOAIS', nome: 'documentos.pdf', mimeType: 'application/pdf', base64: 'JVBERi0xLjQK' },
           ],
-        });
-      });
+        }),
+      );
 
       await pagina.waitForFunction(() => {
         const contatos = (window as any).__contatos;
@@ -138,7 +155,10 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
           document.querySelector<HTMLInputElement>('#campo-ca-ciencia')?.checked &&
           arquivos[0]?.files?.[0]?.name === 'termo.pdf' &&
           arquivos[4]?.files?.[0]?.name === 'documentos.pdf' &&
-          !document.querySelector<HTMLElement>('#passo8')?.hidden;
+          document.querySelector<HTMLElement>('.unidade')?.classList.contains('selected') &&
+          document.querySelector<HTMLInputElement>('#orgaoPagadorMunicipio')?.value === 'CIDADE TESTE' &&
+          document.querySelector<HTMLInputElement>('#orgao-1')?.checked &&
+          !document.querySelector<HTMLElement>('#passo10')?.hidden;
       }, undefined, { timeout: 20_000 });
 
       const estado = await pagina.evaluate(() => ({
@@ -146,6 +166,10 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
         acompanha: document.querySelector<HTMLInputElement>('#acompanharProcesso-Sim')?.checked,
         procurador: document.querySelector<HTMLInputElement>('#ca-cpf-procurador')?.value,
         arquivos: [...document.querySelectorAll<HTMLInputElement>('.containerAnexo input[type="file"]')].map((i) => i.files?.[0]?.name || null),
+        unidade: document.querySelector<HTMLElement>('.unidade.selected .nome')?.innerText,
+        municipio: document.querySelector<HTMLInputElement>('#orgaoPagadorMunicipio')?.value,
+        orgao: document.querySelector<HTMLInputElement>('#orgao-1')?.checked,
+        revisao: !document.querySelector<HTMLElement>('#passo10')?.hidden,
       }));
       expect(estado.contatos).toEqual([
         { tipo: 'Celular', valor: '62999999999' },
@@ -156,6 +180,11 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
       expect(estado.arquivos[0]).toBe('termo.pdf');
       expect(estado.arquivos[4]).toBe('documentos.pdf');
       expect(estado.arquivos[10]).toBeNull();
+      expect(estado.unidade).toBe('AGÊNCIA REGIONAL UM');
+      expect(estado.municipio).toBe('CIDADE TESTE');
+      expect(estado.orgao).toBe(true);
+      expect(estado.revisao).toBe(true);
+      expect(resultado).toMatchObject({ status: 'revisao' });
     } finally {
       await pagina.close();
       await navegador.close();

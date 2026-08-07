@@ -138,8 +138,11 @@ Respondidas e travadas em `src/modulo2/regrasPreenchimento.ts` (com testes):
 - **Parentesco**: mapeado da planilha para os grupos do GERID (Pai/Mãe/…,
   Irmão/Irmã confirmados; Cônjuge/Filho/Avô a CONFIRMAR). Parentesco que não
   casa ⇒ o robô NÃO chuta, vira pendência.
-- **Órgão Pagador / Unidade**: escolhe a agência da **mesma cidade** do cliente,
-  mesmo que a primeira da lista seja de outra cidade. Nenhuma casa ⇒ pendência.
+- **Unidade de protocolo**: prefere a agência da mesma cidade; se a consulta por
+  CEP retornar somente agências regionais, usa a primeira opção ordenada pelo
+  GERID e registra aviso para revisão.
+- **Órgão Pagador**: seleciona primeiro o município exato do cliente e, com a
+  tabela já filtrada, marca o primeiro local pagador retornado.
 - **Biometria**: seguir o preenchimento até o fim mesmo sem biometria; o
   Fabrício resolve manualmente em "cumprimento de exigência".
 - **Humano no laço**: o robô preenche os passos 1–9 e **para no Confirmar**;

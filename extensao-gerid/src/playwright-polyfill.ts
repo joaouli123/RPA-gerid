@@ -56,7 +56,9 @@ class MockLocator {
   async count() {
     try {
       const root = this.parent ? await this.parent._getElement() : document;
-      return root ? root.querySelectorAll(this.selector).length : 0;
+      if (!root) return 0;
+      return (Array.from(root.querySelectorAll(this.selector)) as HTMLElement[])
+        .filter(estaInteragivel).length;
     } catch {
       return 0;
     }
@@ -92,8 +94,9 @@ class MockLocator {
     l._getElement = async () => {
       const root = parent ? await parent._getElement() : document;
       if (!root) return null;
-      const els = root.querySelectorAll(sel);
-      return (els[index] as HTMLElement) || null;
+      const els = Array.from(root.querySelectorAll(sel)) as HTMLElement[];
+      const visiveis = els.filter(estaInteragivel);
+      return visiveis[index] ?? els[index] ?? null;
     };
     return l;
   }

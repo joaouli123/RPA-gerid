@@ -64,7 +64,8 @@
         async count() {
           try {
             const root = this.parent ? await this.parent._getElement() : document;
-            return root ? root.querySelectorAll(this.selector).length : 0;
+            if (!root) return 0;
+            return Array.from(root.querySelectorAll(this.selector)).filter(estaInteragivel).length;
           } catch {
             return 0;
           }
@@ -95,8 +96,9 @@
           l._getElement = async () => {
             const root = parent ? await parent._getElement() : document;
             if (!root) return null;
-            const els = root.querySelectorAll(sel);
-            return els[index] || null;
+            const els = Array.from(root.querySelectorAll(sel));
+            const visiveis = els.filter(estaInteragivel);
+            return visiveis[index] ?? els[index] ?? null;
           };
           return l;
         }
@@ -343,17 +345,21 @@
           cepPlaceholder: "__.___-___",
           abaCep: "Consultar por CEP",
           abaMunicipio: "Consultar por Munic\xEDpio",
-          buscar: "Buscar"
+          buscar: "Buscar",
+          cardUnidade: ".unidade"
+        },
+        passo9: {
+          municipio: "#orgaoPagadorMunicipio",
+          radioOrgaoPagador: 'table tbody input[type="radio"]'
         },
         passo10: {
           declaracaoConfirmar: 'input[id="campo-declaracaoConfirmar"]'
         },
         // -------------------------------------------------------------------------
-        // 28/07/2026 — passos 1 a 7 mapeados a partir do DOM real e validados com o
-        // Fabrício. Correções aplicadas em regrasPreenchimento.ts (estado civil,
-        // parentesco, escolha de unidade). O que falta é só o fim do fluxo:
+        // 07/08/2026 — passos 1 a 10 validados no DOM real. O robô para na revisão
+        // final e nunca marca a declaração nem envia o requerimento sozinho.
         // -------------------------------------------------------------------------
-        pendencias: ["Mapear o elemento clicavel das listas de unidade e orgao pagador."]
+        pendencias: []
       };
     }
   });
@@ -414,22 +420,6 @@
     const res = { grupo: null, confirmado: false };
     Object.defineProperty(res, "exato", { value: false, enumerable: false, configurable: true });
     return res;
-  }
-  function extrairCidadeDaUnidade(textoLinha) {
-    const m = /([A-Za-zÀ-ÿ0-9'.\s]+?)\s*-\s*([A-Z]{2})\s+CEP\s*:/u.exec(textoLinha);
-    const cidade = m?.[1]?.trim();
-    return cidade ? cidade : null;
-  }
-  function escolherUnidadePorCidade(opcoes, cidadeCliente) {
-    const alvo = normalizar(cidadeCliente);
-    if (!alvo) return null;
-    const cidadeDa = (o) => normalizar(o.cidade ?? extrairCidadeDaUnidade(o.nome) ?? "");
-    const exata = opcoes.find((o) => cidadeDa(o) === alvo);
-    if (exata) return exata;
-    const semUf = (s) => s.replace(/[\/-][a-z]{2}$/u, "").trim();
-    const porCidade = opcoes.find((o) => semUf(cidadeDa(o)) === semUf(alvo));
-    if (porCidade) return porCidade;
-    return opcoes.find((o) => !o.cidade && normalizar(o.nome).includes(alvo)) ?? null;
   }
   function slotGeridDoDocumento(tipo) {
     return SLOT_GERID_POR_TIPO[tipo] ?? null;
@@ -1029,56 +1019,69 @@
     }
     await visivel(page.getByRole("button", { name: /^Buscar$/i })).first().click();
     await page.waitForLoadState("networkidle").catch(() => void 0);
-    const ok = await escolherUnidadeDaCidade(page, caso, avisos, "unidade de atendimento");
+    const ok = await selecionarUnidadeDeAtendimento(page, caso, avisos);
     if (ok) await avancar(page);
     return ok;
   }
   async function passo9OrgaoPagador(page, caso, avisos) {
     await esperarTela(page, /.rg.o Pagador|receber o benef.cio/i);
-    const ok = await escolherUnidadeDaCidade(page, caso, avisos, "\xF3rg\xE3o pagador");
-    if (ok) await avancar(page);
-    return ok;
-  }
-  async function escolherUnidadeDaCidade(page, caso, avisos, rotuloEtapa) {
-    const linhas = await page.evaluate(() => {
-      const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
-      const RE = /CEP:\s*\d{2}\.\d{3}-\d{3}/;
-      const todos = Array.from(document.querySelectorAll("*"));
-      return todos.filter((e) => {
-        const t = norm(e.innerText || "");
-        if (!RE.test(t) || t.length > 250) return false;
-        return !Array.from(e.children).some(
-          (c) => RE.test(norm(c.innerText || ""))
-        );
-      }).map((e, i) => ({ indice: i, texto: norm(e.innerText || "") }));
-    });
-    if (linhas.length === 0) {
-      avisos.push(`Nenhuma ${rotuloEtapa} foi listada \u2014 selecione manualmente.`);
-      return false;
-    }
-    const opcoes = linhas.map((l) => ({
-      nome: l.texto,
-      cidade: extrairCidadeDaUnidade(l.texto) ?? void 0,
-      indice: l.indice
-    }));
-    const escolhida = escolherUnidadePorCidade(opcoes, caso.cliente.cidade);
-    if (!escolhida) {
-      const cidades = opcoes.map((o) => o.cidade ?? "?").join(", ");
-      avisos.push(
-        `Nenhuma ${rotuloEtapa} da cidade "${caso.cliente.cidade}" na lista (op\xE7\xF5es: ${cidades}). Escolha manualmente antes de concluir.`
-      );
-      return false;
-    }
-    const radio = visivel(page.locator('input[type="radio"]')).nth(escolhida.indice);
-    avisos.push(
-      `Identifiquei a ${rotuloEtapa} da cidade "${escolhida.cidade}", mas a lista ainda nao esta mapeada. Selecione essa opcao manualmente antes de concluir.`
+    const municipio = cidadeSemUf(caso.cliente.cidade);
+    const selecionouMunicipio = await escolherNoCombobox(
+      page,
+      mapaGerid.passo9.municipio,
+      municipio
     );
-    return false;
-    const selecionou = await radio.count() > 0 && await radio.check({ force: true }).then(() => true, () => false);
+    if (!selecionouMunicipio) {
+      avisos.push(`Nao encontrei o municipio "${municipio}" na lista de orgao pagador.`);
+      return false;
+    }
+    await page.waitForLoadState("networkidle").catch(() => void 0);
+    const radios = visivel(page.locator(mapaGerid.passo9.radioOrgaoPagador));
+    const primeiro = radios.first();
+    if (!await primeiro.count().catch(() => 0)) {
+      avisos.push(`Nenhum orgao pagador foi listado para o municipio "${municipio}".`);
+      return false;
+    }
+    const selecionou = await primeiro.check({ force: true }).then(() => primeiro.isChecked().catch(() => true), () => false);
     if (!selecionou) {
+      avisos.push(`Nao consegui selecionar o primeiro orgao pagador de "${municipio}".`);
+      return false;
+    }
+    await avancar(page);
+    return true;
+  }
+  function cidadeSemUf(cidade) {
+    return cidade.replace(/\s*[\/-]\s*[A-Za-z]{2}\s*$/u, "").trim();
+  }
+  async function selecionarUnidadeDeAtendimento(page, caso, avisos) {
+    const unidades = page.locator(mapaGerid.passo8.cardUnidade);
+    await unidades.first().waitFor({ state: "visible", timeout: 1e4 }).catch(() => void 0);
+    const opcoes = await page.evaluate(() => {
+      const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+      return Array.from(document.querySelectorAll(".unidade")).map((e, indice) => ({
+        indice,
+        nome: norm(e.querySelector(".nome")?.innerText || ""),
+        cidade: norm(e.querySelector(".municipio")?.innerText || "")
+      }));
+    });
+    if (opcoes.length === 0) {
+      avisos.push("Nenhuma unidade de atendimento foi listada para o CEP informado.");
+      return false;
+    }
+    const alvo = normalizar(cidadeSemUf(caso.cliente.cidade));
+    const semUf = (cidade) => normalizar(cidade).replace(/\s*-\s*[a-z]{2}$/u, "").trim();
+    const exata = opcoes.find((o) => semUf(o.cidade) === alvo);
+    const escolhida = exata ?? opcoes[0];
+    if (!escolhida) return false;
+    if (!exata) {
       avisos.push(
-        `Identifiquei a ${rotuloEtapa} correta ("${escolhida.cidade}") mas n\xE3o consegui selecion\xE1-la: a lista do GERID ainda n\xE3o est\xE1 mapeada. Selecione essa op\xE7\xE3o manualmente.`
+        `O GERID nao listou unidade no municipio "${cidadeSemUf(caso.cliente.cidade)}"; foi usada a primeira unidade regional retornada (${escolhida.nome}).`
       );
+    }
+    const card = unidades.nth(escolhida.indice);
+    const selecionou = await card.click().then(async () => (await card.getAttribute("class"))?.split(/\s+/).includes("selected") ?? false, () => false);
+    if (!selecionou) {
+      avisos.push(`Nao consegui selecionar a unidade de atendimento "${escolhida.nome}".`);
       return false;
     }
     return true;
