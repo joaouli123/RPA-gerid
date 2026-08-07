@@ -27,7 +27,8 @@ describe('extensão Gerid — seleção do serviço', () => {
         </section>
         <section id="passo2" hidden>
           <input id="idRequerente.cpf">
-          <input id="nomeRequerente" value="Pessoa de Teste">
+          <button id="consultar-cpf" aria-label="Botão de ação">Consultar</button>
+          <input id="nomeRequerente" value="">
         </section>
         <button id="btn-next">Avançar</button>
         <script>
@@ -43,6 +44,10 @@ describe('extensão Gerid — seleção do serviço', () => {
             } else if (!passo2.hidden) {
               passo2.hidden = true;
             }
+          });
+          document.querySelector('#consultar-cpf').addEventListener('click', (evento) => {
+            evento.currentTarget.dataset.clicado = 'sim';
+            document.querySelector('#nomeRequerente').value = 'Pessoa de Teste';
           });
         </script>
       `);
@@ -74,7 +79,8 @@ describe('extensão Gerid — seleção do serviço', () => {
         await pagina.waitForFunction(() => {
           const radio = document.querySelector<HTMLInputElement>('#idSelecionarServico-itens input[id="1655"]');
           const cpf = document.querySelector<HTMLInputElement>('input[id="idRequerente.cpf"]');
-          return radio?.checked && cpf?.value === '12345678901';
+          const consulta = document.querySelector<HTMLElement>('#consultar-cpf');
+          return radio?.checked && cpf?.value === '12345678901' && consulta?.dataset.clicado === 'sim';
         }, undefined, { timeout: 8_000 });
       } catch {
         const estado = await pagina.evaluate(() => ({
@@ -83,12 +89,14 @@ describe('extensão Gerid — seleção do serviço', () => {
           passo1Oculto: document.querySelector<HTMLElement>('#passo1')?.hidden,
           passo2Oculto: document.querySelector<HTMLElement>('#passo2')?.hidden,
           cpf: document.querySelector<HTMLInputElement>('input[id="idRequerente.cpf"]')?.value,
+          consultaClicada: document.querySelector<HTMLElement>('#consultar-cpf')?.dataset.clicado,
         }));
         throw new Error(`Fluxo não avançou: ${JSON.stringify({ estado, mensagens })}`);
       }
 
       expect(await pagina.isChecked('#idSelecionarServico-itens input[id="1655"]')).toBe(true);
       expect(await pagina.inputValue('input[id="idRequerente.cpf"]')).toBe('12345678901');
+      expect(await pagina.getAttribute('#consultar-cpf', 'data-clicado')).toBe('sim');
     } finally {
       await pagina.close();
       await navegador.close();

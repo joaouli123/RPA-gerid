@@ -710,7 +710,24 @@
       );
     });
     await cpf.fill(apenasDigitos(caso.cliente.cpf));
-    await visivel(page.locator(mapaGerid.passo2.nome)).first().waitFor({ state: "visible" }).catch(() => void 0);
+    const botaoConsulta = visivel(
+      page.getByRole("button", { name: /Bot.o de a..o/i })
+    ).first();
+    if (await botaoConsulta.isVisible().catch(() => false)) {
+      await botaoConsulta.click();
+    }
+    const nome = visivel(page.locator(mapaGerid.passo2.nome)).first();
+    const inicioEspera = Date.now();
+    while (Date.now() - inicioEspera < 1e4) {
+      if ((await nome.inputValue().catch(() => "")).trim()) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!(await nome.inputValue().catch(() => "")).trim()) {
+      throw new ErroGerid(
+        FalhaGerid.CAMPO_NAO_ENCONTRADO,
+        "O Gerid n\xE3o retornou o nome do requerente ap\xF3s consultar o CPF."
+      );
+    }
     await avancar(page);
     await verificarBloqueioDePedidoAberto(page);
   }

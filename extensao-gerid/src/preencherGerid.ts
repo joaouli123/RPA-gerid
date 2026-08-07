@@ -277,13 +277,28 @@ async function passo2InformarRequerente(page: Page, caso: CasoParaProtocolar): P
 
   await cpf.fill(apenasDigitos(caso.cliente.cpf));
 
+  const botaoConsulta = visivel(
+    page.getByRole('button', { name: /Bot.o de a..o/i }),
+  ).first();
+  if (await botaoConsulta.isVisible().catch(() => false)) {
+    await botaoConsulta.click();
+  }
+
   // Confirmado no GERID real: o nome preenche sozinho ao digitar o CPF.
   // Não há lupa nem Enter (o `press('Enter')` do código antigo era inútil).
   // Espera o nome chegar antes de avançar — é a prova de que o CPF foi aceito.
-  await visivel(page.locator(mapaGerid.passo2.nome))
-    .first()
-    .waitFor({ state: 'visible' })
-    .catch(() => undefined);
+  const nome = visivel(page.locator(mapaGerid.passo2.nome)).first();
+  const inicioEspera = Date.now();
+  while (Date.now() - inicioEspera < 10_000) {
+    if ((await nome.inputValue().catch(() => '')).trim()) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (!(await nome.inputValue().catch(() => '')).trim()) {
+    throw new ErroGerid(
+      FalhaGerid.CAMPO_NAO_ENCONTRADO,
+      'O Gerid não retornou o nome do requerente após consultar o CPF.',
+    );
+  }
 
   await avancar(page);
   await verificarBloqueioDePedidoAberto(page);
