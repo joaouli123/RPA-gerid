@@ -201,6 +201,34 @@ async function comboPorPergunta(page: Page, trechoPergunta: string): Promise<str
   }, trechoPergunta);
 }
 
+/** Localiza um input de texto sem rótulo `for`, usando a pergunta ao redor. */
+async function inputPorPergunta(page: Page, trechoPergunta: string): Promise<string | null> {
+  return page.evaluate((trecho) => {
+    const norm = (s: string) =>
+      (s || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+    const alvo = norm(trecho);
+
+    const inputs = Array.from(
+      document.querySelectorAll<HTMLInputElement>(
+        'input:not([role="combobox"]):not([type="file"]):not([type="checkbox"]):not([type="radio"])',
+      ),
+    );
+    for (const input of inputs) {
+      let p: HTMLElement | null = input.parentElement;
+      for (let h = 0; p && h < 5; h++, p = p.parentElement) {
+        const texto = norm(p.innerText || '');
+        if (texto.length > 3 && texto.length < 250 && texto.includes(alvo)) return input.id;
+      }
+    }
+    return null;
+  }, trechoPergunta);
+}
+
 /** Responde um combobox do passo 7 localizado pela pergunta. Vira aviso se falhar. */
 async function responderPergunta(
   page: Page,
@@ -323,20 +351,16 @@ async function passo4GrupoFamiliar(
   // Descobre quantas linhas o GERID renderizou e o CPF de cada uma.
   const linhas = await page.evaluate(() => {
     const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim();
-    const out: Array<{ indice: number; cpf: string }> = [];
+    const out: Array<{ indice: number; cpf: string; ehRequerente: boolean }> = [];
     for (let i = 0; i < 40; i++) {
       const ec = document.getElementById(`selectEstadoCivil${i}`);
       if (!ec) break;
-      let p: HTMLElement | null = ec.parentElement;
-      let cpf = '';
-      for (let h = 0; p && h < 8; h++, p = p.parentElement) {
-        const m = /\d{3}\.?\d{3}\.?\d{3}-?\d{2}/.exec(norm(p.innerText || ''));
-        if (m) {
-          cpf = m[0].replace(/\D/g, '');
-          break;
-        }
-      }
-      out.push({ indice: i, cpf });
+      const tr = ec.closest('tr') as HTMLElement | null;
+      const primeiraCelula = tr?.querySelector('td') as HTMLElement | null;
+      const digitos = norm(primeiraCelula?.innerText || '').replace(/\D/g, '');
+      const cpf = digitos.length === 10 ? digitos.padStart(11, '0') : digitos;
+      const ehRequerente = !document.getElementById(`selectParentesco${i}`);
+      out.push({ indice: i, cpf, ehRequerente });
     }
     return out;
   });
@@ -348,7 +372,7 @@ async function passo4GrupoFamiliar(
   const vistos = new Set<string>();
 
   for (const linha of linhas) {
-    const ehRequerente = linha.indice === 0;
+    const ehRequerente = linha.ehRequerente;
     if (linha.cpf) vistos.add(linha.cpf);
 
     // --- Estado civil: existe em TODAS as linhas, inclusive a do requerente.
@@ -475,6 +499,10 @@ async function passo7DadosRequerente(
   await adicionarContato(page, 'Celular', telefone, avisos);
   await adicionarContato(page, 'E-mail', opcoes.emailEscritorio, avisos);
 
+  const acompanha = visivel(page.locator(mapaGerid.passo7.acompanharProcessoSim)).first();
+  if (await acompanha.count()) await garantirMarcado(acompanha);
+  else avisos.push('Não achei a opção "Sim" para acompanhar o processo — marque manualmente.');
+
   // --- Perguntas fixas, localizadas pelo texto (os ids são hash)
   await responderPergunta(page, PERGUNTAS_PASSO7.estrangeiro, RESPOSTAS_FIXAS.estrangeiro, avisos);
   await responderPergunta(
@@ -529,9 +557,11 @@ async function passo7DadosRequerente(
   }
 
   // --- CPF do procurador
-  const cpfProc = visivel(page.getByLabel(/CPF do Procurador/i)).first();
-  if (await cpfProc.count()) {
-    await cpfProc.fill(apenasDigitos(opcoes.procuradorCpf));
+  const cpfProcId = await inputPorPergunta(page, 'CPF do Procurador');
+  if (cpfProcId) {
+    await visivel(page.locator(`[id="${cssEscape(cpfProcId)}"]`))
+      .first()
+      .fill(apenasDigitos(opcoes.procuradorCpf));
   } else {
     avisos.push('Campo "CPF do Procurador" não encontrado — preencha manualmente.');
   }
@@ -561,10 +591,17 @@ async function adicionarContato(
     return;
   }
   try {
-    await visivel(page.getByText(/Adicionar/i)).first().click();
+    const fechar = visivel(page.getByRole('button', { name: /^Fechar$/i })).first();
+    if (!(await fechar.isVisible().catch(() => false))) {
+      const editar = visivel(
+        page.getByRole('button', { name: /Clique para editar contatos/i }),
+      ).first();
+      if (await editar.isVisible().catch(() => false)) await editar.click();
+      else await visivel(page.getByText(/^Adicionar$/i)).first().click();
+    }
     const ok = await escolherNoCombobox(page, mapaGerid.passo7.tipoContato, tipo);
     if (!ok) avisos.push(`Não consegui escolher o tipo de contato "${tipo}".`);
-    await visivel(page.getByLabel(/^Valor/i)).first().fill(valor);
+    await visivel(page.getByPlaceholder(/^Informe o /i)).first().fill(valor);
     await visivel(page.getByRole('button', { name: /^Adicionar$/i })).first().click();
     await visivel(page.getByRole('button', { name: /Fechar/i })).first().click();
   } catch {
@@ -613,10 +650,10 @@ async function anexarDocumentos(
 
     // 1) pelo texto do slot — o caminho preferido.
     const caixa = page
-      .locator('div')
+      .locator('div.containerAnexo')
       .filter({ hasText: slot })
       .locator('input[type="file"]')
-      .last();
+      .first();
     if (await caixa.count()) alvo = caixa;
 
     // 2) pelo índice conhecido, como rede de segurança.

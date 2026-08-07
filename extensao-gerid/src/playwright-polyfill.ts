@@ -125,13 +125,20 @@ class MockLocator {
   }
 
   async isChecked() {
-    const el = await this._waitForElement() as HTMLInputElement;
-    return el.checked;
+    const el = await this._getElement() as HTMLInputElement | null;
+    return !!el?.checked;
   }
 
   async check() {
     const el = await this._waitForElement() as HTMLInputElement;
-    if (!el.checked) el.click();
+    if (!el.checked) {
+      // Os pares Sim/Não do GERID são tags customizadas. O estado React é
+      // alterado pelo clique no contêiner `.interaction-select`, não por uma
+      // atribuição direta no input interno.
+      const controle = el.closest<HTMLElement>('.interaction-select');
+      if (controle) controle.click();
+      else el.click();
+    }
     if (!el.checked) {
       el.checked = true;
       el.dispatchEvent(new Event('input', { bubbles: true }));

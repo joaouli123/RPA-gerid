@@ -65,7 +65,7 @@ export interface MapaGerid {
   };
 
   passo4: {
-    /** Comboboxes indexados por linha. Requerente = índice 0. */
+    /** Comboboxes indexados por linha. O requerente é a linha sem parentesco. */
     parentesco: (i: number) => string;
     estadoCivil: (i: number) => string;
     /** Checkbox "Há alguém que você queira incluir ou excluir?" */
@@ -75,6 +75,7 @@ export interface MapaGerid {
 
   passo7: {
     tipoContato: string;
+    acompanharProcessoSim: string;
     /** Os anexos não têm id único: todos são `input[type=file]#single-file`. */
     inputArquivo: string;
     totalSlots: number;
@@ -133,6 +134,7 @@ export const mapaGerid: MapaGerid = {
 
   passo7: {
     tipoContato: '#selectTipoContato',
+    acompanharProcessoSim: 'input[id="acompanharProcesso-Sim"]',
     inputArquivo: 'input[type="file"]',
     totalSlots: 11,
   },

@@ -51,7 +51,7 @@ export const SERVICO_BPC_PCD: OpcaoGerid = {
  */
 export const RESPOSTAS_FIXAS = {
   /** Passo 5. "Gastos com a deficiência negados pelo poder público?" */
-  comprometimentoDeRenda: 'Sim',
+  comprometimentoDeRenda: 'Não',
   /** Passo 6. "Proteção Especial SUAS (Centro-Dia) negada?" */
   protecaoEspecialSuas: 'Não',
   /** Passo 7. Aceita acompanhar o andamento (Meu INSS / 135 / e-mail). */

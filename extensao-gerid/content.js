@@ -122,12 +122,16 @@
           return !!el && estaInteragivel(el);
         }
         async isChecked() {
-          const el = await this._waitForElement();
-          return el.checked;
+          const el = await this._getElement();
+          return !!el?.checked;
         }
         async check() {
           const el = await this._waitForElement();
-          if (!el.checked) el.click();
+          if (!el.checked) {
+            const controle = el.closest(".interaction-select");
+            if (controle) controle.click();
+            else el.click();
+          }
           if (!el.checked) {
             el.checked = true;
             el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -330,6 +334,7 @@
         },
         passo7: {
           tipoContato: "#selectTipoContato",
+          acompanharProcessoSim: 'input[id="acompanharProcesso-Sim"]',
           inputArquivo: 'input[type="file"]',
           totalSlots: 11
         },
@@ -450,7 +455,7 @@
       };
       RESPOSTAS_FIXAS = {
         /** Passo 5. "Gastos com a deficiência negados pelo poder público?" */
-        comprometimentoDeRenda: "Sim",
+        comprometimentoDeRenda: "N\xE3o",
         /** Passo 6. "Proteção Especial SUAS (Centro-Dia) negada?" */
         protecaoEspecialSuas: "N\xE3o",
         /** Passo 7. Aceita acompanhar o andamento (Meu INSS / 135 / e-mail). */
@@ -664,6 +669,25 @@
       return null;
     }, trechoPergunta);
   }
+  async function inputPorPergunta(page, trechoPergunta) {
+    return page.evaluate((trecho) => {
+      const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const alvo = norm(trecho);
+      const inputs = Array.from(
+        document.querySelectorAll(
+          'input:not([role="combobox"]):not([type="file"]):not([type="checkbox"]):not([type="radio"])'
+        )
+      );
+      for (const input of inputs) {
+        let p = input.parentElement;
+        for (let h = 0; p && h < 5; h++, p = p.parentElement) {
+          const texto = norm(p.innerText || "");
+          if (texto.length > 3 && texto.length < 250 && texto.includes(alvo)) return input.id;
+        }
+      }
+      return null;
+    }, trechoPergunta);
+  }
   async function responderPergunta(page, trechoPergunta, resposta, avisos, opcional = false) {
     const id = await comboPorPergunta(page, trechoPergunta);
     if (!id) {
@@ -766,16 +790,12 @@
       for (let i = 0; i < 40; i++) {
         const ec = document.getElementById(`selectEstadoCivil${i}`);
         if (!ec) break;
-        let p = ec.parentElement;
-        let cpf = "";
-        for (let h = 0; p && h < 8; h++, p = p.parentElement) {
-          const m = /\d{3}\.?\d{3}\.?\d{3}-?\d{2}/.exec(norm(p.innerText || ""));
-          if (m) {
-            cpf = m[0].replace(/\D/g, "");
-            break;
-          }
-        }
-        out.push({ indice: i, cpf });
+        const tr = ec.closest("tr");
+        const primeiraCelula = tr?.querySelector("td");
+        const digitos = norm(primeiraCelula?.innerText || "").replace(/\D/g, "");
+        const cpf = digitos.length === 10 ? digitos.padStart(11, "0") : digitos;
+        const ehRequerente = !document.getElementById(`selectParentesco${i}`);
+        out.push({ indice: i, cpf, ehRequerente });
       }
       return out;
     });
@@ -784,7 +804,7 @@
     }
     const vistos = /* @__PURE__ */ new Set();
     for (const linha of linhas) {
-      const ehRequerente = linha.indice === 0;
+      const ehRequerente = linha.ehRequerente;
       if (linha.cpf) vistos.add(linha.cpf);
       const parentescoPlanilha = linha.cpf ? porCpf.get(linha.cpf) ?? "" : "";
       const estadoCivil = estadoCivilGerid(void 0);
@@ -865,6 +885,9 @@
     const telefone = caso.cliente.telefone?.trim() || opcoes.telefonePadrao;
     await adicionarContato(page, "Celular", telefone, avisos);
     await adicionarContato(page, "E-mail", opcoes.emailEscritorio, avisos);
+    const acompanha = visivel(page.locator(mapaGerid.passo7.acompanharProcessoSim)).first();
+    if (await acompanha.count()) await garantirMarcado(acompanha);
+    else avisos.push('N\xE3o achei a op\xE7\xE3o "Sim" para acompanhar o processo \u2014 marque manualmente.');
     await responderPergunta(page, PERGUNTAS_PASSO7.estrangeiro, RESPOSTAS_FIXAS.estrangeiro, avisos);
     await responderPergunta(
       page,
@@ -915,9 +938,9 @@
       );
       return false;
     }
-    const cpfProc = visivel(page.getByLabel(/CPF do Procurador/i)).first();
-    if (await cpfProc.count()) {
-      await cpfProc.fill(apenasDigitos(opcoes.procuradorCpf));
+    const cpfProcId = await inputPorPergunta(page, "CPF do Procurador");
+    if (cpfProcId) {
+      await visivel(page.locator(`[id="${cssEscape(cpfProcId)}"]`)).first().fill(apenasDigitos(opcoes.procuradorCpf));
     } else {
       avisos.push('Campo "CPF do Procurador" n\xE3o encontrado \u2014 preencha manualmente.');
     }
@@ -936,10 +959,17 @@
       return;
     }
     try {
-      await visivel(page.getByText(/Adicionar/i)).first().click();
+      const fechar = visivel(page.getByRole("button", { name: /^Fechar$/i })).first();
+      if (!await fechar.isVisible().catch(() => false)) {
+        const editar = visivel(
+          page.getByRole("button", { name: /Clique para editar contatos/i })
+        ).first();
+        if (await editar.isVisible().catch(() => false)) await editar.click();
+        else await visivel(page.getByText(/^Adicionar$/i)).first().click();
+      }
       const ok = await escolherNoCombobox(page, mapaGerid.passo7.tipoContato, tipo);
       if (!ok) avisos.push(`N\xE3o consegui escolher o tipo de contato "${tipo}".`);
-      await visivel(page.getByLabel(/^Valor/i)).first().fill(valor);
+      await visivel(page.getByPlaceholder(/^Informe o /i)).first().fill(valor);
       await visivel(page.getByRole("button", { name: /^Adicionar$/i })).first().click();
       await visivel(page.getByRole("button", { name: /Fechar/i })).first().click();
     } catch {
@@ -968,7 +998,7 @@
       }
       const indice = indiceSlotDoDocumento(arq.tipo);
       let alvo = null;
-      const caixa = page.locator("div").filter({ hasText: slot }).locator('input[type="file"]').last();
+      const caixa = page.locator("div.containerAnexo").filter({ hasText: slot }).locator('input[type="file"]').first();
       if (await caixa.count()) alvo = caixa;
       if (!alvo && indice !== null && total === mapaGerid.passo7.totalSlots) {
         alvo = inputs.nth(indice);
