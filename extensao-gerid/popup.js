@@ -71,7 +71,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   btnStart.addEventListener('click', () => {
     btnStart.disabled = true;
-    log('Iniciando processamento...');
     chrome.runtime.sendMessage({
       action: 'start',
       apiUrl: apiUrlInput.value,

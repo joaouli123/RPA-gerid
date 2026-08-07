@@ -125,11 +125,17 @@ async function executarCasoNoGerid(tabId, casoComAnexos) {
   for (let tentativa = 0; tentativa < 2; tentativa++) {
     try {
       const abaId = await prepararAbaGerid(tabId, tentativa > 0);
-      await chrome.scripting.executeScript({
+      const verificacao = await chrome.scripting.executeScript({
         target: { tabId: abaId },
-        files: ['content.js'],
+        func: () => typeof window.iniciarProcessamento === 'function',
       });
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (!verificacao[0]?.result) {
+        await chrome.scripting.executeScript({
+          target: { tabId: abaId },
+          files: ['content.js'],
+        });
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
 
       const resultados = await chrome.scripting.executeScript({
         target: { tabId: abaId },
@@ -272,7 +278,7 @@ chrome.runtime.onMessage.addListener((request) => {
 });
 
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.action === 'log') sendLog(msg.message);
+  if (msg.action === 'content_log') sendLog(msg.message);
 });
 
 chrome.runtime.onStartup.addListener(() => {

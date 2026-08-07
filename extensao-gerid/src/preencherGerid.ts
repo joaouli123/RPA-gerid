@@ -240,7 +240,12 @@ async function passo1SelecionarServico(page: Page): Promise<void> {
   // O GERID só renderiza as opções depois que a lista do combobox é aberta.
   const busca = visivel(page.locator(mapaGerid.passo1.campoBusca)).first();
   await busca.waitFor({ state: 'visible' });
-  await busca.click();
+  const abrirLista = visivel(page.getByRole('button', { name: /^Exibir lista$/i })).first();
+  if (await abrirLista.isVisible().catch(() => false)) {
+    await abrirLista.click();
+  } else {
+    await busca.click();
+  }
 
   const radio = page.locator(
     `${mapaGerid.passo1.containerOpcoes} input[id="${SERVICO_BPC_PCD.id}"]`,

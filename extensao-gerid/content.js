@@ -683,7 +683,12 @@
     await esperarTela(page, /Sele..o de Servi.os/i);
     const busca = visivel(page.locator(mapaGerid.passo1.campoBusca)).first();
     await busca.waitFor({ state: "visible" });
-    await busca.click();
+    const abrirLista = visivel(page.getByRole("button", { name: /^Exibir lista$/i })).first();
+    if (await abrirLista.isVisible().catch(() => false)) {
+      await abrirLista.click();
+    } else {
+      await busca.click();
+    }
     const radio = page.locator(
       `${mapaGerid.passo1.containerOpcoes} input[id="${SERVICO_BPC_PCD.id}"]`
     );
@@ -1052,7 +1057,7 @@
       function logToBackground(message) {
         console.log(message);
         try {
-          chrome.runtime.sendMessage({ action: "log", message }).catch(() => {
+          chrome.runtime.sendMessage({ action: "content_log", message }).catch(() => {
           });
         } catch (e) {
         }
@@ -1088,17 +1093,7 @@
             }))
           };
           await abrirNovoRequerimentoSeNecessario(page);
-          const originalLog = console.log;
-          console.log = (...args) => {
-            originalLog(...args);
-            logToBackground(args.join(" "));
-          };
-          let res;
-          try {
-            res = await preencherRequerimento(page, caso.dados, opcoes);
-          } finally {
-            console.log = originalLog;
-          }
+          const res = await preencherRequerimento(page, caso.dados, opcoes);
           const parouParaRevisao = res.pronto || res.telaAtual === "Dados do Requerente" || res.telaAtual === "Selecionar Unidade" || res.telaAtual === "\xD3rg\xE3o Pagador";
           if (parouParaRevisao) {
             const aviso = res.avisos.join(" | ");

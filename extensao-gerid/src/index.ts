@@ -7,7 +7,7 @@ function logToBackground(message: string) {
   console.log(message);
   try {
     // Envia o log para o popup. Se der erro de contexto inválido, engole.
-    chrome.runtime.sendMessage({ action: 'log', message }).catch(() => {});
+    chrome.runtime.sendMessage({ action: 'content_log', message }).catch(() => {});
   } catch (e) {}
 }
 
@@ -50,19 +50,7 @@ async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> 
 
     await abrirNovoRequerimentoSeNecessario(page);
 
-    // Sobrescreve o console.log temporariamente para capturar os logs do preencherRequerimento
-    const originalLog = console.log;
-    console.log = (...args) => {
-      originalLog(...args);
-      logToBackground(args.join(' '));
-    };
-
-    let res;
-    try {
-      res = await preencherRequerimento(page, caso.dados, opcoes);
-    } finally {
-      console.log = originalLog;
-    }
+    const res = await preencherRequerimento(page, caso.dados, opcoes);
     
     const parouParaRevisao =
       res.pronto ||
