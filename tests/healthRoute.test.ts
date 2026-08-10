@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { NextRequest } from 'next/server';
 import { GET } from '../app/api/health/route';
+import { middleware } from '../middleware';
 
 describe('GET /api/health', () => {
   it('expõe a versão implantada sem revelar configuração sensível', async () => {
@@ -9,5 +11,11 @@ describe('GET /api/health', () => {
       status: 'ok',
       release: 'gerid-rpa-1.0.3',
     });
+  });
+
+  it('é público para permitir a verificação externa do Coolify', async () => {
+    const resposta = await middleware(new NextRequest('https://rpa.test/api/health'));
+    expect(resposta.status).toBe(200);
+    expect(resposta.headers.get('x-middleware-next')).toBe('1');
   });
 });

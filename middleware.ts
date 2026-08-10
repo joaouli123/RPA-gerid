@@ -9,7 +9,7 @@ import { COOKIE_SESSAO, lerSessao } from '@/lib/server/sessao';
  * esteja na lista abaixo exige sessão válida — inclusive as rotas de API.
  */
 
-const ROTAS_PUBLICAS = new Set(['/login']);
+const ROTAS_PUBLICAS = new Set(['/login', '/api/health']);
 
 /** Valor aleatório que autoriza os scripts desta resposta (e só desta). */
 function gerarNonce(): string {
