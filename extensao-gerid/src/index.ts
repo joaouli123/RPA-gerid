@@ -13,18 +13,26 @@ function logToBackground(message: string) {
 
 async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> {
   const seletorServico = page.locator(mapaGerid.passo1.campoBusca);
-  if (await seletorServico.isVisible().catch(() => false)) return;
-
   const novoRequerimento = page.getByRole('button', { name: /^Novo Requerimento$/i });
-  if (!(await novoRequerimento.isVisible().catch(() => false))) {
-    throw new Error(
-      'NÃ£o encontrei a tela de serviÃ§os nem o botÃ£o "Novo Requerimento". Abra a lista de requerimentos do Gerid e tente novamente.',
-    );
+
+  // O Gerid é uma SPA: a navegação termina antes de o conteúdo de
+  // /requerimentos ser renderizado. Aguarde uma das duas telas válidas em vez
+  // de transformar esse intervalo em erro fatal.
+  const limite = Date.now() + 15_000;
+  while (Date.now() < limite) {
+    if (await seletorServico.isVisible().catch(() => false)) return;
+    if (await novoRequerimento.isVisible().catch(() => false)) {
+      logToBackground('Abrindo Novo Requerimento no Gerid...');
+      await novoRequerimento.click();
+      await seletorServico.waitFor({ state: 'visible', timeout: 15_000 });
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  logToBackground('Abrindo Novo Requerimento no Gerid...');
-  await novoRequerimento.click();
-  await seletorServico.waitFor({ state: 'visible', timeout: 10_000 });
+  throw new Error(
+    'Não encontrei a tela de serviços nem o botão "Novo Requerimento". Abra a lista de requerimentos do Gerid e tente novamente.',
+  );
 }
 
 // Expõe a função no window do ISOLATED WORLD para ser chamada pelo executeScript

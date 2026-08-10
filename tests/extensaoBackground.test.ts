@@ -9,6 +9,8 @@ describe('extensão Gerid — service worker', () => {
     const storage: Record<string, any> = {};
     const statusEnviados: any[] = [];
     const scriptsExecutados: any[] = [];
+    const urlsAtualizadas: string[] = [];
+    let aoAtualizarAba: ((id: number, info: any, tab: any) => void) | undefined;
 
     const chrome = {
       runtime: {
@@ -24,10 +26,23 @@ describe('extensão Gerid — service worker', () => {
         },
       },
       tabs: {
-        query: async () => [{ id: 77, active: true, status: 'complete', url: 'https://atendimento.inss.gov.br/tarefas' }],
-        get: async () => ({ id: 77, active: true, status: 'complete', url: 'https://atendimento.inss.gov.br/tarefas' }),
-        update: async () => ({ id: 77, status: 'complete', url: 'https://atendimento.inss.gov.br/tarefas' }),
-        onUpdated: { addListener: () => undefined, removeListener: () => undefined },
+        query: async () => [{ id: 77, active: true, status: 'complete', url: 'https://atendimento.inss.gov.br/requerimentos' }],
+        get: async () => ({ id: 77, active: true, status: 'complete', url: 'https://atendimento.inss.gov.br/requerimentos' }),
+        update: async (id: number, opcoes: { url: string }) => {
+          urlsAtualizadas.push(opcoes.url);
+          setTimeout(() => aoAtualizarAba?.(id, { status: 'complete' }, {
+            id,
+            status: 'complete',
+            url: opcoes.url,
+          }), 0);
+          return { id, status: 'complete', url: opcoes.url };
+        },
+        onUpdated: {
+          addListener: (fn: (id: number, info: any, tab: any) => void) => { aoAtualizarAba = fn; },
+          removeListener: (fn: (id: number, info: any, tab: any) => void) => {
+            if (aoAtualizarAba === fn) aoAtualizarAba = undefined;
+          },
+        },
       },
       scripting: {
         executeScript: async (opcoes: any) => {
@@ -100,6 +115,7 @@ describe('extensão Gerid — service worker', () => {
       mimeType: 'application/pdf',
       base64: 'JVBERg==',
     });
+    expect(urlsAtualizadas).toEqual([]);
     expect(storage.execucaoAtivaGerid).toBeUndefined();
   });
 });

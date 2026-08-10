@@ -1,4 +1,4 @@
-const URL_TAREFAS_GERID = 'https://atendimento.inss.gov.br/tarefas';
+const URL_REQUERIMENTOS_GERID = 'https://atendimento.inss.gov.br/requerimentos';
 const CHAVE_EXECUCAO_ATIVA = 'execucaoAtivaGerid';
 
 let isRunning = false;
@@ -108,9 +108,9 @@ async function prepararAbaGerid(tabId, reiniciarNoInicio = false) {
   // A aba é fixada no início. Trocar a aba ativa não altera o destino do robô.
   // Se o Gerid foi recarregado ou levado a outra tela, voltamos ao ponto seguro
   // (lista de requerimentos) e recomeçamos somente o caso que ainda está pendente.
-  if (reiniciarNoInicio || !aba.url?.startsWith(URL_TAREFAS_GERID)) {
+  if (reiniciarNoInicio || !aba.url?.startsWith(URL_REQUERIMENTOS_GERID)) {
     sendLog('A tela do Gerid mudou. Retomando o caso pendente pela lista de requerimentos...');
-    await chrome.tabs.update(aba.id, { url: URL_TAREFAS_GERID });
+    await chrome.tabs.update(aba.id, { url: URL_REQUERIMENTOS_GERID });
     await aguardarAbaPronta(aba.id);
   }
   return aba.id;

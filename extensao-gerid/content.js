@@ -307,7 +307,7 @@
       };
       mapaGerid = {
         url: "https://atendimento.inss.gov.br",
-        urlTarefas: "https://atendimento.inss.gov.br/tarefas",
+        urlTarefas: "https://atendimento.inss.gov.br/requerimentos",
         passo1: {
           campoBusca: 'input[id="idSelecionarServico"]',
           containerOpcoes: "#idSelecionarServico-itens",
@@ -1114,16 +1114,21 @@
       }
       async function abrirNovoRequerimentoSeNecessario(page) {
         const seletorServico = page.locator(mapaGerid.passo1.campoBusca);
-        if (await seletorServico.isVisible().catch(() => false)) return;
         const novoRequerimento = page.getByRole("button", { name: /^Novo Requerimento$/i });
-        if (!await novoRequerimento.isVisible().catch(() => false)) {
-          throw new Error(
-            'N\xC3\xA3o encontrei a tela de servi\xC3\xA7os nem o bot\xC3\xA3o "Novo Requerimento". Abra a lista de requerimentos do Gerid e tente novamente.'
-          );
+        const limite = Date.now() + 15e3;
+        while (Date.now() < limite) {
+          if (await seletorServico.isVisible().catch(() => false)) return;
+          if (await novoRequerimento.isVisible().catch(() => false)) {
+            logToBackground("Abrindo Novo Requerimento no Gerid...");
+            await novoRequerimento.click();
+            await seletorServico.waitFor({ state: "visible", timeout: 15e3 });
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
         }
-        logToBackground("Abrindo Novo Requerimento no Gerid...");
-        await novoRequerimento.click();
-        await seletorServico.waitFor({ state: "visible", timeout: 1e4 });
+        throw new Error(
+          'N\xE3o encontrei a tela de servi\xE7os nem o bot\xE3o "Novo Requerimento". Abra a lista de requerimentos do Gerid e tente novamente.'
+        );
       }
       window.iniciarProcessamento = async (caso) => {
         logToBackground(`[ROB\xD4 INICIADO] Processando caso: ${caso.nome}`);

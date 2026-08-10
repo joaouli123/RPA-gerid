@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Gerid RPA Automator",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Automatiza o preenchimento de requerimentos BPC/LOAS no Gerid.",
   "permissions": [
     "activeTab",
