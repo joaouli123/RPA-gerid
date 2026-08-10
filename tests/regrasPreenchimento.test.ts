@@ -54,14 +54,10 @@ describe('estado civil (padrão Solteiro)', () => {
     expect(estadoCivilGerid('')).toBe('Solteiro');
   });
 
-  it('respeita a planilha quando ela diz outra coisa', () => {
-    expect(estadoCivilGerid('casado')).toBe('Casado');
-    expect(estadoCivilGerid('viúvo')).toBe('Viúvo');
-    expect(estadoCivilGerid('divorciado')).toBe('Divorciado');
-  });
-
-  it('união estável entra como Casado (GERID não distingue)', () => {
-    expect(estadoCivilGerid('união estável')).toBe('Casado');
+  it('ignora a planilha e usa sempre Solteiro, conforme a regra do escritório', () => {
+    for (const valor of ['casado', 'viúvo', 'divorciado', 'união estável']) {
+      expect(estadoCivilGerid(valor)).toBe('Solteiro');
+    }
   });
 
   it('valor desconhecido cai no padrão seguro (Solteiro)', () => {
@@ -89,8 +85,8 @@ describe('parentesco (planilha -> grupos do GERID)', () => {
     expect(mapearParentesco('avó').confirmado).toBe(false);
   });
 
-  it('parentesco desconhecido NÃO chuta um grupo (retorna null)', () => {
-    expect(mapearParentesco('primo em segundo grau')).toEqual({ grupo: null, confirmado: false });
+  it('parentesco desconhecido usa Outros e fica marcado para conferência', () => {
+    expect(mapearParentesco('primo em segundo grau')).toEqual({ grupo: 'Outros', confirmado: false });
   });
 });
 
@@ -146,7 +142,7 @@ describe('plano do grupo familiar (casado por CPF)', () => {
     ]);
 
     expect(plano[0]).toMatchObject({ cpf: '111', titular: true, estadoCivil: 'Solteiro' });
-    expect(plano[1]).toMatchObject({ cpf: '222', titular: false, estadoCivil: 'Viúvo' });
+    expect(plano[1]).toMatchObject({ cpf: '222', titular: false, estadoCivil: 'Solteiro' });
     expect(plano[1]?.parentesco.grupo).toBe('Pai / Mãe / Padrasto / Madrasta');
     expect(plano[2]).toMatchObject({ cpf: '333', estadoCivil: 'Solteiro' });
     expect(plano[2]?.parentesco.grupo).toBe('Irmão / Irmã');

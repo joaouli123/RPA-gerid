@@ -221,7 +221,7 @@ const ESTADOS_CIVIS_GERID: Record<string, string> = {
  * constante, isolada, para ser fácil de reverter: com `false`, volta a usar a
  * planilha e cai em Solteiro só quando o valor estiver vazio ou irreconhecível.
  */
-export const ESTADO_CIVIL_SEMPRE_PADRAO = false;
+export const ESTADO_CIVIL_SEMPRE_PADRAO = true;
 
 export function estadoCivilGerid(valorPlanilha?: string): string {
   if (ESTADO_CIVIL_SEMPRE_PADRAO) return ESTADO_CIVIL_PADRAO;
@@ -307,7 +307,7 @@ export function mapearParentesco(parentescoPlanilha: string): ParentescoResolvid
       return res;
     }
   }
-  const res: ParentescoResolvido = { grupo: null, confirmado: false };
+  const res: ParentescoResolvido = { grupo: GRUPOS_PARENTESCO_GERID.outros, confirmado: false };
   Object.defineProperty(res, 'exato', { value: false, enumerable: false, configurable: true });
   return res;
 }

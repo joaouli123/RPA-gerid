@@ -1,8 +1,9 @@
 const URL_REQUERIMENTOS_GERID = 'https://atendimento.inss.gov.br/requerimentos';
 const CHAVE_EXECUCAO_ATIVA = 'execucaoAtivaGerid';
+const ALARME_RETOMADA = 'retomarExecucaoGerid';
+const MAX_RETOMADAS_AUTOMATICAS = 3;
 
 let isRunning = false;
-let retomadaInicializada = false;
 
 function sendLog(message) {
   console.log(message);
@@ -110,7 +111,14 @@ async function prepararAbaGerid(tabId, reiniciarNoInicio = false) {
   // (lista de requerimentos) e recomeçamos somente o caso que ainda está pendente.
   if (reiniciarNoInicio || !aba.url?.startsWith(URL_REQUERIMENTOS_GERID)) {
     sendLog('A tela do Gerid mudou. Retomando o caso pendente pela lista de requerimentos...');
-    await chrome.tabs.update(aba.id, { url: URL_REQUERIMENTOS_GERID });
+    if (reiniciarNoInicio && aba.url?.startsWith(URL_REQUERIMENTOS_GERID)) {
+      // Todas as etapas do wizard usam a mesma URL. Atualizar a aba com a URL
+      // que ela já possui pode ser um no-op e preservar o passo quebrado.
+      // Recarregar explicitamente desmonta o estado da SPA e volta ao início.
+      await chrome.tabs.reload(aba.id);
+    } else {
+      await chrome.tabs.update(aba.id, { url: URL_REQUERIMENTOS_GERID });
+    }
     await aguardarAbaPronta(aba.id);
   }
   return aba.id;
@@ -118,7 +126,7 @@ async function prepararAbaGerid(tabId, reiniciarNoInicio = false) {
 
 function erroDeNavegacao(erro) {
   const texto = String(erro?.message || erro || '').toLowerCase();
-  return /naveg|frame|context|recarreg|não encontrei a tela de serviços|novo requerimento|script não retornou/.test(texto);
+  return /naveg|frame|context|recarreg|lista de servi|tela de servi|novo requerimento|script não retornou|timeout waiting|selector/.test(texto);
 }
 
 async function executarCasoNoGerid(tabId, casoComAnexos) {
@@ -144,6 +152,10 @@ async function executarCasoNoGerid(tabId, casoComAnexos) {
       });
       const resultado = resultados[0]?.result;
       if (!resultado) throw new Error('O script não retornou resultado; a página pode ter recarregado.');
+      if (resultado.status === 'erro' && tentativa === 0 && erroDeNavegacao(resultado.erro)) {
+        sendLog('O Gerid retornou a uma tela anterior durante o preenchimento. Vou recarregar e retomar o mesmo caso...');
+        continue;
+      }
       return resultado;
     } catch (erro) {
       if (tentativa === 0 && erroDeNavegacao(erro)) {
@@ -182,7 +194,8 @@ function erroDefinitivoDoRequerente(resultado) {
   return /pedido\s+\d+.*em aberto|existe pedido em aberto|cpf inv[aá]lido/.test(texto);
 }
 
-async function processQueue(apiUrl, apiToken, modoTeste, tabIdPreferido) {
+async function processQueue(apiUrl, apiToken, modoTeste, tabIdPreferido, tentativasRetomada = 0) {
+  let manterExecucaoPendente = false;
   try {
     if (!apiToken) throw new Error('A chave da extensão não foi informada.');
     const aba = await localizarAbaGerid(tabIdPreferido);
@@ -204,6 +217,7 @@ async function processQueue(apiUrl, apiToken, modoTeste, tabIdPreferido) {
       idExecucao: data.idExecucao,
       geridTabId: aba.id,
       modoTeste,
+      tentativasRetomada,
       iniciadoEm: new Date().toISOString(),
     });
     sendLog(modoTeste
@@ -216,6 +230,7 @@ async function processQueue(apiUrl, apiToken, modoTeste, tabIdPreferido) {
         geridTabId: aba.id,
         modoTeste,
         cpfAtual: caso.cpf,
+        tentativasRetomada,
         iniciadoEm: new Date().toISOString(),
       });
       sendLog(`Processando: ${caso.nome}`);
@@ -226,9 +241,25 @@ async function processQueue(apiUrl, apiToken, modoTeste, tabIdPreferido) {
       const resultado = await executarCasoNoGerid(aba.id, casoComAnexos);
 
       if (resultado.status === 'erro' && !erroDefinitivoDoRequerente(resultado)) {
+        const proximaTentativa = tentativasRetomada + 1;
+        manterExecucaoPendente = true;
+        await salvarExecucaoAtiva({
+          idExecucao: data.idExecucao,
+          geridTabId: aba.id,
+          modoTeste,
+          cpfAtual: caso.cpf,
+          tentativasRetomada: proximaTentativa,
+          iniciadoEm: new Date().toISOString(),
+        });
         sendLog(
           `Pausa técnica no caso ${caso.nome}. Ele continua na fila para retomar após a correção: ${resultado.erro}`,
         );
+        if (proximaTentativa <= MAX_RETOMADAS_AUTOMATICAS && chrome.alarms?.create) {
+          chrome.alarms.create(ALARME_RETOMADA, { delayInMinutes: 0.1 });
+          sendLog(`Retomada automática agendada (${proximaTentativa}/${MAX_RETOMADAS_AUTOMATICAS}).`);
+        } else {
+          sendLog('A execução continua preservada. Abra a extensão e clique em Iniciar para tentar novamente.');
+        }
         break;
       }
       await enviarResultado(apiUrl, apiToken, data.idExecucao, caso, resultado);
@@ -244,26 +275,32 @@ async function processQueue(apiUrl, apiToken, modoTeste, tabIdPreferido) {
     sendLog(`Erro fatal: ${erro?.message || erro}`);
   } finally {
     isRunning = false;
-    await limparExecucaoAtiva();
+    if (!manterExecucaoPendente) await limparExecucaoAtiva();
     chrome.runtime.sendMessage({ action: 'finished' }).catch(() => {});
   }
 }
 
 async function retomarExecucaoPersistida() {
-  if (retomadaInicializada || isRunning) return;
-  retomadaInicializada = true;
+  if (isRunning) return;
   const dados = await chrome.storage.local.get([
     CHAVE_EXECUCAO_ATIVA,
     'apiUrl',
     'apiToken',
     'modoTeste',
   ]);
+  if (isRunning) return;
   const ativa = dados[CHAVE_EXECUCAO_ATIVA];
   if (!ativa || !dados.apiUrl || !dados.apiToken) return;
 
   isRunning = true;
   sendLog('Recuperei uma execução pendente. Retomando em segundo plano...');
-  void processQueue(dados.apiUrl, dados.apiToken, ativa.modoTeste !== false, ativa.geridTabId);
+  void processQueue(
+    dados.apiUrl,
+    dados.apiToken,
+    ativa.modoTeste !== false,
+    ativa.geridTabId,
+    Number(ativa.tentativasRetomada) || 0,
+  );
 }
 
 chrome.runtime.onMessage.addListener((request) => {
@@ -273,7 +310,10 @@ chrome.runtime.onMessage.addListener((request) => {
       return;
     }
     isRunning = true;
-    void processQueue(request.apiUrl, request.apiToken, request.modoTeste !== false);
+    const modoTeste = request.modoTeste !== false;
+    void chrome.storage.local
+      .set({ apiUrl: request.apiUrl, apiToken: request.apiToken, modoTeste })
+      .then(() => processQueue(request.apiUrl, request.apiToken, modoTeste));
   }
 });
 
@@ -283,5 +323,8 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 chrome.runtime.onStartup.addListener(() => {
   void retomarExecucaoPersistida();
+});
+chrome.alarms?.onAlarm.addListener((alarme) => {
+  if (alarme.name === ALARME_RETOMADA) void retomarExecucaoPersistida();
 });
 void retomarExecucaoPersistida();

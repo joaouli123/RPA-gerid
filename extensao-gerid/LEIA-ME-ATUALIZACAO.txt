@@ -1,0 +1,34 @@
+GERID RPA AUTOMATOR — ATUALIZAÇÃO 1.0.3
+
+Esta versão corrige os pontos que poderiam interromper ou registrar
+incorretamente o preenchimento:
+
+- seleciona serviço, estado civil, parentesco e demais comboboxes clicando na
+  opção visível do Gerid e confirma o valor exibido antes de avançar;
+- usa sempre "Solteiro" e "Não" conforme as regras definidas pelo escritório;
+- recupera o mesmo caso se o Gerid mudar de tela durante o preenchimento;
+- preserva a execução e agenda retomada automática em segundo plano;
+- só registra "revisão" quando a tela Confirmar foi realmente alcançada;
+- nunca confirma ou conclui o requerimento automaticamente.
+
+COMO ATUALIZAR
+
+1. Extraia o arquivo ZIP.
+2. Abra chrome://extensions no Google Chrome.
+3. Remova ou desative a versão antiga do Gerid RPA Automator.
+4. Ative o Modo do desenvolvedor.
+5. Clique em "Carregar sem compactação".
+6. Selecione a pasta Gerid-RPA-Automator-v1.0.3 extraída do ZIP.
+7. Confirme que a versão exibida no Chrome é 1.0.3.
+8. Informe a mesma URL e a mesma chave configuradas no Coolify.
+9. Clique fora do campo da chave para salvar.
+10. Mantenha marcada a opção "Testar somente o primeiro caso da fila".
+11. Entre no Gerid, abra Requerimentos e clique em "Iniciar Protocolos".
+
+IMPORTANTE
+
+- Mantenha a aba do Gerid aberta. É permitido navegar entre as telas do Gerid;
+  a extensão recuperará o caso se houver mudança durante o preenchimento.
+- A extensão para na tela Confirmar para revisão humana.
+- Não confirme nem conclua o requerimento sem revisar todos os dados.
+- Esta pasta não contém senhas, chaves nem dados de clientes.

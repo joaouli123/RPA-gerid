@@ -417,7 +417,7 @@
         return res2;
       }
     }
-    const res = { grupo: null, confirmado: false };
+    const res = { grupo: GRUPOS_PARENTESCO_GERID.outros, confirmado: false };
     Object.defineProperty(res, "exato", { value: false, enumerable: false, configurable: true });
     return res;
   }
@@ -529,7 +529,7 @@
         amasiado: "Casado",
         concubinato: "Casado"
       };
-      ESTADO_CIVIL_SEMPRE_PADRAO = false;
+      ESTADO_CIVIL_SEMPRE_PADRAO = true;
       GRUPOS_PARENTESCO_GERID = {
         paisPadrastos: "Pai / M\xE3e / Padrasto / Madrasta",
         irmaos: "Irm\xE3o / Irm\xE3",
@@ -594,7 +594,7 @@
     if (!await passo9OrgaoPagador(page, caso, avisos)) {
       return { pronto: false, telaAtual: "\xD3rg\xE3o Pagador", avisos };
     }
-    await esperarTela(page, /Confirmar|Declaro que li/i).catch(() => void 0);
+    await esperarTela(page, /Confirmar|Declaro que li/i);
     return { pronto: true, telaAtual: "Confirmar", avisos };
   }
   function visivel(loc) {
@@ -625,17 +625,30 @@
     if (!await combo.isVisible().catch(() => false)) return false;
     await combo.click().catch(() => void 0);
     const alvo = normalizar(rotuloDesejado);
-    const opcoes = page.locator(`[id="${id}-itens"] input[type="radio"]`);
-    const total = await opcoes.count().catch(() => 0);
+    const rotulos = page.locator(`[id="${id}-itens"] label`);
+    const total = await rotulos.count().catch(() => 0);
     for (let i = 0; i < total; i++) {
-      const radio = opcoes.nth(i);
-      const rid = await radio.getAttribute("id");
-      if (!rid) continue;
-      const texto = await page.locator(`[id="${id}-itens"] label[for="${cssEscape(rid)}"]`).innerText().catch(() => "");
+      const rotulo = rotulos.nth(i);
+      const texto = await rotulo.innerText().catch(() => "");
       if (normalizar(texto) === alvo) {
-        await radio.check({ force: true }).catch(() => void 0);
-        return true;
+        await rotulo.click().catch(() => void 0);
+        if (await aguardarValorCombobox(combo, alvo)) return true;
+        const rid = await rotulo.getAttribute("for");
+        if (rid) {
+          const radio = page.locator(`[id="${id}-itens"] input[id="${cssEscape(rid)}"]`).first();
+          await radio.check({ force: true }).catch(() => void 0);
+          if (await aguardarValorCombobox(combo, alvo)) return true;
+        }
+        return false;
       }
+    }
+    return false;
+  }
+  async function aguardarValorCombobox(combo, valorEsperado) {
+    const limite = Date.now() + 2e3;
+    while (Date.now() < limite) {
+      if (normalizar(await combo.inputValue().catch(() => "")) === valorEsperado) return true;
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
     return false;
   }
@@ -1119,6 +1132,26 @@
     }
   });
 
+  // src/classificarPreenchimento.ts
+  function classificarPreenchimento(resultado) {
+    const avisos = resultado.avisos.filter(Boolean).join(" | ");
+    if (!resultado.pronto || resultado.telaAtual !== "Confirmar") {
+      return {
+        status: "erro",
+        erro: `O preenchimento parou em "${resultado.telaAtual}" antes da tela Confirmar.` + (avisos ? ` ${avisos}` : "")
+      };
+    }
+    return {
+      status: "revisao",
+      erro: avisos || "Preenchido at\xE9 Confirmar. Revise os dados e conclua manualmente no Gerid."
+    };
+  }
+  var init_classificarPreenchimento = __esm({
+    "src/classificarPreenchimento.ts"() {
+      "use strict";
+    }
+  });
+
   // src/index.ts
   var require_index = __commonJS({
     "src/index.ts"() {
@@ -1126,6 +1159,7 @@
       init_preencherGerid();
       init_tiposGerid();
       init_mapaGerid();
+      init_classificarPreenchimento();
       function logToBackground(message) {
         console.log(message);
         try {
@@ -1171,18 +1205,13 @@
           };
           await abrirNovoRequerimentoSeNecessario(page);
           const res = await preencherRequerimento(page, caso.dados, opcoes);
-          const parouParaRevisao = res.pronto || res.telaAtual === "Dados do Requerente" || res.telaAtual === "Selecionar Unidade" || res.telaAtual === "\xD3rg\xE3o Pagador";
-          if (parouParaRevisao) {
-            const aviso = res.avisos.join(" | ");
+          const resultado = classificarPreenchimento(res);
+          if (resultado.status === "revisao") {
             logToBackground(`[ROB\xD4 FINALIZADO] Preenchido para revis\xE3o humana.`);
-            return {
-              status: "revisao",
-              erro: aviso || "Preenchido at\xE9 Confirmar. Revise os dados e conclua manualmente no Gerid."
-            };
+            return resultado;
           } else {
-            const msgs = res.avisos.join(" | ");
-            logToBackground(`[ROB\xD4 FINALIZADO] Falha: ${msgs}`);
-            return { status: "erro", erro: msgs || "N\xE3o finalizado" };
+            logToBackground(`[ROB\xD4 FINALIZADO] Falha: ${resultado.erro}`);
+            return resultado;
           }
         } catch (e) {
           const errorMsg = e instanceof Error ? e.message : "Erro interno no rob\xF4";

@@ -118,6 +118,11 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
           document.querySelector('#btn-next').addEventListener('click', () => {
             const passos = [...document.querySelectorAll('section')];
             const atual = passos.findIndex((p) => !p.hidden);
+            const passoAtual = passos[atual];
+            if (passoAtual?.id === 'passo4' &&
+                (!document.querySelector('#selectEstadoCivil0').value || !document.querySelector('#undefined-Nao').checked)) return;
+            if (passoAtual?.id === 'passo5' && !document.querySelector('#perguntaGastos-Nao').checked) return;
+            if (passoAtual?.id === 'passo6' && !document.querySelector('#perguntaSUAS-Nao').checked) return;
             if (atual >= 0 && atual < passos.length - 1) {
               passos[atual].hidden = true;
               passos[atual + 1].hidden = false;
@@ -129,8 +134,7 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
 
       const bundle = await readFile(path.join(process.cwd(), 'extensao-gerid', 'content.js'), 'utf8');
       await pagina.addScriptTag({ content: bundle });
-      const resultado = await pagina.evaluate(() =>
-        (window as any).iniciarProcessamento({
+      const caso = {
           nome: 'Pessoa de Teste',
           dados: {
             cliente: { cpf: '12345678901', nome: 'Pessoa de Teste', cep: '12345678', cidade: 'Cidade Teste/SE', telefone: '62999999999' },
@@ -141,7 +145,9 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
             { tipo: 'TERMO_REPRESENTACAO', nome: 'termo.pdf', mimeType: 'application/pdf', base64: 'JVBERi0xLjQK' },
             { tipo: 'DOCUMENTOS_PESSOAIS', nome: 'documentos.pdf', mimeType: 'application/pdf', base64: 'JVBERi0xLjQK' },
           ],
-        }),
+        };
+      const resultado = await pagina.evaluate((entrada) =>
+        (window as any).iniciarProcessamento(entrada), caso,
       );
 
       await pagina.waitForFunction(() => {
@@ -185,9 +191,23 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
       expect(estado.orgao).toBe(true);
       expect(estado.revisao).toBe(true);
       expect(resultado).toMatchObject({ status: 'revisao' });
+
+      // Regressão: uma falha de validação no último Avançar não pode ser
+      // reportada como revisão concluída. O robô só está pronto quando a tela
+      // Confirmar realmente apareceu.
+      await pagina.evaluate(() => {
+        document.querySelector('#passo10')?.remove();
+        document.querySelectorAll<HTMLElement>('section').forEach((passo) => { passo.hidden = true; });
+        const primeiro = document.querySelector<HTMLElement>('#passo1');
+        if (primeiro) primeiro.hidden = false;
+      });
+      const semTelaFinal = await pagina.evaluate((entrada) =>
+        (window as any).iniciarProcessamento(entrada), caso,
+      );
+      expect(semTelaFinal).toMatchObject({ status: 'erro' });
     } finally {
       await pagina.close();
       await navegador.close();
     }
-  }, 40_000);
+  }, 80_000);
 });

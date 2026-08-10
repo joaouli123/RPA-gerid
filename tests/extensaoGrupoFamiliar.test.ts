@@ -74,13 +74,11 @@ describe('extensão Gerid — grupo familiar real', () => {
         </section>
         <button id="btn-next">Avançar</button>
         <script>
-          for (const radio of document.querySelectorAll('input[type="radio"]')) {
-            radio.addEventListener('click', () => {
-              const caixa = radio.parentElement;
-              if (!caixa?.id.endsWith('-itens')) return;
+          for (const label of document.querySelectorAll('[id$="-itens"] label')) {
+            label.addEventListener('click', () => {
+              const caixa = label.closest('[id$="-itens"]');
               const combo = document.getElementById(caixa.id.slice(0, -6));
-              const label = caixa.querySelector('label[for="' + radio.id + '"]');
-              if (combo) combo.value = label?.textContent || '';
+              if (combo) combo.value = label.textContent?.trim() || '';
             });
           }
           for (const tag of document.querySelectorAll('.interaction-select')) {

@@ -118,4 +118,119 @@ describe('extensão Gerid — service worker', () => {
     expect(urlsAtualizadas).toEqual([]);
     expect(storage.execucaoAtivaGerid).toBeUndefined();
   });
+
+  it('recarrega a rota atual antes de retomar um caso interrompido pela navegação', async () => {
+    const listeners: Array<(mensagem: any) => void> = [];
+    const storage: Record<string, any> = {};
+    const urlsAtualizadas: string[] = [];
+    const abasRecarregadas: number[] = [];
+    const statusEnviados: any[] = [];
+    const alarmesCriados: string[] = [];
+    let aoAlarme: ((alarme: { name: string }) => void) | undefined;
+    let tentativasDePreenchimento = 0;
+
+    const chrome = {
+      runtime: {
+        onMessage: { addListener: (fn: (mensagem: any) => void) => listeners.push(fn) },
+        onStartup: { addListener: () => undefined },
+        sendMessage: async () => undefined,
+      },
+      alarms: {
+        create: (nome: string) => { alarmesCriados.push(nome); },
+        onAlarm: { addListener: (fn: (alarme: { name: string }) => void) => { aoAlarme = fn; } },
+      },
+      storage: {
+        local: {
+          get: async (chaves: string[]) =>
+            Object.fromEntries(chaves.filter((chave) => chave in storage).map((chave) => [chave, storage[chave]])),
+          set: async (valores: Record<string, any>) => Object.assign(storage, valores),
+          remove: async (chave: string) => { delete storage[chave]; },
+        },
+      },
+      tabs: {
+        query: async () => [{ id: 77, active: false, status: 'complete', url: 'https://atendimento.inss.gov.br/requerimentos' }],
+        get: async () => ({ id: 77, active: false, status: 'complete', url: 'https://atendimento.inss.gov.br/requerimentos' }),
+        update: async (_id: number, opcoes: { url: string }) => {
+          urlsAtualizadas.push(opcoes.url);
+          return { id: 77, status: 'complete', url: opcoes.url };
+        },
+        reload: async (id: number) => { abasRecarregadas.push(id); },
+        onUpdated: { addListener: () => undefined, removeListener: () => undefined },
+      },
+      scripting: {
+        executeScript: async (opcoes: any) => {
+          if (!opcoes.args) return [{ result: true }];
+          tentativasDePreenchimento++;
+          if (tentativasDePreenchimento <= 2) {
+            return [{ result: {
+              status: 'erro',
+              erro: 'A lista de serviços do Gerid não exibiu o BPC à Pessoa com Deficiência.',
+            } }];
+          }
+          return [{ result: { status: 'revisao', erro: 'Preenchido até a revisão final.' } }];
+        },
+      },
+    };
+
+    const fetch = async (url: string, opcoes: any = {}) => {
+      if (url.endsWith('/api/ext/fila')) {
+        return {
+          ok: true,
+          json: async () => ({
+            sucesso: true,
+            idExecucao: 'execucao-retomada',
+            casos: [{
+              nome: 'Pessoa de Teste',
+              cpf: '12345678901',
+              dados: { cliente: { cpf: '12345678901' }, grupoFamiliar: { integrantes: [] } },
+              configuracao: { procuradorCpf: '00000000000', telefonePadrao: '', emailEscritorio: '' },
+              anexos: [],
+            }],
+          }),
+        };
+      }
+      if (url.endsWith('/api/ext/status')) {
+        statusEnviados.push(JSON.parse(opcoes.body));
+        return { ok: true };
+      }
+      throw new Error(`URL inesperada: ${url}`);
+    };
+
+    const codigo = await readFile(path.join(process.cwd(), 'extensao-gerid', 'background.js'), 'utf8');
+    vm.runInNewContext(codigo, {
+      chrome,
+      fetch,
+      AbortController,
+      Uint8Array,
+      btoa: (valor: string) => Buffer.from(valor, 'binary').toString('base64'),
+      console,
+      setTimeout,
+      clearTimeout,
+      Date,
+      Promise,
+    });
+
+    for (const listener of listeners) {
+      listener({ action: 'start', apiUrl: 'https://rpa.teste', apiToken: 'segredo', modoTeste: true });
+    }
+
+    const limiteAlarme = Date.now() + 2_000;
+    while (alarmesCriados.length === 0 && Date.now() < limiteAlarme) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(alarmesCriados).toEqual(['retomarExecucaoGerid']);
+    expect(storage.execucaoAtivaGerid).toBeDefined();
+
+    aoAlarme?.({ name: 'retomarExecucaoGerid' });
+    const limiteResultado = Date.now() + 2_000;
+    while (statusEnviados.length === 0 && Date.now() < limiteResultado) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    expect(statusEnviados).toHaveLength(1);
+    expect(tentativasDePreenchimento).toBe(3);
+    expect(abasRecarregadas).toEqual([77]);
+    expect(urlsAtualizadas).toEqual([]);
+    expect(storage.execucaoAtivaGerid).toBeUndefined();
+  });
 });

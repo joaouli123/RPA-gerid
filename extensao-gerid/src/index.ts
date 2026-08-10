@@ -2,6 +2,7 @@ import { MockPage } from './playwright-polyfill';
 import { preencherRequerimento } from './preencherGerid';
 import { ErroGerid } from './tiposGerid';
 import { mapaGerid } from './mapaGerid';
+import { classificarPreenchimento } from './classificarPreenchimento';
 
 function logToBackground(message: string) {
   console.log(message);
@@ -60,22 +61,13 @@ async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> 
 
     const res = await preencherRequerimento(page, caso.dados, opcoes);
     
-    const parouParaRevisao =
-      res.pronto ||
-      res.telaAtual === 'Dados do Requerente' ||
-      res.telaAtual === 'Selecionar Unidade' ||
-      res.telaAtual === 'Órgão Pagador';
-    if (parouParaRevisao) {
-      const aviso = res.avisos.join(' | ');
+    const resultado = classificarPreenchimento(res);
+    if (resultado.status === 'revisao') {
       logToBackground(`[ROBÔ FINALIZADO] Preenchido para revisão humana.`);
-      return {
-        status: 'revisao',
-        erro: aviso || 'Preenchido até Confirmar. Revise os dados e conclua manualmente no Gerid.',
-      };
+      return resultado;
     } else {
-      const msgs = res.avisos.join(' | ');
-      logToBackground(`[ROBÔ FINALIZADO] Falha: ${msgs}`);
-      return { status: 'erro', erro: msgs || 'Não finalizado' };
+      logToBackground(`[ROBÔ FINALIZADO] Falha: ${resultado.erro}`);
+      return resultado;
     }
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : 'Erro interno no robô';

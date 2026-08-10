@@ -78,7 +78,7 @@ export async function preencherRequerimento(
     return { pronto: false, telaAtual: 'Órgão Pagador', avisos };
   }
 
-  await esperarTela(page, /Confirmar|Declaro que li/i).catch(() => undefined);
+  await esperarTela(page, /Confirmar|Declaro que li/i);
   return { pronto: true, telaAtual: 'Confirmar', avisos };
 }
 
@@ -143,25 +143,39 @@ async function escolherNoCombobox(
   await combo.click().catch(() => undefined);
 
   const alvo = normalizar(rotuloDesejado);
-  const opcoes = page.locator(`[id="${id}-itens"] input[type="radio"]`);
-  const total = await opcoes.count().catch(() => 0);
+  const rotulos = page.locator(`[id="${id}-itens"] label`);
+  const total = await rotulos.count().catch(() => 0);
 
   for (let i = 0; i < total; i++) {
-    const radio = opcoes.nth(i);
-    const rid = await radio.getAttribute('id');
-    if (!rid) continue;
+    const rotulo = rotulos.nth(i);
 
     // O rótulo é lido DENTRO do container, nunca por document-wide `label[for]`:
     // os ids se repetem e a busca global devolveria o rótulo do outro dropdown.
-    const texto = await page
-      .locator(`[id="${id}-itens"] label[for="${cssEscape(rid)}"]`)
-      .innerText()
-      .catch(() => '');
+    const texto = await rotulo.innerText().catch(() => '');
 
     if (normalizar(texto) === alvo) {
-      await radio.check({ force: true }).catch(() => undefined);
-      return true;
+      await rotulo.click().catch(() => undefined);
+      if (await aguardarValorCombobox(combo, alvo)) return true;
+
+      const rid = await rotulo.getAttribute('for');
+      if (rid) {
+        const radio = page
+          .locator(`[id="${id}-itens"] input[id="${cssEscape(rid)}"]`)
+          .first();
+        await radio.check({ force: true }).catch(() => undefined);
+        if (await aguardarValorCombobox(combo, alvo)) return true;
+      }
+      return false;
     }
+  }
+  return false;
+}
+
+async function aguardarValorCombobox(combo: Locator, valorEsperado: string): Promise<boolean> {
+  const limite = Date.now() + 2_000;
+  while (Date.now() < limite) {
+    if (normalizar(await combo.inputValue().catch(() => '')) === valorEsperado) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return false;
 }

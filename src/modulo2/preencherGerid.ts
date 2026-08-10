@@ -76,7 +76,7 @@ export async function preencherRequerimento(
     return { pronto: false, telaAtual: 'Órgão Pagador', avisos };
   }
 
-  await esperarTela(page, /Confirmar|Declaro que li/i).catch(() => undefined);
+  await esperarTela(page, /Confirmar|Declaro que li/i);
   return { pronto: true, telaAtual: 'Confirmar', avisos };
 }
 
