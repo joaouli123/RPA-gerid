@@ -703,17 +703,39 @@
     } else {
       await busca.click();
     }
-    const radio = page.locator(
-      `${mapaGerid.passo1.containerOpcoes} input[id="${SERVICO_BPC_PCD.id}"]`
-    );
-    await radio.first().waitFor({ state: "visible", timeout: 1e4 }).catch(() => {
+    const opcaoVisivel = visivel(
+      page.getByText(SERVICO_BPC_PCD.rotulo, { exact: true })
+    ).first();
+    await opcaoVisivel.waitFor({ state: "visible", timeout: 1e4 }).catch(() => {
       throw new ErroGerid(
         FalhaGerid.CAMPO_NAO_ENCONTRADO,
         "A lista de servi\xE7os do Gerid n\xE3o exibiu o BPC \xE0 Pessoa com Defici\xEAncia."
       );
     });
-    await radio.first().check({ force: true });
-    await avancar(page);
+    await opcaoVisivel.click();
+    const inicioConfirmacao = Date.now();
+    while (Date.now() - inicioConfirmacao < 3e3) {
+      const valor = normalizar(await busca.inputValue().catch(() => ""));
+      if (valor.includes("beneficio assistencial") && valor.includes("pessoa com deficiencia")) {
+        await avancar(page);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const radio = visivel(page.locator(
+      `${mapaGerid.passo1.containerOpcoes} input[id="${SERVICO_BPC_PCD.id}"]`
+    )).first();
+    if (await radio.isVisible().catch(() => false)) {
+      await radio.check({ force: true });
+      if (await radio.isChecked().catch(() => false)) {
+        await avancar(page);
+        return;
+      }
+    }
+    throw new ErroGerid(
+      FalhaGerid.ERRO_PREENCHIMENTO,
+      "O servi\xE7o BPC apareceu, mas o Gerid n\xE3o confirmou a sele\xE7\xE3o no campo Servi\xE7o."
+    );
   }
   async function passo2InformarRequerente(page, caso) {
     const cpf = visivel(page.locator(mapaGerid.passo2.cpf)).first();

@@ -272,19 +272,47 @@ async function passo1SelecionarServico(page: Page): Promise<void> {
     await busca.click();
   }
 
-  const radio = page.locator(
-    `${mapaGerid.passo1.containerOpcoes} input[id="${SERVICO_BPC_PCD.id}"]`,
-  );
-
-  await radio.first().waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {
+  // O rádio interno pode estar oculto e ser apenas uma implementação do
+  // componente React. Alterá-lo diretamente não atualiza necessariamente o
+  // estado controlado do combobox. Clique primeiro na opção que o operador vê.
+  const opcaoVisivel = visivel(
+    page.getByText(SERVICO_BPC_PCD.rotulo, { exact: true }),
+  ).first();
+  await opcaoVisivel.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {
     throw new ErroGerid(
       FalhaGerid.CAMPO_NAO_ENCONTRADO,
       'A lista de serviços do Gerid não exibiu o BPC à Pessoa com Deficiência.',
     );
   });
-  await radio.first().check({ force: true });
+  await opcaoVisivel.click();
 
-  await avancar(page);
+  const inicioConfirmacao = Date.now();
+  while (Date.now() - inicioConfirmacao < 3_000) {
+    const valor = normalizar(await busca.inputValue().catch(() => ''));
+    if (valor.includes('beneficio assistencial') && valor.includes('pessoa com deficiencia')) {
+      await avancar(page);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  // Compatibilidade com a versão anterior do componente, onde o rádio era
+  // visível e o próprio estado checked era aceito pelo formulário.
+  const radio = visivel(page.locator(
+    `${mapaGerid.passo1.containerOpcoes} input[id="${SERVICO_BPC_PCD.id}"]`,
+  )).first();
+  if (await radio.isVisible().catch(() => false)) {
+    await radio.check({ force: true });
+    if (await radio.isChecked().catch(() => false)) {
+      await avancar(page);
+      return;
+    }
+  }
+
+  throw new ErroGerid(
+    FalhaGerid.ERRO_PREENCHIMENTO,
+    'O serviço BPC apareceu, mas o Gerid não confirmou a seleção no campo Serviço.',
+  );
 }
 
 // ---------------------------------------------------------------------------
