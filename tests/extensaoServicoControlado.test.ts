@@ -22,6 +22,7 @@ describe('extensão Gerid — combobox controlado de serviço', () => {
             <div id="opcao-bpc" role="option">
               <label for="1655">Benefício Assistencial à Pessoa com Deficiência</label>
               <span>Atendimento à distância</span>
+              <span>Benefício Assistencial à Pessoa com Deficiência Atendimento à distância</span>
               <input id="1655" type="radio" value="1655" hidden>
             </div>
           </div>
@@ -38,7 +39,8 @@ describe('extensão Gerid — combobox controlado de serviço', () => {
           document.querySelector('#abrir-lista').addEventListener('click', () => {
             document.querySelector('#idSelecionarServico-itens').hidden = false;
           });
-          document.querySelector('#opcao-bpc').addEventListener('click', () => {
+          document.querySelector('#opcao-bpc').addEventListener('click', (evento) => {
+            if (evento.target !== evento.currentTarget) return;
             radio.checked = true;
             combo.value = 'Benefício Assistencial à Pessoa com Deficiência';
             combo.dispatchEvent(new Event('input', { bubbles: true }));

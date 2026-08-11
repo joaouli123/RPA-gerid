@@ -1,4 +1,4 @@
-GERID RPA AUTOMATOR - ATUALIZACAO 1.3.1
+GERID RPA AUTOMATOR - ATUALIZACAO 1.3.2
 
 O QUE ESTA VERSAO FAZ
 
@@ -23,7 +23,7 @@ COMO INSTALAR OU ATUALIZAR
 3. Remova ou desative a versao antiga do Gerid RPA Automator.
 4. Clique em "Carregar sem compactacao".
 5. Selecione esta pasta extensao-gerid.
-6. Confirme que a versao exibida e 1.3.1.
+6. Confirme que a versao exibida e 1.3.2.
 7. Abra a extensao e expanda "Configuracao avancada".
 8. Informe a URL do Coolify e a chave RPA_EXTENSAO_TOKEN.
 9. Clique fora dos campos para salvar.

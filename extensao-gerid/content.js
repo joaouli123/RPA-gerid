@@ -734,7 +734,7 @@
     }
     let opcaoVisivel = visivel(
       page.getByRole("option", {
-        name: /^Benefício Assistencial à Pessoa com Deficiência Atendimento (?:à distância|a distância)$/i
+        name: /^Benefício Assistencial à Pessoa com Deficiência\b/i
       })
     ).first();
     if (!await opcaoVisivel.isVisible().catch(() => false)) {
