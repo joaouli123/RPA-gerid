@@ -449,9 +449,9 @@
     else if (seletorVisivel(documento, "#orgaoPagadorMunicipio")) etapa = "passo_9";
     else if (seletorVisivel(documento, 'input[placeholder="__.___-___"]') || texto.includes("selecionar unidade") && texto.includes("consultar por cep")) etapa = "passo_8";
     else if (seletorVisivel(documento, 'input[id="acompanharProcesso-Sim"]') && seletorVisivel(documento, ".containerAnexo")) etapa = "passo_7";
-    else if (seletorVisivel(documento, 'input[id^="perguntaSUAS-"]') || texto.includes("protecao especial suas")) etapa = "passo_6";
-    else if (seletorVisivel(documento, 'input[id^="perguntaGastos-"]') || texto.includes("comprometimento de renda")) etapa = "passo_5";
-    else if (seletorVisivel(documento, 'input[id^="selectEstadoCivil"]') && texto.includes("grupo familiar")) etapa = "passo_4";
+    else if (seletorVisivel(documento, 'input[id^="perguntaSUAS-"]')) etapa = "passo_6";
+    else if (seletorVisivel(documento, 'input[id^="perguntaGastos-"]')) etapa = "passo_5";
+    else if (seletorVisivel(documento, 'input[id^="selectEstadoCivil"]')) etapa = "passo_4";
     else if (seletorVisivel(documento, 'input[id="campo-autorizacaoCadunico"]')) etapa = "passo_3";
     else if (seletorVisivel(documento, 'input[id="idRequerente.cpf"]')) etapa = "passo_2";
     else if (seletorVisivel(documento, 'input[id="idSelecionarServico"]')) etapa = "passo_1";
@@ -1457,7 +1457,7 @@
       init_classificarPreenchimento();
       init_detectarProtocolo();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.5.1-20260811.2";
+      var CONTENT_BUILD_ID = "1.5.1-20260811.3";
       window.__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
       function logToBackground(message) {
         console.log(message);

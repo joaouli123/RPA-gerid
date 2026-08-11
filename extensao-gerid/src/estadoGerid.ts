@@ -87,9 +87,9 @@ export function detectarEstadoGerid(documento: Document = document): EstadoGerid
     seletorVisivel(documento, 'input[id="acompanharProcesso-Sim"]') &&
     seletorVisivel(documento, '.containerAnexo')
   ) etapa = 'passo_7';
-  else if (seletorVisivel(documento, 'input[id^="perguntaSUAS-"]') || texto.includes('protecao especial suas')) etapa = 'passo_6';
-  else if (seletorVisivel(documento, 'input[id^="perguntaGastos-"]') || texto.includes('comprometimento de renda')) etapa = 'passo_5';
-  else if (seletorVisivel(documento, 'input[id^="selectEstadoCivil"]') && texto.includes('grupo familiar')) etapa = 'passo_4';
+  else if (seletorVisivel(documento, 'input[id^="perguntaSUAS-"]')) etapa = 'passo_6';
+  else if (seletorVisivel(documento, 'input[id^="perguntaGastos-"]')) etapa = 'passo_5';
+  else if (seletorVisivel(documento, 'input[id^="selectEstadoCivil"]')) etapa = 'passo_4';
   else if (seletorVisivel(documento, 'input[id="campo-autorizacaoCadunico"]')) etapa = 'passo_3';
   else if (seletorVisivel(documento, 'input[id="idRequerente.cpf"]')) etapa = 'passo_2';
   else if (seletorVisivel(documento, 'input[id="idSelecionarServico"]')) etapa = 'passo_1';

@@ -12,6 +12,13 @@ describe('extensão Gerid — máquina de estados', () => {
         (window as any).chrome = { runtime: { sendMessage: async () => undefined } };
       });
       await pagina.setContent(`
+        <nav id="wizard">
+          <button>1 Selecionar Serviço</button><button>2 Informar Requerente</button>
+          <button>3 Autorização CadÚnico</button><button>4 Grupo Familiar</button>
+          <button>5 Comprometimento de Renda</button><button>6 Proteção Especial SUAS</button>
+          <button>7 Dados Requerente</button><button>8 Selecionar Unidade</button>
+          <button>9 Órgão Pagador</button><button>10 Confirmar</button><button>11 Comprovante</button>
+        </nav>
         <main id="lista"><button>Novo Requerimento</button></main>
         <section id="pat" hidden><h1>LOGIN - PAT</h1><label>Abrangência</label></section>
         <section id="a3" hidden><p>Certificado digital do tipo A3</p><button>OK</button></section>
@@ -100,8 +107,9 @@ describe('extensão Gerid — máquina de estados', () => {
       expect(confirmacao).toEqual({ etapa: 'passo_10', modal: 'confirmacao_final' });
 
       const reinicio = await pagina.evaluate(async () => {
-        document.body.insertAdjacentHTML('beforeend', '<button id="voltar-passo-1">1 Selecionar Serviço</button>');
-        document.querySelector<HTMLButtonElement>('#voltar-passo-1')?.addEventListener('click', () => {
+        const voltarPasso1 = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+          .find((botao) => botao.innerText.includes('Selecionar Serviço'));
+        voltarPasso1?.addEventListener('click', () => {
           document.querySelectorAll<HTMLElement>('main, section').forEach((elemento) => {
             elemento.hidden = elemento.id !== 'p1';
           });
