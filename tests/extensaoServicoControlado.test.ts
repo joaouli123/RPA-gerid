@@ -57,7 +57,7 @@ describe('extensão Gerid — combobox controlado de serviço', () => {
           document.querySelector('#abrir-lista').addEventListener('click', () => {
             document.querySelector('#idSelecionarServico-itens').hidden = false;
           });
-          document.querySelector('label[for="1655"]').addEventListener('click', () => {
+          document.querySelector('#opcao-bpc').addEventListener('mousedown', () => {
             radio.checked = true;
             combo.value = 'Benefício Assistencial à Pessoa com Deficiência';
             combo.dispatchEvent(new Event('input', { bubbles: true }));

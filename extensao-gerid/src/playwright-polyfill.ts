@@ -136,6 +136,26 @@ class MockLocator {
     ) {
       throw new Error(`Element is disabled: ${this.selector}`);
     }
+
+    // HTMLElement.click() dispara somente `click`. Os selects oficiais do
+    // GERID abrem e confirmam opções em `onMouseDown`, então a extensão precisa
+    // reproduzir a sequência mínima de um clique real do navegador.
+    el.dispatchEvent(new MouseEvent('mousedown', {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      button: 0,
+      buttons: 1,
+      view: window,
+    }));
+    el.dispatchEvent(new MouseEvent('mouseup', {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      button: 0,
+      buttons: 0,
+      view: window,
+    }));
     el.click();
   }
 

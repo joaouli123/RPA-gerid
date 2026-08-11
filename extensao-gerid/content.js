@@ -122,6 +122,22 @@
           if ((el instanceof HTMLButtonElement || el instanceof HTMLInputElement) && (el.disabled || el.getAttribute("aria-disabled") === "true")) {
             throw new Error(`Element is disabled: ${this.selector}`);
           }
+          el.dispatchEvent(new MouseEvent("mousedown", {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            button: 0,
+            buttons: 1,
+            view: window
+          }));
+          el.dispatchEvent(new MouseEvent("mouseup", {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            button: 0,
+            buttons: 0,
+            view: window
+          }));
           el.click();
         }
         async fill(value) {
@@ -650,6 +666,20 @@
       await loc.check({ force: true });
     }
   }
+  async function ativarOpcaoCombobox(opcao) {
+    await opcao.evaluate((elemento) => {
+      const item = elemento.closest('[role="option"]') ?? elemento;
+      item.dispatchEvent(new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        button: 0,
+        buttons: 1,
+        view: window
+      }));
+      elemento.click();
+    });
+  }
   async function escolherNoCombobox(page, idCombobox, rotuloDesejado) {
     const id = idCombobox.replace(/^#/, "");
     const combo = page.locator(`[id="${id}"]`);
@@ -662,7 +692,7 @@
       const rotulo = rotulos.nth(i);
       const texto = await rotulo.innerText().catch(() => "");
       if (normalizar(texto) === alvo) {
-        await rotulo.click().catch(() => void 0);
+        await ativarOpcaoCombobox(rotulo).catch(() => void 0);
         if (await aguardarValorCombobox(combo, alvo)) return true;
         const rid = await rotulo.getAttribute("for");
         if (rid) {
@@ -747,9 +777,6 @@
     } else {
       await busca.click();
     }
-    const rotuloServico = visivel(
-      page.locator(`label[for="${SERVICO_BPC_PCD.id}"]`)
-    ).first();
     let opcaoVisivel = visivel(
       page.getByRole("option", {
         name: /^Benefício Assistencial à Pessoa com Deficiência\b/i
@@ -766,11 +793,7 @@
         "A lista de servi\xE7os do Gerid n\xE3o exibiu o BPC \xE0 Pessoa com Defici\xEAncia."
       );
     });
-    if (await rotuloServico.isVisible().catch(() => false)) {
-      await rotuloServico.click();
-    } else {
-      await opcaoVisivel.click();
-    }
+    await ativarOpcaoCombobox(opcaoVisivel);
     const inicioConfirmacao = Date.now();
     while (Date.now() - inicioConfirmacao < 3e3) {
       const valor = normalizar(await busca.inputValue().catch(() => ""));

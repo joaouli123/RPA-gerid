@@ -3,10 +3,14 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { describe, expect, it } from 'vitest';
 
-function comboControlado(id: string, opcoes: Array<[string, string]>): string {
+function comboControlado(
+  id: string,
+  opcoes: Array<[string, string]>,
+  fechado = false,
+): string {
   return `
     <input id="${id}" role="combobox">
-    <div id="${id}-itens">
+    <div id="${id}-itens"${fechado ? ' hidden' : ''}>
       ${opcoes
         .map(
           ([valor, rotulo]) => `
@@ -54,16 +58,23 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
           <table><tbody><tr>
             <td>123.456.789-01</td>
             <td>Requerente</td>
-            <td>${comboControlado('selectEstadoCivil0', [['1', 'Solteiro']])}</td>
+            <td>${comboControlado('selectEstadoCivil0', [['1', 'Solteiro']], true)}</td>
           </tr></tbody></table>
           <span class="interaction-select"><input id="undefined-Nao" type="checkbox"><label>Não</label></span>
         </section>
         <section id="passo5" hidden><h2>Comprometimento de Renda</h2></section>
         <button id="btn-next">Avançar</button>
         <script>
-          for (const label of document.querySelectorAll('[id$="-itens"] label')) {
-            label.addEventListener('click', () => {
-              const caixa = label.closest('[id$="-itens"]');
+          for (const combo of document.querySelectorAll('input[role="combobox"]')) {
+            combo.addEventListener('mousedown', () => {
+              const caixa = document.getElementById(combo.id + '-itens');
+              if (caixa) caixa.hidden = false;
+            });
+          }
+          for (const item of document.querySelectorAll('[id$="-itens"] [role="option"]')) {
+            item.addEventListener('mousedown', () => {
+              const caixa = item.closest('[id$="-itens"]');
+              const label = item.querySelector('label');
               const combo = document.getElementById(caixa.id.slice(0, -6));
               const radio = document.getElementById(label.htmlFor);
               combo.value = label.textContent.trim();

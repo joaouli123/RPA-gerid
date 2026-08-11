@@ -133,6 +133,24 @@ async function garantirMarcado(loc: Locator): Promise<void> {
   }
 }
 
+/** Ativa os itens do Select oficial, que confirma a escolha em onMouseDown. */
+async function ativarOpcaoCombobox(opcao: Locator): Promise<void> {
+  await opcao.evaluate((elemento: HTMLElement) => {
+    const item = elemento.closest<HTMLElement>('[role="option"]') ?? elemento;
+    item.dispatchEvent(new MouseEvent('mousedown', {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      button: 0,
+      buttons: 1,
+      view: window,
+    }));
+
+    // Mantem compatibilidade com o componente legado, que usava onClick.
+    elemento.click();
+  });
+}
+
 /**
  * Escolhe uma opção num combobox customizado do GERID.
  *
@@ -166,7 +184,7 @@ async function escolherNoCombobox(
     const texto = await rotulo.innerText().catch(() => '');
 
     if (normalizar(texto) === alvo) {
-      await rotulo.click().catch(() => undefined);
+      await ativarOpcaoCombobox(rotulo).catch(() => undefined);
       if (await aguardarValorCombobox(combo, alvo)) return true;
 
       const rid = await rotulo.getAttribute('for');
@@ -298,11 +316,9 @@ async function passo1SelecionarServico(page: Page): Promise<void> {
     await busca.click();
   }
 
-  // No componente atual do GERID o estado React esta ligado ao label do radio.
-  // A div role=option abre/fecha visualmente, mas nao confirma o valor.
-  const rotuloServico = visivel(
-    page.locator(`label[for="${SERVICO_BPC_PCD.id}"]`),
-  ).first();
+  // O componente oficial confirma a opcao em onMouseDown no role=option.
+  // HTMLElement.click() dispara apenas click e marca o radio sem atualizar
+  // o estado React/Redux, deixando o campo visivelmente vazio.
   let opcaoVisivel = visivel(
     page.getByRole('option', {
       name: /^Benefício Assistencial à Pessoa com Deficiência\b/i,
@@ -321,11 +337,7 @@ async function passo1SelecionarServico(page: Page): Promise<void> {
       'A lista de serviços do Gerid não exibiu o BPC à Pessoa com Deficiência.',
     );
   });
-  if (await rotuloServico.isVisible().catch(() => false)) {
-    await rotuloServico.click();
-  } else {
-    await opcaoVisivel.click();
-  }
+  await ativarOpcaoCombobox(opcaoVisivel);
 
   const inicioConfirmacao = Date.now();
   while (Date.now() - inicioConfirmacao < 3_000) {
