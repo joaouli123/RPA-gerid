@@ -31,6 +31,15 @@ const ROTULO_CASO: Record<CasoExecucao['status'], string> = {
   erro: 'Erro',
 };
 
+const ESTADO_GERID = {
+  aguardando_extensao: { rotulo: 'Aguardando extensão', tom: 'cinza' },
+  autenticacao_necessaria: { rotulo: 'Autenticação necessária', tom: 'ambar' },
+  autenticado: { rotulo: 'GERID autenticado', tom: 'verde' },
+  processando: { rotulo: 'Preenchendo no GERID', tom: 'azul' },
+  aguardando_confirmacao: { rotulo: 'Confirme no GERID', tom: 'ambar' },
+  revisao: { rotulo: 'Aguardando revisão', tom: 'ambar' },
+} as const satisfies Record<NonNullable<ExecucaoAtual['estadoGerid']>, { rotulo: string; tom: Tom }>;
+
 export function ExecucaoProgresso({
   inicial,
   prontos,
@@ -50,6 +59,7 @@ export function ExecucaoProgresso({
     atual?.casos ?? prontos.map((p) => ({ ...p, status: 'pendente' as const }));
   const rodando = atual?.status === 'rodando';
   const concluida = atual?.status === 'concluida';
+  const estadoGerid = atual?.estadoGerid ? ESTADO_GERID[atual.estadoGerid] : null;
 
   const concluidos = casos.filter(
     (c) => c.status === 'sucesso' || c.status === 'erro' || c.status === 'revisao',
@@ -116,9 +126,9 @@ export function ExecucaoProgresso({
         <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
           <Icone nome="alerta" className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
-            <strong>Automação via Extensão.</strong> O robô agora roda diretamente no seu navegador
-            através da Extensão do RPA. Faça login no Gerid, abra a extensão e clique em Iniciar. 
-            O status será atualizado aqui em tempo real.
+            <strong>Automação via extensão.</strong> Abra a extensão e clique em Preparar e iniciar.
+            Quando solicitado, conclua o SafeID/MFA e revise a tela Confirmar. Depois da confirmação,
+            o protocolo será registrado e a fila continuará automaticamente.
           </div>
         </div>
       ) : (
@@ -150,7 +160,10 @@ export function ExecucaoProgresso({
             <div className="text-2xl font-semibold tabular-nums">{casos.length}</div>
           </div>
           <div className="flex items-center gap-2">
-            {rodando && <StatusPill tom="azul">Executando via Extensão</StatusPill>}
+            {rodando && estadoGerid && (
+              <StatusPill tom={estadoGerid.tom}>{estadoGerid.rotulo}</StatusPill>
+            )}
+            {rodando && !estadoGerid && <StatusPill tom="azul">Executando via Extensão</StatusPill>}
             {concluida && <StatusPill tom="verde">Concluída</StatusPill>}
             {atual && (
               <Botao
@@ -164,14 +177,8 @@ export function ExecucaoProgresso({
             {!rodando && !concluida && casos.length > 0 && (
               <Botao onClick={disparar} disabled={iniciando}>
                 <Icone nome="raio" className="h-4 w-4" />
-                {iniciando ? 'Preparando fila...' : 'Preparar fila para a extensão'}
+                {iniciando ? 'Preparando fila...' : 'Preparar fila'}
               </Botao>
-            )}
-            {!rodando && !concluida && casos.length > 0 && (
-              <div className="text-sm font-medium text-amber-600 dark:text-amber-400 flex items-center gap-2">
-                <Icone nome="raio" className="h-4 w-4" />
-                Inicie pela Extensão no Gerid
-              </div>
             )}
           </div>
         </div>

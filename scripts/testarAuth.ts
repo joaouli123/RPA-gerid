@@ -15,13 +15,22 @@ async function main(): Promise<void> {
   const config = carregarConfig();
 
   console.log('=== Config ===');
-  console.log('  key file    :', process.env.RPA_GOOGLE_KEY_FILE || '(vazio)');
+  console.log(
+    '  credencial  :',
+    process.env.RPA_GOOGLE_CREDENTIALS ? 'variavel RPA_GOOGLE_CREDENTIALS' : process.env.RPA_GOOGLE_KEY_FILE || '(vazio)',
+  );
   console.log('  pasta raiz  :', config.pastaRaizId || '(vazio)');
   console.log('  planilha    :', config.spreadsheetId || '(vazio)');
   console.log('  aba clientes:', config.abaClientes);
 
-  if (!process.env.RPA_GOOGLE_KEY_FILE || !config.pastaRaizId || !config.spreadsheetId) {
-    throw new Error('Faltam RPA_GOOGLE_KEY_FILE / RPA_PASTA_RAIZ_ID / RPA_SPREADSHEET_ID no .env');
+  if (
+    !(process.env.RPA_GOOGLE_CREDENTIALS || process.env.RPA_GOOGLE_KEY_FILE) ||
+    !config.pastaRaizId ||
+    !config.spreadsheetId
+  ) {
+    throw new Error(
+      'Faltam RPA_GOOGLE_CREDENTIALS (ou RPA_GOOGLE_KEY_FILE) / RPA_PASTA_RAIZ_ID / RPA_SPREADSHEET_ID no .env',
+    );
   }
 
   console.log('\n=== 1) Autenticar (obter token) ===');

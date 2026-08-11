@@ -1,13 +1,63 @@
 const URL_REQUERIMENTOS_GERID = 'https://atendimento.inss.gov.br/requerimentos';
+const URL_LOGIN_GERID = 'https://geridinss.dataprev.gov.br/';
 const CHAVE_EXECUCAO_ATIVA = 'execucaoAtivaGerid';
+const CHAVE_ESTADO_AUTENTICACAO = 'estadoAutenticacaoGerid';
+const CHAVE_ULTIMO_AVISO_AUTENTICACAO = 'ultimoAvisoAutenticacaoGerid';
 const ALARME_RETOMADA = 'retomarExecucaoGerid';
+const ALARME_AUTENTICACAO = 'aguardarAutenticacaoGerid';
+const ALARME_CONFIRMACAO = 'verificarConfirmacaoGerid';
 const MAX_RETOMADAS_AUTOMATICAS = 3;
+
+const EstadoAutenticacao = {
+  SEM_ABA: 'sem_aba',
+  NECESSARIA: 'autenticacao_necessaria',
+  AUTENTICADO: 'autenticado',
+};
 
 let isRunning = false;
 
 function sendLog(message) {
   console.log(message);
   chrome.runtime.sendMessage({ action: 'log', message }).catch(() => {});
+}
+
+function estadoDaAba(tab) {
+  const url = String(tab?.url || '');
+  if (url.includes('://geridinss.dataprev.gov.br/')) return EstadoAutenticacao.NECESSARIA;
+  if (url.includes('://atendimento.inss.gov.br/')) return EstadoAutenticacao.AUTENTICADO;
+  return EstadoAutenticacao.SEM_ABA;
+}
+
+async function atualizarEstadoAutenticacao(estado, mensagem, tabId) {
+  const registro = { estado, mensagem, tabId, atualizadoEm: new Date().toISOString() };
+  await chrome.storage.local.set({ [CHAVE_ESTADO_AUTENTICACAO]: registro });
+  const autenticado = estado === EstadoAutenticacao.AUTENTICADO;
+  await chrome.action?.setBadgeBackgroundColor?.({ color: autenticado ? '#15803d' : '#b45309' });
+  await chrome.action?.setBadgeText?.({ text: autenticado ? 'OK' : '!' });
+  chrome.runtime.sendMessage({ action: 'auth_state', ...registro }).catch(() => {});
+  return registro;
+}
+
+async function avisarAutenticacaoNecessaria() {
+  const salvo = await chrome.storage.local.get([CHAVE_ULTIMO_AVISO_AUTENTICACAO]);
+  const ultimo = Number(salvo[CHAVE_ULTIMO_AVISO_AUTENTICACAO] || 0);
+  if (Date.now() - ultimo < 10 * 60 * 1000) return;
+  await chrome.storage.local.set({ [CHAVE_ULTIMO_AVISO_AUTENTICACAO]: Date.now() });
+  await chrome.notifications?.create?.('gerid-autenticacao', {
+    type: 'basic',
+    iconUrl: 'icon128.png',
+    title: 'Autenticacao do GERID necessaria',
+    message: 'Conclua o certificado SafeID e o codigo do autenticador. A fila sera retomada sozinha.',
+    priority: 2,
+  });
+}
+
+function agendarRetomadaAutenticacao() {
+  chrome.alarms?.create?.(ALARME_AUTENTICACAO, { delayInMinutes: 0.5 });
+}
+
+function agendarVerificacaoConfirmacao() {
+  chrome.alarms?.create?.(ALARME_CONFIRMACAO, { delayInMinutes: 0.5 });
 }
 
 function headersAutorizacao(apiToken, json = false) {
@@ -69,15 +119,36 @@ async function localizarAbaGerid(tabId) {
   if (Number.isInteger(tabId)) {
     try {
       const tab = await chrome.tabs.get(tabId);
-      if (tab.url?.includes('://atendimento.inss.gov.br/')) return tab;
+      if (estadoDaAba(tab) !== EstadoAutenticacao.SEM_ABA) return tab;
     } catch {
       // A aba pode ter sido fechada; buscamos outra aberta abaixo.
     }
   }
 
-  const abas = await chrome.tabs.query({ url: '*://*.inss.gov.br/*' });
+  const abas = await chrome.tabs.query({
+    url: ['*://atendimento.inss.gov.br/*', 'https://geridinss.dataprev.gov.br/*'],
+  });
   const aba = abas.find((tab) => tab.active) || abas[0];
-  if (!aba?.id) throw new Error('Nenhuma aba do Gerid está aberta. Abra o Gerid e inicie novamente.');
+  if (!aba?.id) throw new Error('Nenhuma aba do GERID esta aberta.');
+  return aba;
+}
+
+async function abrirAutenticacao() {
+  let aba;
+  try {
+    aba = await localizarAbaGerid();
+    await chrome.tabs.update(aba.id, { active: true });
+  } catch {
+    aba = await chrome.tabs.create({ url: URL_LOGIN_GERID, active: true });
+  }
+  const autenticado = estadoDaAba(aba) === EstadoAutenticacao.AUTENTICADO;
+  await atualizarEstadoAutenticacao(
+    autenticado ? EstadoAutenticacao.AUTENTICADO : EstadoAutenticacao.NECESSARIA,
+    autenticado
+      ? 'Sessao do GERID pronta.'
+      : 'Conclua o SafeID e informe o codigo de 6 digitos do GERID.',
+    aba?.id,
+  );
   return aba;
 }
 
@@ -106,6 +177,12 @@ async function prepararAbaGerid(tabId, reiniciarNoInicio = false) {
   const aba = await localizarAbaGerid(tabId);
   if (!aba.id) throw new Error('Não foi possível identificar a aba do Gerid.');
 
+  if (estadoDaAba(aba) === EstadoAutenticacao.NECESSARIA) {
+    const erro = new Error('AUTENTICACAO_GERID_NECESSARIA');
+    erro.codigo = 'AUTENTICACAO_GERID_NECESSARIA';
+    throw erro;
+  }
+
   // A aba é fixada no início. Trocar a aba ativa não altera o destino do robô.
   // Se o Gerid foi recarregado ou levado a outra tela, voltamos ao ponto seguro
   // (lista de requerimentos) e recomeçamos somente o caso que ainda está pendente.
@@ -122,6 +199,50 @@ async function prepararAbaGerid(tabId, reiniciarNoInicio = false) {
     await aguardarAbaPronta(aba.id);
   }
   return aba.id;
+}
+
+async function enviarHeartbeat(apiUrl, apiToken, idExecucao, estadoGerid, detalheGerid) {
+  if (!idExecucao) return;
+  const resposta = await buscarComTimeout(apiUrl.replace(/\/$/, '') + '/api/ext/heartbeat', {
+    method: 'POST',
+    headers: headersAutorizacao(apiToken, true),
+    body: JSON.stringify({ idExecucao, estadoGerid, detalheGerid }),
+  });
+  if (!resposta.ok && resposta.status !== 409) {
+    throw new Error(`Nao foi possivel manter a execucao ativa (HTTP ${resposta.status}).`);
+  }
+}
+
+async function buscarFila(apiUrl, apiToken) {
+  const resposta = await buscarComTimeout(apiUrl.replace(/\/$/, '') + '/api/ext/fila', {
+    headers: headersAutorizacao(apiToken),
+  });
+  const dados = await resposta.json();
+  if (!resposta.ok || !dados.sucesso || !dados.casos) {
+    throw new Error(dados.erro || 'Erro ao buscar fila.');
+  }
+  return dados;
+}
+
+async function prepararFila(apiUrl, apiToken) {
+  const resposta = await buscarComTimeout(apiUrl.replace(/\/$/, '') + '/api/ext/iniciar', {
+    method: 'POST',
+    headers: headersAutorizacao(apiToken, true),
+  });
+  const dados = await resposta.json();
+  if (!resposta.ok || !dados.sucesso) {
+    throw new Error(dados.erro || 'Nao foi possivel preparar a fila.');
+  }
+  return dados;
+}
+
+async function autenticacaoNecessaria(tabId) {
+  try {
+    return estadoDaAba(await chrome.tabs.get(tabId)) === EstadoAutenticacao.NECESSARIA;
+  } catch {
+    const abas = await chrome.tabs.query({ url: 'https://geridinss.dataprev.gov.br/*' });
+    return abas.length > 0;
+  }
 }
 
 function erroDeNavegacao(erro) {
@@ -158,6 +279,12 @@ async function executarCasoNoGerid(tabId, casoComAnexos) {
       }
       return resultado;
     } catch (erro) {
+      if (erro?.codigo === 'AUTENTICACAO_GERID_NECESSARIA' || await autenticacaoNecessaria(tabId)) {
+        return {
+          status: 'autenticacao',
+          erro: 'A sessao do GERID expirou. Conclua o SafeID e o codigo do autenticador.',
+        };
+      }
       if (tentativa === 0 && erroDeNavegacao(erro)) {
         sendLog('O Gerid mudou de tela durante o preenchimento. Vou recuperar o mesmo caso sem perder a fila...');
         continue;
@@ -186,6 +313,100 @@ async function enviarResultado(apiUrl, apiToken, idExecucao, caso, resultado) {
   if (!resposta.ok) throw new Error(`Não foi possível registrar o resultado (HTTP ${resposta.status}).`);
 }
 
+async function detectarProtocoloNaAba(tabId) {
+  const verificacao = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => typeof window.detectarProtocoloGerid === 'function',
+  });
+  if (!verificacao[0]?.result) {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+  }
+  const resultado = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => window.detectarProtocoloGerid?.() || null,
+  });
+  return resultado[0]?.result || null;
+}
+
+/** Registra o protocolo depois que o operador confirma e continua a fila. */
+async function verificarConfirmacaoPendente(tabIdPreferido) {
+  const dados = await chrome.storage.local.get([
+    CHAVE_EXECUCAO_ATIVA,
+    'apiUrl',
+    'apiToken',
+    'modoTeste',
+  ]);
+  const ativa = dados[CHAVE_EXECUCAO_ATIVA];
+  if (!ativa?.aguardandoConfirmacao || !dados.apiUrl || !dados.apiToken) return false;
+  if (isRunning) return true;
+
+  let aba;
+  try {
+    aba = await localizarAbaGerid(tabIdPreferido || ativa.geridTabId);
+  } catch {
+    aba = await abrirAutenticacao();
+  }
+
+  if (!aba?.id || estadoDaAba(aba) !== EstadoAutenticacao.AUTENTICADO) {
+    await enviarHeartbeat(
+      dados.apiUrl,
+      dados.apiToken,
+      ativa.idExecucao,
+      'autenticacao_necessaria',
+      'Reautentique para concluir a captura do protocolo.',
+    );
+    agendarRetomadaAutenticacao();
+    return true;
+  }
+
+  try {
+    const protocolo = await detectarProtocoloNaAba(aba.id);
+    if (!protocolo) {
+      await enviarHeartbeat(
+        dados.apiUrl,
+        dados.apiToken,
+        ativa.idExecucao,
+        'aguardando_confirmacao',
+        `Revise e confirme o requerimento de ${ativa.nomeAtual || 'cliente atual'} no GERID.`,
+      );
+      agendarVerificacaoConfirmacao();
+      return true;
+    }
+
+    isRunning = true;
+    await enviarResultado(
+      dados.apiUrl,
+      dados.apiToken,
+      ativa.idExecucao,
+      { cpf: ativa.cpfAtual, nome: ativa.nomeAtual || 'Cliente' },
+      { status: 'sucesso', protocolo },
+    );
+    sendLog(`Protocolo ${protocolo} registrado com sucesso.`);
+    await salvarExecucaoAtiva({ ...ativa, aguardandoConfirmacao: false, geridTabId: aba.id });
+    if (ativa.modoTeste !== false) {
+      sendLog('Modo teste concluido. Desative-o e inicie novamente para processar toda a fila.');
+      await limparExecucaoAtiva();
+      isRunning = false;
+      return true;
+    }
+    sendLog('Continuando a fila...');
+    await processQueue(
+      dados.apiUrl,
+      dados.apiToken,
+      ativa.modoTeste !== false,
+      aba.id,
+      Number(ativa.tentativasRetomada) || 0,
+      false,
+    );
+    return true;
+  } catch (erro) {
+    isRunning = false;
+    sendLog(`Ainda nao foi possivel registrar o protocolo: ${erro?.message || erro}`);
+    agendarVerificacaoConfirmacao();
+    return true;
+  }
+}
+
 function erroDefinitivoDoRequerente(resultado) {
   if (resultado?.status !== 'erro') return false;
   const texto = String(resultado.erro || '').toLowerCase();
@@ -194,18 +415,24 @@ function erroDefinitivoDoRequerente(resultado) {
   return /pedido\s+\d+.*em aberto|existe pedido em aberto|cpf inv[aá]lido/.test(texto);
 }
 
-async function processQueue(apiUrl, apiToken, modoTeste, tabIdPreferido, tentativasRetomada = 0) {
+async function processQueue(
+  apiUrl,
+  apiToken,
+  modoTeste,
+  tabIdPreferido,
+  tentativasRetomada = 0,
+  iniciarSeVazia = false,
+) {
   let manterExecucaoPendente = false;
   try {
     if (!apiToken) throw new Error('A chave da extensão não foi informada.');
-    const aba = await localizarAbaGerid(tabIdPreferido);
-    if (!aba.id) throw new Error('Não foi possível identificar a aba do Gerid.');
-
     sendLog('Iniciando processamento...');
-    const url = apiUrl.replace(/\/$/, '') + '/api/ext/fila';
-    const res = await buscarComTimeout(url, { headers: headersAutorizacao(apiToken) });
-    const data = await res.json();
-    if (!res.ok || !data.sucesso || !data.casos) throw new Error(data.erro || 'Erro ao buscar fila.');
+    let data = await buscarFila(apiUrl, apiToken);
+    if ((!data.idExecucao || data.casos.length === 0) && iniciarSeVazia) {
+      sendLog('Preparando a fila no servidor...');
+      await prepararFila(apiUrl, apiToken);
+      data = await buscarFila(apiUrl, apiToken);
+    }
 
     const casos = modoTeste ? data.casos.slice(0, 1) : data.casos;
     if (casos.length === 0 || !data.idExecucao) {
@@ -213,13 +440,47 @@ async function processQueue(apiUrl, apiToken, modoTeste, tabIdPreferido, tentati
       return;
     }
 
+    let aba;
+    try {
+      aba = await localizarAbaGerid(tabIdPreferido);
+    } catch {
+      aba = await abrirAutenticacao();
+    }
+
     await salvarExecucaoAtiva({
       idExecucao: data.idExecucao,
-      geridTabId: aba.id,
+      geridTabId: aba?.id,
       modoTeste,
       tentativasRetomada,
       iniciadoEm: new Date().toISOString(),
     });
+
+    if (!aba?.id || estadoDaAba(aba) !== EstadoAutenticacao.AUTENTICADO) {
+      manterExecucaoPendente = true;
+      await enviarHeartbeat(
+        apiUrl,
+        apiToken,
+        data.idExecucao,
+        'autenticacao_necessaria',
+        'Aguardando SafeID e codigo do autenticador.',
+      );
+      await atualizarEstadoAutenticacao(
+        EstadoAutenticacao.NECESSARIA,
+        'Aguardando SafeID e codigo do autenticador.',
+        aba?.id,
+      );
+      await avisarAutenticacaoNecessaria();
+      agendarRetomadaAutenticacao();
+      sendLog('Aguardando autenticacao. A fila sera retomada automaticamente.');
+      return;
+    }
+
+    await atualizarEstadoAutenticacao(
+      EstadoAutenticacao.AUTENTICADO,
+      'Sessao do GERID pronta.',
+      aba.id,
+    );
+    await enviarHeartbeat(apiUrl, apiToken, data.idExecucao, 'autenticado');
     sendLog(modoTeste
       ? `Modo teste: processando 1 de ${data.casos.length} caso(s) pendente(s).`
       : `Fila carregada: ${casos.length} casos pendentes.`);
@@ -230,15 +491,48 @@ async function processQueue(apiUrl, apiToken, modoTeste, tabIdPreferido, tentati
         geridTabId: aba.id,
         modoTeste,
         cpfAtual: caso.cpf,
+        nomeAtual: caso.nome,
         tentativasRetomada,
         iniciadoEm: new Date().toISOString(),
       });
       sendLog(`Processando: ${caso.nome}`);
+      await enviarHeartbeat(
+        apiUrl,
+        apiToken,
+        data.idExecucao,
+        'processando',
+        `Processando ${caso.nome}.`,
+      );
       const casoComAnexos = {
         ...caso,
         anexos: await baixarAnexos(apiUrl, apiToken, data.idExecucao, caso.anexos),
       };
       const resultado = await executarCasoNoGerid(aba.id, casoComAnexos);
+
+      if (resultado.status === 'autenticacao') {
+        manterExecucaoPendente = true;
+        await salvarExecucaoAtiva({
+          idExecucao: data.idExecucao,
+          geridTabId: aba.id,
+          modoTeste,
+          cpfAtual: caso.cpf,
+          nomeAtual: caso.nome,
+          tentativasRetomada,
+          iniciadoEm: new Date().toISOString(),
+        });
+        await enviarHeartbeat(
+          apiUrl,
+          apiToken,
+          data.idExecucao,
+          'autenticacao_necessaria',
+          resultado.erro,
+        );
+        await atualizarEstadoAutenticacao(EstadoAutenticacao.NECESSARIA, resultado.erro, aba.id);
+        await avisarAutenticacaoNecessaria();
+        agendarRetomadaAutenticacao();
+        sendLog('Sessao expirada. Conclua a autenticacao; a fila sera retomada sozinha.');
+        break;
+      }
 
       if (resultado.status === 'erro' && !erroDefinitivoDoRequerente(resultado)) {
         const proximaTentativa = tentativasRetomada + 1;
@@ -248,6 +542,7 @@ async function processQueue(apiUrl, apiToken, modoTeste, tabIdPreferido, tentati
           geridTabId: aba.id,
           modoTeste,
           cpfAtual: caso.cpf,
+          nomeAtual: caso.nome,
           tentativasRetomada: proximaTentativa,
           iniciadoEm: new Date().toISOString(),
         });
@@ -267,7 +562,28 @@ async function processQueue(apiUrl, apiToken, modoTeste, tabIdPreferido, tentati
       // Revisão é uma parada intencional: preserva a tela preenchida para o
       // operador e nunca abre outro requerimento por cima dela.
       if (resultado.status === 'revisao') {
-        sendLog('Pausa segura para revisão humana. Nenhum requerimento foi confirmado automaticamente.');
+        manterExecucaoPendente = true;
+        await salvarExecucaoAtiva({
+          idExecucao: data.idExecucao,
+          geridTabId: aba.id,
+          modoTeste,
+          cpfAtual: caso.cpf,
+          nomeAtual: caso.nome,
+          aguardandoConfirmacao: true,
+          tentativasRetomada,
+          iniciadoEm: new Date().toISOString(),
+        });
+        await enviarHeartbeat(
+          apiUrl,
+          apiToken,
+          data.idExecucao,
+          'aguardando_confirmacao',
+          `Revise e confirme o requerimento de ${caso.nome} no GERID.`,
+        );
+        agendarVerificacaoConfirmacao();
+        sendLog(modoTeste
+          ? 'Revise e confirme no GERID. O protocolo deste caso de teste sera capturado automaticamente.'
+          : 'Revise e confirme no GERID. Depois do clique, o protocolo sera capturado e a fila continuara.');
         break;
       }
     }
@@ -291,6 +607,10 @@ async function retomarExecucaoPersistida() {
   if (isRunning) return;
   const ativa = dados[CHAVE_EXECUCAO_ATIVA];
   if (!ativa || !dados.apiUrl || !dados.apiToken) return;
+  if (ativa.aguardandoConfirmacao) {
+    void verificarConfirmacaoPendente(ativa.geridTabId);
+    return;
+  }
 
   isRunning = true;
   sendLog('Recuperei uma execução pendente. Retomando em segundo plano...');
@@ -313,7 +633,18 @@ chrome.runtime.onMessage.addListener((request) => {
     const modoTeste = request.modoTeste !== false;
     void chrome.storage.local
       .set({ apiUrl: request.apiUrl, apiToken: request.apiToken, modoTeste })
-      .then(() => processQueue(request.apiUrl, request.apiToken, modoTeste));
+      .then(async () => {
+        const salvo = await chrome.storage.local.get([CHAVE_EXECUCAO_ATIVA]);
+        if (salvo[CHAVE_EXECUCAO_ATIVA]?.aguardandoConfirmacao) {
+          isRunning = false;
+          await verificarConfirmacaoPendente(salvo[CHAVE_EXECUCAO_ATIVA].geridTabId);
+          return;
+        }
+        await processQueue(request.apiUrl, request.apiToken, modoTeste, undefined, 0, true);
+      });
+  }
+  if (request.action === 'open_auth') {
+    void abrirAutenticacao();
   }
 });
 
@@ -325,6 +656,30 @@ chrome.runtime.onStartup.addListener(() => {
   void retomarExecucaoPersistida();
 });
 chrome.alarms?.onAlarm.addListener((alarme) => {
-  if (alarme.name === ALARME_RETOMADA) void retomarExecucaoPersistida();
+  if (alarme.name === ALARME_CONFIRMACAO) {
+    void verificarConfirmacaoPendente();
+  } else if (alarme.name === ALARME_RETOMADA || alarme.name === ALARME_AUTENTICACAO) {
+    void retomarExecucaoPersistida();
+  }
+});
+
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (!info.url && info.status !== 'complete') return;
+  const estado = estadoDaAba({ ...tab, url: info.url || tab.url });
+  if (estado === EstadoAutenticacao.NECESSARIA) {
+    void atualizarEstadoAutenticacao(
+      estado,
+      'Conclua o SafeID e informe o codigo de 6 digitos do GERID.',
+      tabId,
+    );
+    return;
+  }
+  if (estado === EstadoAutenticacao.AUTENTICADO && info.status === 'complete') {
+    void atualizarEstadoAutenticacao(estado, 'Sessao do GERID pronta.', tabId)
+      .then(() => verificarConfirmacaoPendente(tabId))
+      .then((aguardandoConfirmacao) => {
+        if (!aguardandoConfirmacao) return retomarExecucaoPersistida();
+      });
+  }
 });
 void retomarExecucaoPersistida();

@@ -1,34 +1,47 @@
-GERID RPA AUTOMATOR — ATUALIZAÇÃO 1.0.3
+GERID RPA AUTOMATOR - ATUALIZACAO 1.2.0
 
-Esta versão corrige os pontos que poderiam interromper ou registrar
-incorretamente o preenchimento:
+O QUE ESTA VERSAO FAZ
 
-- seleciona serviço, estado civil, parentesco e demais comboboxes clicando na
-  opção visível do Gerid e confirma o valor exibido antes de avançar;
-- usa sempre "Solteiro" e "Não" conforme as regras definidas pelo escritório;
-- recupera o mesmo caso se o Gerid mudar de tela durante o preenchimento;
-- preserva a execução e agenda retomada automática em segundo plano;
-- só registra "revisão" quando a tela Confirmar foi realmente alcançada;
-- nunca confirma ou conclui o requerimento automaticamente.
+- prepara a fila diretamente pela extensao;
+- abre a autenticacao quando nao existe sessao do GERID;
+- preserva a fila durante SafeID e codigo de 6 digitos;
+- retoma o preenchimento quando a sessao autenticada volta;
+- para na tela Confirmar para revisao humana;
+- depois do clique humano, detecta e registra o protocolo real;
+- continua o proximo caso automaticamente quando o modo teste esta desligado;
+- nunca marca sucesso sem um numero de protocolo encontrado na tela do GERID.
 
-COMO ATUALIZAR
+COMO INSTALAR OU ATUALIZAR
 
-1. Extraia o arquivo ZIP.
-2. Abra chrome://extensions no Google Chrome.
-3. Remova ou desative a versão antiga do Gerid RPA Automator.
-4. Ative o Modo do desenvolvedor.
-5. Clique em "Carregar sem compactação".
-6. Selecione a pasta Gerid-RPA-Automator-v1.0.3 extraída do ZIP.
-7. Confirme que a versão exibida no Chrome é 1.0.3.
-8. Informe a mesma URL e a mesma chave configuradas no Coolify.
-9. Clique fora do campo da chave para salvar.
-10. Mantenha marcada a opção "Testar somente o primeiro caso da fila".
-11. Entre no Gerid, abra Requerimentos e clique em "Iniciar Protocolos".
+1. Abra chrome://extensions no Google Chrome.
+2. Ative o Modo do desenvolvedor.
+3. Remova ou desative a versao antiga do Gerid RPA Automator.
+4. Clique em "Carregar sem compactacao".
+5. Selecione esta pasta extensao-gerid.
+6. Confirme que a versao exibida e 1.2.0.
+7. Abra a extensao e expanda "Configuracao avancada".
+8. Informe a URL do Coolify e a chave RPA_EXTENSAO_TOKEN.
+9. Clique fora dos campos para salvar.
 
-IMPORTANTE
+PRIMEIRO TESTE
 
-- Mantenha a aba do Gerid aberta. É permitido navegar entre as telas do Gerid;
-  a extensão recuperará o caso se houver mudança durante o preenchimento.
-- A extensão para na tela Confirmar para revisão humana.
-- Não confirme nem conclua o requerimento sem revisar todos os dados.
-- Esta pasta não contém senhas, chaves nem dados de clientes.
+1. Deixe "Testar somente o primeiro caso da fila" marcado.
+2. Clique em "Preparar e iniciar".
+3. Autorize o certificado no SafeID e informe o MFA quando solicitado.
+4. Revise todos os dados e anexos na tela Confirmar do GERID.
+5. Confirme manualmente.
+6. Verifique no painel se o protocolo real foi registrado.
+
+OPERACAO DA FILA
+
+- Depois que o primeiro teste for validado, desmarque o modo teste.
+- A extensao preenche um caso e espera a revisao humana.
+- Ao confirmar, ela registra o protocolo e abre o proximo caso.
+- Se a sessao expirar, a fila fica pausada ate a nova autenticacao.
+- Mantenha a aba do GERID aberta durante a execucao.
+
+SEGURANCA
+
+- O SafeID e o MFA continuam sendo confirmados pelo titular.
+- A extensao nao confirma o requerimento no lugar do advogado.
+- Esta pasta nao contem senhas, chaves nem dados de clientes.

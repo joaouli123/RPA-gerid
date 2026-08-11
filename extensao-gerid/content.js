@@ -1152,6 +1152,28 @@
     }
   });
 
+  // src/detectarProtocolo.ts
+  function detectarProtocoloEmTexto(texto) {
+    const normalizado = String(texto || "").replace(/\s+/g, " ").trim();
+    const padroes = [
+      /(?:n[uú]mero\s+d[oe]\s+)?protocolo\s*(?:gerado)?\s*[:#-]?\s*([0-9][0-9.\/-]{7,30})/i,
+      /(?:n[uú]mero\s+d[oe]\s+)?requerimento\s*[:#-]\s*([0-9][0-9.\/-]{7,30})/i,
+      /(?:n[uú]mero\s+d[oe]\s+)?pedido\s*[:#-]\s*([0-9][0-9.\/-]{7,30})/i
+    ];
+    for (const padrao of padroes) {
+      const encontrado = normalizado.match(padrao)?.[1];
+      if (!encontrado) continue;
+      const digitos = encontrado.replace(/\D/g, "");
+      if (digitos.length >= 8 && digitos.length <= 25) return encontrado.replace(/[.,;:]+$/, "");
+    }
+    return null;
+  }
+  var init_detectarProtocolo = __esm({
+    "src/detectarProtocolo.ts"() {
+      "use strict";
+    }
+  });
+
   // src/index.ts
   var require_index = __commonJS({
     "src/index.ts"() {
@@ -1160,6 +1182,7 @@
       init_tiposGerid();
       init_mapaGerid();
       init_classificarPreenchimento();
+      init_detectarProtocolo();
       function logToBackground(message) {
         console.log(message);
         try {
@@ -1222,6 +1245,7 @@
           return { status: "erro", erro: errorMsg };
         }
       };
+      window.detectarProtocoloGerid = () => detectarProtocoloEmTexto(document.body?.innerText || "");
     }
   });
   require_index();

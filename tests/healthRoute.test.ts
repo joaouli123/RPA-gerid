@@ -9,7 +9,7 @@ describe('GET /api/health', () => {
     expect(resposta.status).toBe(200);
     expect(await resposta.json()).toEqual({
       status: 'ok',
-      release: 'gerid-rpa-1.0.3',
+      release: 'gerid-rpa-1.2.0',
     });
   });
 

@@ -25,6 +25,7 @@ import {
 import type {
   AcaoRevisao,
   CasoExecucao,
+  EstadoGerid,
   Execucao,
   ExecucaoAtual,
   OverridesConfig,
@@ -427,13 +428,34 @@ export async function atualizarStatusCaso(
   const caso = atual.casos.find((c) => c.cpf === cpf);
   if (!caso) return;
 
+  atual.ultimoSinalEm = new Date().toISOString();
   caso.status = status;
   if (status === 'erro' || status === 'revisao') {
+    caso.protocolo = undefined;
     caso.motivoErro = motivoErro;
+    if (status === 'revisao') atual.estadoGerid = 'revisao';
   } else if (status === 'sucesso') {
+    caso.motivoErro = undefined;
     caso.protocolo = protocolo;
   }
   await persistir();
+}
+
+/** Registra que a extensao continua ativa e informa a etapa atual do GERID. */
+export async function registrarSinalExtensao(
+  idExecucao: string,
+  estadoGerid: EstadoGerid,
+  detalheGerid?: string,
+): Promise<ExecucaoAtual | null> {
+  const estado = await carregarEstado();
+  const atual = estado.execucaoAtual;
+  if (!atual || atual.id !== idExecucao || atual.status !== 'rodando') return null;
+
+  atual.ultimoSinalEm = new Date().toISOString();
+  atual.estadoGerid = estadoGerid;
+  atual.detalheGerid = detalheGerid;
+  await persistir();
+  return structuredClone(atual);
 }
 
 /**
@@ -484,11 +506,9 @@ export async function getExecucaoAtual(): Promise<ExecucaoAtual | null> {
   return atual ? structuredClone(atual) : null;
 }
 
-/** Pausa entre casos na execução simulada (menor nos testes). */
 /**
- * Inicia uma execução REAL: abre o Gerid com Playwright e protocola os casos
- * prontos. Nada é simulado — se o robô não consegue protocolar, o caso é
- * marcado como ERRO com o motivo, nunca como sucesso.
+ * Inicia uma execucao real, consumida pela extensao no navegador autenticado
+ * do operador. Nenhum caso e marcado como sucesso sem protocolo do GERID.
  */
 export async function iniciarExecucao(): Promise<ExecucaoAtual> {
   const estado = await carregarEstado();
@@ -514,6 +534,8 @@ export async function iniciarExecucao(): Promise<ExecucaoAtual> {
   const atual: ExecucaoAtual = {
     id: `exec-${agora.getTime()}`,
     iniciadoEm: agora.toISOString(),
+    ultimoSinalEm: agora.toISOString(),
+    estadoGerid: 'aguardando_extensao',
     status: 'rodando',
     casos,
   };
@@ -526,9 +548,8 @@ export async function iniciarExecucao(): Promise<ExecucaoAtual> {
 }
 
 /**
- * Processa a execução com o robô REAL do Gerid.
- * Cada caso só vira "sucesso" se o Gerid devolver um número de protocolo.
- * Qualquer problema vira "erro" com o motivo — nunca sucesso falso.
+ * Mantem a execucao disponivel enquanto a extensao envia sinais de atividade.
+ * Se a extensao ou o navegador parar, a execucao expira de forma controlada.
  */
 async function processarExecucao(id: string): Promise<void> {
   // A execução é feita pela extensão no navegador do operador. Ainda assim,
@@ -541,8 +562,18 @@ async function processarExecucao(id: string): Promise<void> {
   );
   const prazoMs = Number.isFinite(bruto) && bruto > 0 ? bruto : 30 * 60 * 1000;
 
-  await new Promise<void>((resolve) => setTimeout(resolve, prazoMs));
-  await finalizarExecucao(id);
+  const intervaloMs = Math.max(10, Math.min(60_000, Math.floor(prazoMs / 2)));
+  while (true) {
+    await new Promise<void>((resolve) => setTimeout(resolve, intervaloMs));
+    const atual = await getExecucaoAtual();
+    if (!atual || atual.id !== id || atual.status !== 'rodando') return;
+
+    const referencia = Date.parse(atual.ultimoSinalEm ?? atual.iniciadoEm);
+    if (!Number.isFinite(referencia) || Date.now() - referencia >= prazoMs) {
+      await finalizarExecucao(id);
+      return;
+    }
+  }
 }
 
 /**

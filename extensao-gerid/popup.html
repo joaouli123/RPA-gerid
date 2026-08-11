@@ -21,6 +21,18 @@
     }
     .status-text { font-size: 14px; margin-bottom: 4px; }
     .status-count { font-size: 24px; font-weight: bold; color: #1f2937; }
+    .auth-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 10px;
+      margin-bottom: 10px;
+      font-size: 12px;
+    }
+    .auth-dot { width: 9px; height: 9px; border-radius: 50%; background: #d97706; flex: none; }
+    .auth-box.ok .auth-dot { background: #15803d; }
     button {
       width: 100%;
       padding: 10px;
@@ -35,8 +47,12 @@
     }
     button:hover:not(:disabled) { background: #1d4ed8; }
     button:disabled { background: #9ca3af; cursor: not-allowed; }
+    button.secondary { background: white; color: #1d4ed8; border: 1px solid #93c5fd; margin-bottom: 10px; }
+    button.secondary:hover:not(:disabled) { background: #eff6ff; }
     
     .config { margin-top: 16px; border-top: 1px solid #e5e7eb; padding-top: 12px; }
+    .config summary { cursor: pointer; font-size: 12px; font-weight: 600; color: #4b5563; }
+    .config-fields { margin-top: 12px; }
     .config label { display: block; font-size: 12px; margin-bottom: 4px; color: #6b7280; }
     .config input { width: 100%; padding: 6px; box-sizing: border-box; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px; }
     .config label + input { margin-bottom: 10px; }
@@ -63,11 +79,19 @@
     <div class="status-count" id="countLabel">-</div>
   </div>
 
-  <button id="btnStart" disabled>Iniciar Protocolos</button>
+  <div class="auth-box" id="authBox">
+    <span class="auth-dot"></span>
+    <span id="authLabel">Verificando sessão do GERID...</span>
+  </div>
+  <button class="secondary" id="btnAuth">Abrir autenticação</button>
+
+  <button id="btnStart" disabled>Preparar e iniciar</button>
 
   <div id="log">Aguardando...</div>
 
-  <div class="config">
+  <details class="config">
+    <summary>Configuração avançada</summary>
+    <div class="config-fields">
     <label for="apiUrl">URL do Sistema (Coolify ou Localhost):</label>
     <input type="text" id="apiUrl" value="https://vmkcogtpgc1dgd5ae6gjfz1n.179.198.98.63.sslip.io">
     <label for="apiToken">Chave da extensão:</label>
@@ -76,7 +100,8 @@
       <input type="checkbox" id="modoTeste" checked>
       Testar somente o primeiro caso da fila
     </label>
-  </div>
+    </div>
+  </details>
 
   <script src="popup.js"></script>
 </body>

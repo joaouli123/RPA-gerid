@@ -3,6 +3,7 @@ import { preencherRequerimento } from './preencherGerid';
 import { ErroGerid } from './tiposGerid';
 import { mapaGerid } from './mapaGerid';
 import { classificarPreenchimento } from './classificarPreenchimento';
+import { detectarProtocoloEmTexto } from './detectarProtocolo';
 
 function logToBackground(message: string) {
   console.log(message);
@@ -79,3 +80,7 @@ async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> 
     return { status: 'erro', erro: errorMsg };
   }
 };
+
+// A tela final pode ser renderizada sem trocar a URL da SPA. O background
+// consulta esta funcao depois que o operador confirma manualmente.
+(window as any).detectarProtocoloGerid = () => detectarProtocoloEmTexto(document.body?.innerText || '');

@@ -15,12 +15,25 @@ export interface CasoExecucao {
 
 export type StatusExecucao = 'ociosa' | 'rodando' | 'concluida' | 'erro';
 
+export type EstadoGerid =
+  | 'aguardando_extensao'
+  | 'autenticacao_necessaria'
+  | 'autenticado'
+  | 'processando'
+  | 'aguardando_confirmacao'
+  | 'revisao';
+
 /** Execução em andamento no servidor (consultada por polling). */
 export interface ExecucaoAtual {
   id: string;
   iniciadoEm: string;
   status: 'rodando' | 'concluida' | 'erro';
   casos: CasoExecucao[];
+  /** Ultimo contato da extensao. Impede expirar uma fila que continua viva. */
+  ultimoSinalEm?: string;
+  /** Etapa operacional atual no computador que acessa o GERID. */
+  estadoGerid?: EstadoGerid;
+  detalheGerid?: string;
 }
 
 export type AcaoRevisao = 'resolvido' | 'reprocessar';

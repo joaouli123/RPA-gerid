@@ -127,6 +127,31 @@ describe('execução', () => {
     expect(gravada?.erro).toBe(2);
   }, 90000);
 
+  it('persiste o heartbeat e o estado de autenticacao da extensao', async () => {
+    const inicial = await store.iniciarExecucao();
+    const antes = Date.parse(inicial.ultimoSinalEm as string);
+    const atualizada = await store.registrarSinalExtensao(
+      inicial.id,
+      'autenticacao_necessaria',
+      'Aguardando SafeID.',
+    );
+
+    expect(atualizada).toMatchObject({
+      id: inicial.id,
+      estadoGerid: 'autenticacao_necessaria',
+      detalheGerid: 'Aguardando SafeID.',
+    });
+    expect(Date.parse(atualizada?.ultimoSinalEm as string)).toBeGreaterThanOrEqual(antes);
+
+    const disco = await estadoNoDisco();
+    expect(disco.execucaoAtual).toMatchObject({
+      estadoGerid: 'autenticacao_necessaria',
+      detalheGerid: 'Aguardando SafeID.',
+    });
+
+    await store.finalizarExecucao(inicial.id);
+  });
+
   it('o histórico fica persistido em disco', async () => {
     const disco = await estadoNoDisco();
     expect(Array.isArray(disco.execucoes)).toBe(true);
