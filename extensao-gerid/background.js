@@ -156,10 +156,12 @@ async function baixarAnexos(apiUrl, apiToken, idExecucao, anexos) {
 }
 
 async function localizarAbaGerid(tabId) {
+  let abaPreferida;
   if (Number.isInteger(tabId)) {
     try {
       const tab = await chrome.tabs.get(tabId);
-      if (estadoDaAba(tab) !== EstadoAutenticacao.SEM_ABA) return tab;
+      if (estadoDaAba(tab) === EstadoAutenticacao.AUTENTICADO) return tab;
+      if (estadoDaAba(tab) !== EstadoAutenticacao.SEM_ABA) abaPreferida = tab;
     } catch {
       // A aba pode ter sido fechada; buscamos outra aberta abaixo.
     }
@@ -168,7 +170,16 @@ async function localizarAbaGerid(tabId) {
   const abas = await chrome.tabs.query({
     url: ['*://atendimento.inss.gov.br/*', 'https://geridinss.dataprev.gov.br/*'],
   });
-  const aba = abas.find((tab) => tab.active) || abas[0];
+  const abaAutenticada = abas.find(
+    (tab) => estadoDaAba(tab) === EstadoAutenticacao.AUTENTICADO,
+  );
+  if (abaAutenticada) return abaAutenticada;
+
+  const aba = abaPreferida
+    || abas.find((tab) => tab.active && abaDoPortalPat(tab))
+    || abas.find((tab) => abaDoPortalPat(tab))
+    || abas.find((tab) => tab.active)
+    || abas[0];
   if (!aba?.id) throw new Error('Nenhuma aba do GERID esta aberta.');
   return aba;
 }
@@ -345,7 +356,7 @@ async function obterEstadoNaAba(tabId) {
 async function garantirContentScript(tabId) {
   const verificacao = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.1-20260811.6',
+    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.1-20260811.7',
   });
   if (!verificacao[0]?.result) {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });

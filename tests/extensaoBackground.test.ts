@@ -278,12 +278,13 @@ describe('extensão Gerid — service worker', () => {
     const heartbeats: any[] = [];
     const statusEnviados: any[] = [];
     const alarmesCriados: string[] = [];
-    let aba = {
+    const abaCas = {
       id: 91,
       active: true,
       status: 'complete',
       url: 'https://geridinss.dataprev.gov.br/cas/login',
     };
+    let abas = [abaCas];
 
     const chrome = {
       runtime: {
@@ -309,10 +310,10 @@ describe('extensão Gerid — service worker', () => {
         },
       },
       tabs: {
-        query: async () => [aba],
-        get: async () => aba,
-        create: async () => aba,
-        update: async () => aba,
+        query: async () => abas,
+        get: async (id: number) => abas.find((aba) => aba.id === id),
+        create: async () => abaCas,
+        update: async () => abaCas,
         reload: async () => undefined,
         onUpdated: {
           addListener: (fn: (id: number, info: any, tab: any) => void) => listenersAbas.push(fn),
@@ -382,12 +383,15 @@ describe('extensão Gerid — service worker', () => {
     expect(alarmesCriados).toContain('aguardarAutenticacaoGerid');
     expect(statusEnviados).toHaveLength(0);
 
-    aba = {
-      ...aba,
+    const abaPat = {
+      ...abaCas,
+      id: 92,
+      active: false,
       url: 'https://atendimento.inss.gov.br/requerimentos',
     };
+    abas = [abaCas, abaPat];
     for (const listener of listenersAbas) {
-      listener(aba.id, { status: 'complete', url: aba.url }, aba);
+      listener(abaPat.id, { status: 'complete', url: abaPat.url }, abaPat);
     }
 
     const limiteResultado = Date.now() + 2_000;
@@ -398,6 +402,7 @@ describe('extensão Gerid — service worker', () => {
     expect(heartbeats.some((item) => item.estadoGerid === 'autenticado')).toBe(true);
     expect(storage.execucaoAtivaGerid).toMatchObject({
       idExecucao: 'execucao-auth',
+      geridTabId: 92,
       aguardandoConfirmacao: true,
     });
   });
