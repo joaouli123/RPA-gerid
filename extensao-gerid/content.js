@@ -79,7 +79,7 @@
               if (el.tagName === "INPUT" && el.type === "file") return el;
               if (el.offsetParent !== null) return el;
             }
-            await new Promise((r) => setTimeout(r, 100));
+            await new Promise((r) => setTimeout(r, 25));
           }
           throw new Error(`Timeout waiting for selector: ${this.selector}`);
         }
@@ -91,7 +91,7 @@
             const anexado = Boolean(elemento?.isConnected);
             const visivel2 = Boolean(elemento && estaInteragivel(elemento));
             if (estado === "visible" && visivel2 || estado === "hidden" && !visivel2 || estado === "attached" && anexado || estado === "detached" && !anexado) return;
-            await new Promise((resolve) => setTimeout(resolve, 100));
+            await new Promise((resolve) => setTimeout(resolve, 25));
           }
           throw new Error(`Timeout waiting for selector (${estado}): ${this.selector}`);
         }
@@ -173,7 +173,7 @@
           }
           const limite = Date.now() + 1500;
           while (!el.checked && Date.now() < limite) {
-            await new Promise((resolve) => setTimeout(resolve, 50));
+            await new Promise((resolve) => setTimeout(resolve, 25));
           }
           if (!el.checked) {
             throw new Error(`O GERID n\xE3o confirmou a marca\xE7\xE3o de ${this.selector}.`);
@@ -286,7 +286,7 @@
           return l;
         }
         async waitForLoadState() {
-          await new Promise((r) => setTimeout(r, 1e3));
+          return;
         }
       };
     }
@@ -731,20 +731,40 @@
   });
 
   // src/preencherGerid.ts
-  async function preencherRequerimento(page, caso, opcoes) {
+  async function executarEtapa(etapa, executar, relatarTempo) {
+    const inicio = performance.now();
+    try {
+      return await executar();
+    } finally {
+      relatarTempo(etapa, Math.round(performance.now() - inicio));
+    }
+  }
+  async function preencherRequerimento(page, caso, opcoes, relatarTempo = () => void 0) {
     const avisos = [];
-    await passo1SelecionarServico(page);
-    await passo2InformarRequerente(page, caso);
-    await passo3AutorizacaoCadUnico(page);
-    await passo4GrupoFamiliar(page, caso, avisos);
-    await passo5e6Perguntas(page, avisos);
-    if (!await passo7DadosRequerente(page, caso, opcoes, avisos)) {
+    await executarEtapa("1 - servico", () => passo1SelecionarServico(page), relatarTempo);
+    await executarEtapa("2 - requerente", () => passo2InformarRequerente(page, caso), relatarTempo);
+    await executarEtapa("3 - CadUnico", () => passo3AutorizacaoCadUnico(page), relatarTempo);
+    await executarEtapa("4 - grupo familiar", () => passo4GrupoFamiliar(page, caso, avisos), relatarTempo);
+    await executarEtapa("5/6 - declaracoes", () => passo5e6Perguntas(page, avisos), relatarTempo);
+    if (!await executarEtapa(
+      "7 - dados e anexos",
+      () => passo7DadosRequerente(page, caso, opcoes, avisos),
+      relatarTempo
+    )) {
       return { pronto: false, telaAtual: "Dados do Requerente", avisos };
     }
-    if (!await passo8SelecionarUnidade(page, caso, avisos)) {
+    if (!await executarEtapa(
+      "8 - unidade",
+      () => passo8SelecionarUnidade(page, caso, avisos),
+      relatarTempo
+    )) {
       return { pronto: false, telaAtual: "Selecionar Unidade", avisos };
     }
-    if (!await passo9OrgaoPagador(page, caso, avisos)) {
+    if (!await executarEtapa(
+      "9 - orgao pagador",
+      () => passo9OrgaoPagador(page, caso, avisos),
+      relatarTempo
+    )) {
       return { pronto: false, telaAtual: "\xD3rg\xE3o Pagador", avisos };
     }
     await esperarTela(page, /Confirmar|Declaro que li/i);
@@ -771,14 +791,13 @@
         while (Date.now() < limiteMudanca) {
           const depois = detectarEstadoGerid();
           if (depois.etapa !== etapaAtual && depois.etapa !== "desconhecido") {
-            await page.waitForLoadState("networkidle").catch(() => void 0);
             return;
           }
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 25));
         }
         break;
       }
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
     const contexto = resumirDiagnosticoGerid(capturarDiagnosticoGerid());
     throw new ErroGerid(
@@ -828,23 +847,23 @@
       const texto = await rotulo.innerText().catch(() => "");
       if (normalizar(texto) === alvo) {
         await ativarOpcaoCombobox(rotulo).catch(() => void 0);
-        if (await aguardarValorCombobox(combo, alvo)) return true;
+        if (await aguardarValorCombobox(combo, alvo, 150)) return true;
         const rid = await rotulo.getAttribute("for");
         if (rid) {
           const radio = page.locator(`[id="${id}-itens"] input[id="${cssEscape(rid)}"]`).first();
           await radio.check({ force: true }).catch(() => void 0);
-          if (await aguardarValorCombobox(combo, alvo)) return true;
+          if (await aguardarValorCombobox(combo, alvo, 2e3)) return true;
         }
         return false;
       }
     }
     return false;
   }
-  async function aguardarValorCombobox(combo, valorEsperado) {
-    const limite = Date.now() + 2e3;
+  async function aguardarValorCombobox(combo, valorEsperado, timeoutMs) {
+    const limite = Date.now() + timeoutMs;
     while (Date.now() < limite) {
       if (normalizar(await combo.inputValue().catch(() => "")) === valorEsperado) return true;
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
     return false;
   }
@@ -936,7 +955,7 @@
         await avancar(page, "passo_1");
         return;
       }
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
     const radio = visivel(page.locator(
       `${mapaGerid.passo1.containerOpcoes} input[id="${SERVICO_BPC_PCD.id}"]`
@@ -972,7 +991,7 @@
     const inicioEspera = Date.now();
     while (Date.now() - inicioEspera < 1e4) {
       if ((await nome.inputValue().catch(() => "")).trim()) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
     if (!(await nome.inputValue().catch(() => "")).trim()) {
       throw new ErroGerid(
@@ -1237,7 +1256,7 @@
       const limiteConfirmacao = Date.now() + 3e3;
       while (!confirmou && Date.now() < limiteConfirmacao) {
         confirmou = await contatoExisteNoDialogo(page, tipo, valor);
-        if (!confirmou) await new Promise((resolve) => setTimeout(resolve, 100));
+        if (!confirmou) await new Promise((resolve) => setTimeout(resolve, 25));
       }
       if (!confirmou) throw new Error(`O GERID n\xE3o exibiu o contato ${tipo} depois de adicionar.`);
       await visivel(page.getByRole("button", { name: /Fechar/i })).first().click();
@@ -1330,7 +1349,6 @@
       avisos.push(`O CEP digitado n\xE3o bateu (esperado ${caso.cliente.cep}, ficou "${digitado}").`);
     }
     await visivel(page.getByRole("button", { name: /^Buscar$/i })).first().click();
-    await page.waitForLoadState("networkidle").catch(() => void 0);
     const ok = await selecionarUnidadeDeAtendimento(page, caso, avisos);
     if (ok) await avancar(page, "passo_8");
     return ok;
@@ -1347,9 +1365,9 @@
       avisos.push(`Nao encontrei o municipio "${municipio}" na lista de orgao pagador.`);
       return false;
     }
-    await page.waitForLoadState("networkidle").catch(() => void 0);
     const radios = visivel(page.locator(mapaGerid.passo9.radioOrgaoPagador));
     const primeiro = radios.first();
+    await primeiro.waitFor({ state: "visible", timeout: 1e4 }).catch(() => void 0);
     if (!await primeiro.count().catch(() => 0)) {
       avisos.push(`Nenhum orgao pagador foi listado para o municipio "${municipio}".`);
       return false;
@@ -1396,7 +1414,7 @@
     const limiteSelecao = Date.now() + 3e3;
     while (!selecionou && Date.now() < limiteSelecao) {
       selecionou = (await card.getAttribute("class"))?.split(/\s+/).includes("selected") ?? false;
-      if (!selecionou) await new Promise((resolve) => setTimeout(resolve, 100));
+      if (!selecionou) await new Promise((resolve) => setTimeout(resolve, 25));
     }
     if (!selecionou) {
       avisos.push(`Nao consegui selecionar a unidade de atendimento "${escolhida.nome}".`);
@@ -1499,7 +1517,7 @@
             const papel = selects[1];
             if (abrangencia && !abrangencia.value) {
               selecionarOpcaoNativa(abrangencia, (opcao) => Boolean(opcao.value));
-              await new Promise((resolve) => setTimeout(resolve, 300));
+              await new Promise((resolve) => setTimeout(resolve, 100));
               continue;
             }
             if (papel && textoNormalizado(papel.selectedOptions[0]?.text) !== "entidade_conveniada_oab") {
@@ -1508,10 +1526,10 @@
                 (opcao) => textoNormalizado(opcao.text).includes("entidade_conveniada_oab")
               );
               if (!selecionou) {
-                await new Promise((resolve) => setTimeout(resolve, 200));
+                await new Promise((resolve) => setTimeout(resolve, 100));
                 continue;
               }
-              await new Promise((resolve) => setTimeout(resolve, 300));
+              await new Promise((resolve) => setTimeout(resolve, 100));
             }
             const autorizar = Array.from(document.querySelectorAll("button")).find((botao) => textoNormalizado(botao.innerText) === "autorizo");
             if (autorizar && !autorizar.disabled) {
@@ -1538,7 +1556,7 @@
           if (/^\/(tarefas|requerimentos)(?:\/|$)/.test(window.location.pathname)) {
             return { estado: "livre", mensagem: "Portal do GERID pronto." };
           }
-          await new Promise((resolve) => setTimeout(resolve, 150));
+          await new Promise((resolve) => setTimeout(resolve, 50));
         }
         return {
           estado: "aguardando",
@@ -1561,7 +1579,7 @@
             await seletorServico.waitFor({ state: "visible", timeout: 15e3 });
             return;
           }
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 25));
         }
         throw new Error(
           'N\xE3o encontrei a tela de servi\xE7os nem o bot\xE3o "Novo Requerimento". Abra a lista de requerimentos do Gerid e tente novamente.'
@@ -1585,14 +1603,23 @@
             }))
           };
           await abrirNovoRequerimentoSeNecessario(page);
-          const res = await preencherRequerimento(page, caso.dados, opcoes);
+          const inicioPreenchimento = performance.now();
+          const temposEtapas = [];
+          const res = await preencherRequerimento(page, caso.dados, opcoes, (etapa, duracaoMs) => {
+            temposEtapas.push({ etapa, duracaoMs });
+            logToBackground(`[TEMPO] ${etapa}: ${(duracaoMs / 1e3).toFixed(1)}s`);
+          });
+          const duracaoTotalMs = Math.round(performance.now() - inicioPreenchimento);
+          logToBackground(
+            `[TEMPO] preenchimento total: ${(duracaoTotalMs / 1e3).toFixed(1)}s`
+          );
           const resultado = classificarPreenchimento(res);
           if (resultado.status === "revisao") {
             logToBackground(`[ROB\xD4 FINALIZADO] Preenchido para revis\xE3o humana.`);
-            return resultado;
+            return { ...resultado, metricas: { duracaoTotalMs, etapas: temposEtapas } };
           } else {
             logToBackground(`[ROB\xD4 FINALIZADO] Falha: ${resultado.erro}`);
-            return resultado;
+            return { ...resultado, metricas: { duracaoTotalMs, etapas: temposEtapas } };
           }
         } catch (e) {
           const errorMsg = e instanceof Error ? e.message : "Erro interno no rob\xF4";

@@ -77,7 +77,7 @@ class MockLocator {
         if (el.tagName === 'INPUT' && (el as HTMLInputElement).type === 'file') return el;
         if (el.offsetParent !== null) return el;
       }
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 25));
     }
     throw new Error(`Timeout waiting for selector: ${this.selector}`);
   }
@@ -95,7 +95,7 @@ class MockLocator {
         (estado === 'attached' && anexado) ||
         (estado === 'detached' && !anexado)
       ) return;
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
     throw new Error(`Timeout waiting for selector (${estado}): ${this.selector}`);
   }
@@ -202,7 +202,7 @@ class MockLocator {
 
     const limite = Date.now() + 1_500;
     while (!el.checked && Date.now() < limite) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
     if (!el.checked) {
       throw new Error(`O GERID não confirmou a marcação de ${this.selector}.`);
@@ -341,7 +341,8 @@ export class MockPage {
   }
 
   async waitForLoadState() {
-    await new Promise(r => setTimeout(r, 1000));
+    // Cada acao aguarda o elemento ou o estado real de destino da SPA.
+    return;
   }
 }
 

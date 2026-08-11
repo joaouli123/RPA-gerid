@@ -60,29 +60,57 @@ export interface ResultadoPreenchimento {
   avisos: string[];
 }
 
+export type RelatarTempoEtapa = (etapa: string, duracaoMs: number) => void;
+
+async function executarEtapa<T>(
+  etapa: string,
+  executar: () => Promise<T>,
+  relatarTempo: RelatarTempoEtapa,
+): Promise<T> {
+  const inicio = performance.now();
+  try {
+    return await executar();
+  } finally {
+    relatarTempo(etapa, Math.round(performance.now() - inicio));
+  }
+}
+
 export async function preencherRequerimento(
   page: Page,
   caso: CasoParaProtocolar,
   opcoes: OpcoesPreenchimento,
+  relatarTempo: RelatarTempoEtapa = () => undefined,
 ): Promise<ResultadoPreenchimento> {
   const avisos: string[] = [];
 
-  await passo1SelecionarServico(page);
-  await passo2InformarRequerente(page, caso);
-  await passo3AutorizacaoCadUnico(page);
-  await passo4GrupoFamiliar(page, caso, avisos);
-  await passo5e6Perguntas(page, avisos);
-  if (!(await passo7DadosRequerente(page, caso, opcoes, avisos))) {
+  await executarEtapa('1 - servico', () => passo1SelecionarServico(page), relatarTempo);
+  await executarEtapa('2 - requerente', () => passo2InformarRequerente(page, caso), relatarTempo);
+  await executarEtapa('3 - CadUnico', () => passo3AutorizacaoCadUnico(page), relatarTempo);
+  await executarEtapa('4 - grupo familiar', () => passo4GrupoFamiliar(page, caso, avisos), relatarTempo);
+  await executarEtapa('5/6 - declaracoes', () => passo5e6Perguntas(page, avisos), relatarTempo);
+  if (!(await executarEtapa(
+    '7 - dados e anexos',
+    () => passo7DadosRequerente(page, caso, opcoes, avisos),
+    relatarTempo,
+  ))) {
     return { pronto: false, telaAtual: 'Dados do Requerente', avisos };
   }
 
   // As etapas 8 e 9 usam os componentes reais do GERID: cards `.unidade` e
   // municipio + radio de orgao pagador. Se o portal mudar esses contratos, o
   // robo para na etapa afetada em vez de avancar com um campo vazio.
-  if (!(await passo8SelecionarUnidade(page, caso, avisos))) {
+  if (!(await executarEtapa(
+    '8 - unidade',
+    () => passo8SelecionarUnidade(page, caso, avisos),
+    relatarTempo,
+  ))) {
     return { pronto: false, telaAtual: 'Selecionar Unidade', avisos };
   }
-  if (!(await passo9OrgaoPagador(page, caso, avisos))) {
+  if (!(await executarEtapa(
+    '9 - orgao pagador',
+    () => passo9OrgaoPagador(page, caso, avisos),
+    relatarTempo,
+  ))) {
     return { pronto: false, telaAtual: 'Órgão Pagador', avisos };
   }
 
@@ -125,14 +153,13 @@ async function avancar(page: Page, etapaAtual: EtapaGerid): Promise<void> {
       while (Date.now() < limiteMudanca) {
         const depois = detectarEstadoGerid();
         if (depois.etapa !== etapaAtual && depois.etapa !== 'desconhecido') {
-          await page.waitForLoadState('networkidle').catch(() => undefined);
           return;
         }
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 25));
       }
       break;
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
   const contexto = resumirDiagnosticoGerid(capturarDiagnosticoGerid());
   throw new ErroGerid(
@@ -211,7 +238,7 @@ async function escolherNoCombobox(
 
     if (normalizar(texto) === alvo) {
       await ativarOpcaoCombobox(rotulo).catch(() => undefined);
-      if (await aguardarValorCombobox(combo, alvo)) return true;
+      if (await aguardarValorCombobox(combo, alvo, 150)) return true;
 
       const rid = await rotulo.getAttribute('for');
       if (rid) {
@@ -219,7 +246,7 @@ async function escolherNoCombobox(
           .locator(`[id="${id}-itens"] input[id="${cssEscape(rid)}"]`)
           .first();
         await radio.check({ force: true }).catch(() => undefined);
-        if (await aguardarValorCombobox(combo, alvo)) return true;
+        if (await aguardarValorCombobox(combo, alvo, 2_000)) return true;
       }
       return false;
     }
@@ -227,11 +254,15 @@ async function escolherNoCombobox(
   return false;
 }
 
-async function aguardarValorCombobox(combo: Locator, valorEsperado: string): Promise<boolean> {
-  const limite = Date.now() + 2_000;
+async function aguardarValorCombobox(
+  combo: Locator,
+  valorEsperado: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  const limite = Date.now() + timeoutMs;
   while (Date.now() < limite) {
     if (normalizar(await combo.inputValue().catch(() => '')) === valorEsperado) return true;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
   return false;
 }
@@ -372,7 +403,7 @@ async function passo1SelecionarServico(page: Page): Promise<void> {
       await avancar(page, 'passo_1');
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
   // Compatibilidade com a versão anterior do componente, onde o rádio era
@@ -423,7 +454,7 @@ async function passo2InformarRequerente(page: Page, caso: CasoParaProtocolar): P
   const inicioEspera = Date.now();
   while (Date.now() - inicioEspera < 10_000) {
     if ((await nome.inputValue().catch(() => '')).trim()) break;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
   if (!(await nome.inputValue().catch(() => '')).trim()) {
     throw new ErroGerid(
@@ -805,7 +836,7 @@ async function adicionarContato(
     const limiteConfirmacao = Date.now() + 3_000;
     while (!confirmou && Date.now() < limiteConfirmacao) {
       confirmou = await contatoExisteNoDialogo(page, tipo, valor);
-      if (!confirmou) await new Promise((resolve) => setTimeout(resolve, 100));
+      if (!confirmou) await new Promise((resolve) => setTimeout(resolve, 25));
     }
     if (!confirmou) throw new Error(`O GERID não exibiu o contato ${tipo} depois de adicionar.`);
 
@@ -954,8 +985,6 @@ async function passo8SelecionarUnidade(
   }
 
   await visivel(page.getByRole('button', { name: /^Buscar$/i })).first().click();
-  await page.waitForLoadState('networkidle').catch(() => undefined);
-
   const ok = await selecionarUnidadeDeAtendimento(page, caso, avisos);
   if (ok) await avancar(page, 'passo_8');
   return ok;
@@ -979,9 +1008,9 @@ async function passo9OrgaoPagador(
     return false;
   }
 
-  await page.waitForLoadState('networkidle').catch(() => undefined);
   const radios = visivel(page.locator(mapaGerid.passo9.radioOrgaoPagador));
   const primeiro = radios.first();
+  await primeiro.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => undefined);
   if (!(await primeiro.count().catch(() => 0))) {
     avisos.push(`Nenhum orgao pagador foi listado para o municipio "${municipio}".`);
     return false;
@@ -1046,7 +1075,7 @@ async function selecionarUnidadeDeAtendimento(
   const limiteSelecao = Date.now() + 3_000;
   while (!selecionou && Date.now() < limiteSelecao) {
     selecionou = (await card.getAttribute('class'))?.split(/\s+/).includes('selected') ?? false;
-    if (!selecionou) await new Promise((resolve) => setTimeout(resolve, 100));
+    if (!selecionou) await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
   if (!selecionou) {

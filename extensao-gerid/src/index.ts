@@ -58,7 +58,7 @@ async function resolverBloqueiosConhecidosGerid() {
 
       if (abrangencia && !abrangencia.value) {
         selecionarOpcaoNativa(abrangencia, (opcao) => Boolean(opcao.value));
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, 100));
         continue;
       }
 
@@ -68,10 +68,10 @@ async function resolverBloqueiosConhecidosGerid() {
           (opcao) => textoNormalizado(opcao.text).includes('entidade_conveniada_oab'),
         );
         if (!selecionou) {
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          await new Promise((resolve) => setTimeout(resolve, 100));
           continue;
         }
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
 
       const autorizar = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
@@ -108,7 +108,7 @@ async function resolverBloqueiosConhecidosGerid() {
       return { estado: 'livre', mensagem: 'Portal do GERID pronto.' };
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
 
   return {
@@ -138,7 +138,7 @@ async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> 
       await seletorServico.waitFor({ state: 'visible', timeout: 15_000 });
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
   throw new Error(
@@ -169,15 +169,24 @@ async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> 
 
     await abrirNovoRequerimentoSeNecessario(page);
 
-    const res = await preencherRequerimento(page, caso.dados, opcoes);
+    const inicioPreenchimento = performance.now();
+    const temposEtapas: Array<{ etapa: string; duracaoMs: number }> = [];
+    const res = await preencherRequerimento(page, caso.dados, opcoes, (etapa, duracaoMs) => {
+      temposEtapas.push({ etapa, duracaoMs });
+      logToBackground(`[TEMPO] ${etapa}: ${(duracaoMs / 1000).toFixed(1)}s`);
+    });
+    const duracaoTotalMs = Math.round(performance.now() - inicioPreenchimento);
+    logToBackground(
+      `[TEMPO] preenchimento total: ${(duracaoTotalMs / 1000).toFixed(1)}s`,
+    );
     
     const resultado = classificarPreenchimento(res);
     if (resultado.status === 'revisao') {
       logToBackground(`[ROBÔ FINALIZADO] Preenchido para revisão humana.`);
-      return resultado;
+      return { ...resultado, metricas: { duracaoTotalMs, etapas: temposEtapas } };
     } else {
       logToBackground(`[ROBÔ FINALIZADO] Falha: ${resultado.erro}`);
-      return resultado;
+      return { ...resultado, metricas: { duracaoTotalMs, etapas: temposEtapas } };
     }
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : 'Erro interno no robô';

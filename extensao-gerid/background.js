@@ -83,11 +83,11 @@ async function avisarAutenticacaoNecessaria() {
 }
 
 function agendarRetomadaAutenticacao() {
-  chrome.alarms?.create?.(ALARME_AUTENTICACAO, { delayInMinutes: 0.5 });
+  chrome.alarms?.create?.(ALARME_AUTENTICACAO, { delayInMinutes: 0.1 });
 }
 
 function agendarVerificacaoConfirmacao() {
-  chrome.alarms?.create?.(ALARME_CONFIRMACAO, { delayInMinutes: 0.5 });
+  chrome.alarms?.create?.(ALARME_CONFIRMACAO, { delayInMinutes: 0.1 });
 }
 
 function headersAutorizacao(apiToken, json = false) {
@@ -130,18 +130,28 @@ function paraBase64(buffer) {
 
 async function baixarAnexos(apiUrl, apiToken, idExecucao, anexos) {
   const base = apiUrl.replace(/\/$/, '');
-  const baixados = [];
-  for (const anexo of anexos || []) {
-    const url = `${base}/api/ext/arquivo?execucao=${encodeURIComponent(idExecucao)}&id=${encodeURIComponent(anexo.id)}`;
-    const res = await buscarComTimeout(url, { headers: headersAutorizacao(apiToken) }, 90_000);
-    if (!res.ok) throw new Error(`Não foi possível baixar "${anexo.nome}" (HTTP ${res.status}).`);
-    baixados.push({
-      tipo: anexo.tipo,
-      nome: anexo.nome,
-      mimeType: anexo.mimeType,
-      base64: paraBase64(await res.arrayBuffer()),
-    });
+  const itens = anexos || [];
+  const baixados = new Array(itens.length);
+  let proximoIndice = 0;
+
+  async function baixarProximo() {
+    while (proximoIndice < itens.length) {
+      const indice = proximoIndice++;
+      const anexo = itens[indice];
+      const url = `${base}/api/ext/arquivo?execucao=${encodeURIComponent(idExecucao)}&id=${encodeURIComponent(anexo.id)}`;
+      const res = await buscarComTimeout(url, { headers: headersAutorizacao(apiToken) }, 90_000);
+      if (!res.ok) throw new Error(`Não foi possível baixar "${anexo.nome}" (HTTP ${res.status}).`);
+      baixados[indice] = {
+        tipo: anexo.tipo,
+        nome: anexo.nome,
+        mimeType: anexo.mimeType,
+        base64: paraBase64(await res.arrayBuffer()),
+      };
+    }
   }
+
+  const concorrencia = Math.min(4, itens.length);
+  await Promise.all(Array.from({ length: concorrencia }, () => baixarProximo()));
   return baixados;
 }
 
@@ -276,7 +286,7 @@ async function resolverBloqueiosPortal(tabId) {
     } catch {
       // O clique pode destruir o frame durante a navegacao; reavaliamos a aba.
     }
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
 }
 
@@ -372,7 +382,6 @@ async function executarCasoNoGerid(tabId, casoComAnexos) {
           target: { tabId: abaId },
           files: ['content.js'],
         });
-        await new Promise((resolve) => setTimeout(resolve, 500));
       }
 
       const resultados = await chrome.scripting.executeScript({

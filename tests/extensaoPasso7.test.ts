@@ -151,10 +151,16 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
             { tipo: 'DOCUMENTOS_PESSOAIS', nome: 'documentos-2.pdf', mimeType: 'application/pdf', base64: 'JVBERi0xLjQK' },
           ],
         };
+      const inicioFluxo = Date.now();
       const resultado = await pagina.evaluate((entrada) =>
         (window as any).iniciarProcessamento(entrada), caso,
       );
+      const duracaoFluxo = Date.now() - inicioFluxo;
       expect(resultado, JSON.stringify(resultado)).toMatchObject({ status: 'revisao' });
+      expect(
+        duracaoFluxo,
+        `Fluxo bem-sucedido levou ${duracaoFluxo}ms. ${JSON.stringify(resultado.metricas)}`,
+      ).toBeLessThan(5_000);
 
       await pagina.waitForFunction(() => {
         const contatos = (window as any).__contatos;

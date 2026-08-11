@@ -10,6 +10,8 @@ describe('extensão Gerid — service worker', () => {
     const statusEnviados: any[] = [];
     const scriptsExecutados: any[] = [];
     const urlsAtualizadas: string[] = [];
+    let downloadsAtivos = 0;
+    let maxDownloadsAtivos = 0;
     let filaPreparada = false;
     let aoAtualizarAba: ((id: number, info: any, tab: any) => void) | undefined;
 
@@ -66,7 +68,12 @@ describe('extensão Gerid — service worker', () => {
               cpf: '12345678901',
               dados: { cliente: { cpf: '12345678901' }, grupoFamiliar: { integrantes: [] } },
               configuracao: { procuradorCpf: '00000000000', telefonePadrao: '', emailEscritorio: '' },
-              anexos: [{ id: 'arquivo-1', nome: 'documento.pdf', mimeType: 'application/pdf', tipo: 'DOCUMENTOS_PESSOAIS' }],
+              anexos: Array.from({ length: 5 }, (_, indice) => ({
+                id: `arquivo-${indice + 1}`,
+                nome: `documento-${indice + 1}.pdf`,
+                mimeType: 'application/pdf',
+                tipo: 'DOCUMENTOS_PESSOAIS',
+              })),
             }],
           }) : ({ sucesso: true, idExecucao: null, casos: [] }),
         };
@@ -76,6 +83,10 @@ describe('extensão Gerid — service worker', () => {
         return { ok: true, json: async () => ({ sucesso: true, idExecucao: 'execucao-teste', total: 1 }) };
       }
       if (url.includes('/api/ext/arquivo')) {
+        downloadsAtivos++;
+        maxDownloadsAtivos = Math.max(maxDownloadsAtivos, downloadsAtivos);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        downloadsAtivos--;
         return { ok: true, arrayBuffer: async () => Uint8Array.from([37, 80, 68, 70]).buffer };
       }
       if (url.endsWith('/api/ext/status')) {
@@ -119,10 +130,13 @@ describe('extensão Gerid — service worker', () => {
     });
     expect(scriptsExecutados.some((execucao) => execucao.target?.tabId === 77 && execucao.args)).toBe(true);
     expect(scriptsExecutados.find((execucao) => execucao.args)?.args[0].anexos[0]).toMatchObject({
-      nome: 'documento.pdf',
+      nome: 'documento-1.pdf',
       mimeType: 'application/pdf',
       base64: 'JVBERg==',
     });
+    expect(scriptsExecutados.find((execucao) => execucao.args)?.args[0].anexos.map((item: any) => item.nome))
+      .toEqual(Array.from({ length: 5 }, (_, indice) => `documento-${indice + 1}.pdf`));
+    expect(maxDownloadsAtivos).toBe(4);
     expect(urlsAtualizadas).toEqual([]);
     expect(filaPreparada).toBe(true);
     expect(storage.execucaoAtivaGerid).toMatchObject({
