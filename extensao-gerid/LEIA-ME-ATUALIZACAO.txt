@@ -1,4 +1,4 @@
-GERID RPA AUTOMATOR - VERSAO ESTAVEL 1.5.7
+GERID RPA AUTOMATOR - VERSAO ESTAVEL 1.6.0
 
 PRINCIPAIS GARANTIAS
 
@@ -7,7 +7,11 @@ PRINCIPAIS GARANTIAS
 - seleciona automaticamente abrangencia e papel no LOGIN - PAT;
 - confirma somente o aviso informativo do certificado A3;
 - nunca confirma o requerimento final no lugar do operador;
-- preenche campos React pelo evento nativo esperado pelo GERID;
+- preenche os selects pelo onChange real do componente React/Redux do GERID;
+- reconhece corretamente rotulos visuais duplicados por acessibilidade;
+- preenche parentesco e estado civil de cada integrante pelo CPF da linha;
+- limita Adicionar e Fechar ao modal de contatos e confirma cada inclusao na tabela;
+- nao usa a permissao chrome.debugger nem disputa o controle do navegador;
 - reconhece explicitamente autenticacao, lista, passos 1 a 10 e comprovante;
 - valida a mudanca real de etapa depois de cada comando;
 - identifica perguntas obrigatorias novas e para com diagnostico seguro;

@@ -82,9 +82,9 @@ describe('parentesco (planilha -> grupos do GERID)', () => {
     expect(mapearParentesco('Irmão(ã)')).toEqual({ grupo: 'Irmão / Irmã', confirmado: true });
   });
 
-  it('cônjuge/filho/avô resolvem, mas ficam marcados para conferir', () => {
+  it('filho usa a opção oficial; cônjuge e avô ficam marcados para conferir', () => {
     expect(mapearParentesco('cônjuge').confirmado).toBe(false);
-    expect(mapearParentesco('filho').grupo).toBeTruthy();
+    expect(mapearParentesco('filho')).toEqual({ grupo: 'Filho(a)', confirmado: true });
     expect(mapearParentesco('avó').confirmado).toBe(false);
   });
 

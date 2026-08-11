@@ -48,10 +48,10 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
         <section id="passo7" hidden>
           <h2>Interessados</h2><h3>Dados Adicionais</h3>
           <button id="editar-contatos" aria-label="Clique para editar contatos do interessado">Adicionar</button>
-          <div id="dialog-contatos" role="dialog">
+          <div id="contatos" role="dialog">
             <h1>Contatos</h1>
             ${combo('selectTipoContato', ['Celular', 'E-mail'])}
-            <input id="valor-contato" placeholder="Informe o Celular">
+            <input id="valorContatoInteressado" placeholder="Informe o Celular">
             <button id="adicionar-contato">Adicionar</button>
             <table><tbody id="contatos-lista"></tbody></table>
             <button id="fechar-contatos">Fechar</button>
@@ -97,7 +97,7 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
               const label = caixa.querySelector('label[for="' + radio.id + '"]');
               if (input) input.value = label?.textContent || '';
               if (idCombo === 'selectTipoContato') {
-                document.querySelector('#valor-contato').placeholder = 'Informe o ' + (input.value || 'tipo de contato');
+                document.querySelector('#valorContatoInteressado').placeholder = 'Informe o ' + (input.value || 'tipo de contato');
               }
             });
           }
@@ -111,15 +111,15 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
             });
           }
           document.querySelector('#consultar').addEventListener('click', () => { document.querySelector('#nomeRequerente').value = 'Pessoa de Teste'; });
-          document.querySelector('#editar-contatos').addEventListener('click', () => { document.querySelector('#dialog-contatos').hidden = false; });
-          document.querySelector('#fechar-contatos').addEventListener('click', () => { document.querySelector('#dialog-contatos').hidden = true; });
+          document.querySelector('#editar-contatos').addEventListener('click', () => { document.querySelector('#contatos').hidden = false; });
+          document.querySelector('#fechar-contatos').addEventListener('click', () => { document.querySelector('#contatos').hidden = true; });
           document.querySelector('#adicionar-contato').addEventListener('click', () => {
-            const contato = { tipo: document.querySelector('#selectTipoContato').value, valor: document.querySelector('#valor-contato').value };
+            const contato = { tipo: document.querySelector('#selectTipoContato').value, valor: document.querySelector('#valorContatoInteressado').value };
             window.__contatos.push(contato);
             document.querySelector('#contatos-lista').insertAdjacentHTML('beforeend', '<tr><td>' + contato.tipo + '</td><td>' + contato.valor + '</td></tr>');
             document.querySelector('#editar-contatos').textContent = 'Contatos cadastrados';
             document.querySelector('#selectTipoContato').value = '';
-            document.querySelector('#valor-contato').value = '';
+            document.querySelector('#valorContatoInteressado').value = '';
           });
           document.querySelector('#btn-next').addEventListener('click', () => {
             const passos = [...document.querySelectorAll('section')];
@@ -132,7 +132,7 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
             if (atual >= 0 && atual < passos.length - 1) {
               passos[atual].hidden = true;
               passos[atual + 1].hidden = false;
-              if (passos[atual + 1].id === 'passo7') document.querySelector('#dialog-contatos').hidden = false;
+              if (passos[atual + 1].id === 'passo7') document.querySelector('#contatos').hidden = false;
             }
           });
         </script>

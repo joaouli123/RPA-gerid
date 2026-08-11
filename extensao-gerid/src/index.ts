@@ -11,7 +11,7 @@ import {
   resumirDiagnosticoGerid,
 } from './estadoGerid';
 
-const CONTENT_BUILD_ID = '1.5.7-20260811.1';
+const CONTENT_BUILD_ID = '1.6.0-20260811.1';
 const EVENTO_LOG_GERID = '__gerid_rpa_log__';
 const CANAL_CONTROLE_GERID = '__gerid_rpa_control__';
 const emContextoExtensao = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.id);

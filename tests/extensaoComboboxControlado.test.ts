@@ -17,7 +17,10 @@ function comboControlado(
             <div class="br-item" role="option">
               <div class="br-radio">
                 <input id="${valor}" type="radio" value="${valor}" aria-hidden="true" tabindex="-1">
-                <label for="${valor}">${rotulo}</label>
+                <label for="${valor}">
+                  <span aria-hidden="true"><div>${rotulo}</div></span>
+                  <span class="sr-only">${rotulo}</span>
+                </label>
               </div>
             </div>`,
         )
@@ -51,11 +54,19 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
         </section>
         <section id="passo4" hidden>
           <h2>Grupo Familiar</h2>
-          <table><tbody><tr>
-            <td>123.456.789-01</td>
-            <td>Requerente</td>
-            <td>${comboControlado('selectEstadoCivil0', [['1', 'Solteiro']], true)}</td>
-          </tr></tbody></table>
+          <table><tbody>
+            <tr>
+              <td>111.111.111-11</td>
+              <td>Dependente</td>
+              <td>${comboControlado('selectParentesco0', [['2', 'Filho(a)'], ['17', 'Outros']], true)}</td>
+              <td>${comboControlado('selectEstadoCivil0', [['1', 'Solteiro'], ['2', 'Casado']], true)}</td>
+            </tr>
+            <tr>
+              <td>123.456.789-01</td>
+              <td>Requerente</td>
+              <td>${comboControlado('selectEstadoCivil1', [['1', 'Solteiro'], ['2', 'Casado']], true)}</td>
+            </tr>
+          </tbody></table>
           <span class="interaction-select"><input id="undefined-Nao" type="checkbox"><label>Não</label></span>
         </section>
         <section id="passo5" hidden><h2>Comprometimento de Renda</h2></section>
@@ -131,21 +142,35 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
           }, '*');
         });
 
-        for (const item of document.querySelectorAll<HTMLElement>('[id$="-itens"] .br-item')) {
-          if (item.closest<HTMLElement>('[id$="-itens"]')?.id !== 'idSelecionarServico-itens') continue;
-          Object.defineProperty(item, '__reactProps$teste', {
+        for (const combo of document.querySelectorAll<HTMLInputElement>('input[role="combobox"]')) {
+          Object.defineProperty(combo, '__reactProps$teste', {
             enumerable: true,
             value: {
-              onMouseDown: () => {
-                const caixa = item.closest<HTMLElement>('[id$="-itens"]');
-                const label = item.querySelector<HTMLLabelElement>('label');
-                const combo = document.getElementById(
-                  caixa?.id.slice(0, -6) ?? '',
-                ) as HTMLInputElement | null;
-                const radio = document.getElementById(label?.htmlFor ?? '') as HTMLInputElement | null;
-                if (combo && label) combo.value = label.textContent?.trim() ?? '';
+              onChange: (evento: { target: { value: string } }) => {
+                const caixa = document.getElementById(`${combo.id}-itens`);
+                const radio = Array.from(
+                  caixa?.querySelectorAll<HTMLInputElement>('input[type="radio"]') ?? [],
+                ).find((item) => item.value === evento.target.value);
+                const item = radio?.closest<HTMLElement>('.br-item');
+                const label = item?.querySelector<HTMLLabelElement>('label');
+                const rotulo = label?.querySelector<HTMLElement>('[aria-hidden="true"] > div')
+                  ?.textContent?.trim();
+                if (rotulo) combo.value = rotulo;
                 if (radio) radio.checked = true;
                 (window as any).__geridReactDirectCalls.push({ tipo: 'combobox', id: combo?.id });
+              },
+            },
+          });
+        }
+
+        for (const controle of document.querySelectorAll<HTMLElement>('.interaction-select')) {
+          Object.defineProperty(controle, '__reactProps$teste', {
+            enumerable: true,
+            value: {
+              onClick: () => {
+                const input = controle.querySelector<HTMLInputElement>('input[type="checkbox"]');
+                if (input) input.checked = true;
+                (window as any).__geridReactDirectCalls.push({ tipo: 'marcar', id: input?.id });
               },
             },
           });
@@ -178,7 +203,10 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
             cliente: { cpf: '12345678901', nome: 'Pessoa de Teste' },
             grupoFamiliar: {
               requerenteCpf: '12345678901',
-              integrantes: [{ cpf: '12345678901', parentesco: 'Titular' }],
+              integrantes: [
+                { cpf: '11111111111', parentesco: 'Filho(a)', estadoCivil: 'Solteiro' },
+                { cpf: '12345678901', parentesco: 'Titular', estadoCivil: 'Casado' },
+              ],
             },
           },
           configuracao: { procuradorCpf: '00000000000', telefonePadrao: '', emailEscritorio: '' },
@@ -187,17 +215,24 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
       );
 
       await pagina.waitForFunction(() => !document.querySelector<HTMLElement>('#passo5')?.hidden);
+      expect(await pagina.inputValue('#selectParentesco0')).toBe('Filho(a)');
       expect(await pagina.inputValue('#selectEstadoCivil0')).toBe('Solteiro');
+      expect(await pagina.inputValue('#selectEstadoCivil1')).toBe('Casado');
       expect(await pagina.evaluate(() => (window as any).__geridReactDirectCalls)).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ tipo: 'combobox', id: 'idSelecionarServico' }),
+          expect.objectContaining({ tipo: 'combobox', id: 'selectParentesco0' }),
+          expect.objectContaining({ tipo: 'combobox', id: 'selectEstadoCivil0' }),
+          expect.objectContaining({ tipo: 'combobox', id: 'selectEstadoCivil1' }),
+          expect.objectContaining({ tipo: 'marcar', id: 'undefined-Nao' }),
         ]),
       );
-      expect(await pagina.evaluate(() => (window as any).__geridBridgeCalls)).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ tipoControle: 'combobox', id: 'selectEstadoCivil0', valor: 'Solteiro' }),
-          expect.objectContaining({ tipoControle: 'marcar', id: 'undefined-Nao' }),
-        ]),
+      const chamadasPonte = await pagina.evaluate(() => (window as any).__geridBridgeCalls);
+      expect(chamadasPonte).not.toContainEqual(
+        expect.objectContaining({ tipoControle: 'combobox', id: 'selectEstadoCivil0' }),
+      );
+      expect(chamadasPonte).not.toContainEqual(
+        expect.objectContaining({ tipoControle: 'marcar', id: 'undefined-Nao' }),
       );
       await execucao;
     } finally {

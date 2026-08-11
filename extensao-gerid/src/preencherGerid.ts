@@ -273,24 +273,84 @@ function acionarControleReactLocal(
 ): boolean {
   const obterPropsReact = (elemento: Element | null): Record<string, any> | null => {
     if (!elemento) return null;
-    const chave = Object.keys(elemento).find((nome) => nome.startsWith('__reactProps$'));
-    return chave ? (elemento as any)[chave] : null;
+    const nomes = Object.getOwnPropertyNames(elemento);
+    const chaveProps = nomes.find((nome) => nome.startsWith('__reactProps$'));
+    if (chaveProps) return (elemento as any)[chaveProps];
+
+    // React tambem mantem as props atuais no Fiber. Este caminho cobre builds
+    // em que __reactProps$ nao aparece como propriedade enumeravel do no.
+    const chaveFiber = nomes.find((nome) => nome.startsWith('__reactFiber$'));
+    let fiber = chaveFiber ? (elemento as any)[chaveFiber] : null;
+    for (let nivel = 0; fiber && nivel < 4; nivel++, fiber = fiber.return) {
+      if (fiber.memoizedProps) return fiber.memoizedProps;
+    }
+    return null;
+  };
+
+  const criarEvento = (elemento: Element, tipoEvento: string, value?: string) => {
+    let cancelado = false;
+    return {
+      type: tipoEvento,
+      target: value === undefined ? elemento : { value },
+      currentTarget: elemento,
+      nativeEvent: null,
+      bubbles: true,
+      cancelable: true,
+      defaultPrevented: false,
+      preventDefault() { cancelado = true; },
+      stopPropagation() {},
+      persist() {},
+      isDefaultPrevented() { return cancelado; },
+      isPropagationStopped() { return false; },
+    };
+  };
+
+  const opcaoCorresponde = (item: HTMLElement, alvo: string): boolean => {
+    const label = item.querySelector<HTMLLabelElement>('label');
+    const textos = [
+      label?.querySelector<HTMLElement>('[aria-hidden="true"] > div')?.textContent,
+      label?.querySelector<HTMLElement>('div')?.textContent,
+      label?.getAttribute('aria-label'),
+      label?.innerText,
+      label?.textContent,
+    ].filter((texto): texto is string => Boolean(texto?.trim()));
+
+    // O Select do GERID repete o rotulo em um span visual e outro sr-only.
+    // startsWith cobre esse texto duplicado e o hint "Atendimento a distancia".
+    return textos.some((texto) => {
+      const candidato = normalizar(texto);
+      return candidato === alvo || candidato.startsWith(alvo);
+    });
   };
 
   if (tipo === 'combobox') {
+    const combo = document.getElementById(id) as HTMLInputElement | null;
     const lista = document.getElementById(`${id}-itens`);
     const alvo = normalizar(valor ?? '');
     const item = Array.from(lista?.querySelectorAll<HTMLElement>('.br-item') ?? [])
-      .find((opcao) => normalizar(opcao.querySelector('label')?.textContent ?? '') === alvo);
-    const props = obterPropsReact(item ?? null);
-    if (!item || !props) return false;
+      .find((opcao) => opcaoCorresponde(opcao, alvo));
+    if (!combo || !item) return false;
 
-    if (typeof props.onMouseDown === 'function') {
-      props.onMouseDown({});
+    // Contrato real do componente Sw publicado pelo GERID: o onChange do
+    // input recebe o value interno (1=Solteiro, 2=Casado etc.), localiza o
+    // objeto da opcao e repassa esse objeto ao formulario/Redux.
+    const valorOpcao = item.querySelector<HTMLInputElement>('input[type="radio"]')?.value;
+    const propsCombo = obterPropsReact(combo);
+    if (valorOpcao && typeof propsCombo?.onChange === 'function') {
+      try {
+        propsCombo.onChange(criarEvento(combo, 'change', valorOpcao));
+        return true;
+      } catch {}
+    }
+
+    const props = obterPropsReact(item);
+
+    if (typeof props?.onMouseDown === 'function') {
+      props.onMouseDown(criarEvento(item, 'mousedown'));
       return true;
     }
-    if (typeof props.onKeyDown === 'function') {
-      props.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {} });
+    if (typeof props?.onKeyDown === 'function') {
+      props.onKeyDown({ ...criarEvento(item, 'keydown'), key: 'Enter' });
       return true;
     }
     return false;
@@ -301,11 +361,11 @@ function acionarControleReactLocal(
   if (!controle || !props) return false;
 
   if (typeof props.onClick === 'function') {
-    props.onClick({});
+    props.onClick(criarEvento(controle, 'click'));
     return true;
   }
   if (typeof props.onKeyDown === 'function') {
-    props.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {} });
+    props.onKeyDown({ ...criarEvento(controle, 'keydown'), key: 'Enter' });
     return true;
   }
   return false;
@@ -340,6 +400,20 @@ async function escolherNoCombobox(
   if (!(await combo.isVisible().catch(() => false))) return false;
 
   const alvo = normalizar(rotuloDesejado);
+
+  // As opcoes continuam anexadas ao DOM mesmo com a lista recolhida. Tente
+  // primeiro o contrato React do componente, sem depender de coordenadas,
+  // foco, animacao ou velocidade de abertura do dropdown.
+  for (let tentativa = 0; tentativa < 2; tentativa++) {
+    if (await acionarControleReactNaPagina('combobox', id, rotuloDesejado)) {
+      if (await aguardarValorCombobox(combo, alvo, 1_500)) return true;
+    }
+    if (tentativa === 0) {
+      await combo.click().catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
   const rotulos = page.locator(`[id="${id}-itens"] label`);
   let total = await rotulos.count().catch(() => 0);
   if (total === 0) {
@@ -697,12 +771,10 @@ async function passo4GrupoFamiliar(
         `Linha ${linha.indice + 1}: não achei a opção de parentesco "${resolvido.grupo}".`,
       );
     } else if (!resolvido.exato) {
-      // Decisão do escritório: cai em "Outros" em vez de virar pendência —
-      // mas sempre avisa, para o advogado conferir na tela de Confirmar.
-      avisos.push(
-        `CPF ${linha.cpf}: parentesco "${parentescoPlanilha}" não tem opção própria no GERID; ` +
-          `marquei "Outros". Confira antes de concluir.`,
-      );
+      const decisao = resolvido.grupo === 'Outros'
+        ? 'não tem opção própria no GERID; marquei "Outros"'
+        : `foi interpretado como "${resolvido.grupo}"`;
+      avisos.push(`CPF ${linha.cpf}: parentesco "${parentescoPlanilha}" ${decisao}. Confira antes de concluir.`);
     }
   }
 
@@ -937,28 +1009,47 @@ async function adicionarContato(
     avisos.push(`Contato ${tipo} não informado — adicione manualmente.`);
     return false;
   }
+  let operacao = 'abrir a janela de contatos';
   try {
-    const fechar = visivel(page.getByRole('button', { name: /^Fechar$/i })).first();
-    if (!(await fechar.isVisible().catch(() => false))) {
-      const editar = visivel(
-        page.getByRole('button', { name: /Clique para editar contatos/i }),
-      ).first();
-      if (await editar.isVisible().catch(() => false)) await editar.click();
-      else await visivel(page.getByText(/^Adicionar$/i)).first().click();
+    const tipoContato = visivel(page.locator(mapaGerid.passo7.tipoContato)).first();
+    if (!(await tipoContato.isVisible().catch(() => false))) {
+      const editar = visivel(page.locator(
+        '[aria-label^="Clique para editar contatos do interessado"]',
+      )).first();
+      await editar.click();
+      await tipoContato.waitFor({ state: 'visible', timeout: 3_000 });
     }
 
+    operacao = 'consultar os contatos existentes';
     const jaExiste = await contatoExisteNoDialogo(page, tipo, valor);
 
     if (jaExiste) {
-      await visivel(page.getByRole('button', { name: /Fechar/i })).first().click();
+      operacao = 'fechar a janela de contatos';
+      if (!await clicarBotaoContatos(page, 'Fechar')) {
+        throw new Error('botão Fechar não encontrado dentro da janela');
+      }
       return true;
     }
 
+    operacao = `selecionar o tipo ${tipo}`;
     const ok = await escolherNoCombobox(page, mapaGerid.passo7.tipoContato, tipo);
     if (!ok) throw new Error(`Tipo de contato "${tipo}" não confirmado.`);
-    await visivel(page.getByPlaceholder(/^Informe o /i)).first().fill(valor);
-    await visivel(page.getByRole('button', { name: /^Adicionar$/i })).first().click();
 
+    operacao = `preencher o valor de ${tipo}`;
+    const campoValor = visivel(page.locator(mapaGerid.passo7.valorContato)).first();
+    await campoValor.waitFor({ state: 'visible', timeout: 3_000 });
+    await campoValor.fill(valor);
+
+    operacao = `adicionar o contato ${tipo}`;
+    const limiteBotao = Date.now() + 2_000;
+    let adicionou = false;
+    while (!adicionou && Date.now() < limiteBotao) {
+      adicionou = await clicarBotaoContatos(page, 'Adicionar');
+      if (!adicionou) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    if (!adicionou) throw new Error('botão Adicionar não ficou disponível dentro da janela');
+
+    operacao = `confirmar o contato ${tipo} na tabela`;
     let confirmou = false;
     const limiteConfirmacao = Date.now() + 3_000;
     while (!confirmou && Date.now() < limiteConfirmacao) {
@@ -967,29 +1058,49 @@ async function adicionarContato(
     }
     if (!confirmou) throw new Error(`O GERID não exibiu o contato ${tipo} depois de adicionar.`);
 
-    await visivel(page.getByRole('button', { name: /Fechar/i })).first().click();
+    operacao = 'fechar a janela de contatos';
+    if (!await clicarBotaoContatos(page, 'Fechar')) {
+      throw new Error('botão Fechar não encontrado dentro da janela');
+    }
     return true;
-  } catch {
-    avisos.push(`Falhei ao adicionar o contato ${tipo} — adicione manualmente.`);
+  } catch (erro) {
+    const detalhe = erro instanceof Error ? erro.message : String(erro);
+    avisos.push(`Falhei ao adicionar o contato ${tipo} em "${operacao}": ${detalhe}`);
     return false;
   }
+}
+
+async function clicarBotaoContatos(page: Page, rotulo: string): Promise<boolean> {
+  return page.evaluate(({ textoBotao }) => {
+    const normalizarTexto = (entrada: string) => entrada.replace(/\s+/g, ' ').trim().toLowerCase();
+    const raiz = document.querySelector<HTMLElement>('#contatos');
+    if (!raiz) return false;
+    const botao = Array.from(
+      raiz.querySelectorAll<HTMLElement>('button, [role="button"]'),
+    ).find((elemento) => {
+      const estilo = window.getComputedStyle(elemento);
+      const desabilitado = (elemento as HTMLButtonElement).disabled ||
+        elemento.getAttribute('aria-disabled') === 'true';
+      const nome = elemento.getAttribute('aria-label') || elemento.innerText || elemento.textContent || '';
+      return !desabilitado &&
+        elemento.getClientRects().length > 0 &&
+        estilo.display !== 'none' &&
+        estilo.visibility !== 'hidden' &&
+        normalizarTexto(nome) === normalizarTexto(textoBotao);
+    });
+    if (!botao) return false;
+    botao.click();
+    return true;
+  }, { textoBotao: rotulo });
 }
 
 async function contatoExisteNoDialogo(page: Page, tipo: string, valor: string): Promise<boolean> {
   return page.evaluate(({ tipoEsperado, valorEsperado }) => {
     const normalizarTexto = (entrada: string) => entrada.replace(/\s+/g, ' ').trim().toLowerCase();
     const soDigitos = (entrada: string) => entrada.replace(/\D/g, '');
-    const dialogo = document.querySelector<HTMLElement>('#selectTipoContato')?.closest<HTMLElement>('[role="dialog"]') ??
-      Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]'))
-        .find((elemento) => {
-          const estilo = window.getComputedStyle(elemento);
-          return elemento.getClientRects().length > 0 &&
-            estilo.display !== 'none' &&
-            estilo.visibility !== 'hidden' &&
-            /contatos/i.test(elemento.innerText);
-        });
-    if (!dialogo) return false;
-    return Array.from(dialogo.querySelectorAll<HTMLElement>('tbody tr')).some((linha) => {
+    const contatos = document.querySelector<HTMLElement>('#contatos');
+    if (!contatos) return false;
+    return Array.from(contatos.querySelectorAll<HTMLElement>('tbody tr')).some((linha) => {
       const texto = normalizarTexto(linha.innerText);
       const tipoOk = texto.includes(normalizarTexto(tipoEsperado));
       const valorOk = tipoEsperado.toLowerCase().includes('mail')

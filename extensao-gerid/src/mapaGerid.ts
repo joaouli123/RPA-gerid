@@ -140,6 +140,7 @@ export const mapaGerid: MapaGerid = {
 
   passo7: {
     tipoContato: '#selectTipoContato',
+    valorContato: '#valorContatoInteressado',
     acompanharProcessoSim: 'input[id="acompanharProcesso-Sim"]',
     inputArquivo: 'input[type="file"]',
     totalSlots: 11,

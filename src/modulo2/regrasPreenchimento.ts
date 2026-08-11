@@ -273,7 +273,7 @@ const MAPA_PARENTESCO: Array<{ termos: string[]; grupo: string; confirmado: bool
     confirmado: false,
   },
   { termos: ['entead'], grupo: GRUPOS_PARENTESCO_GERID.enteado, confirmado: true },
-  { termos: ['filho', 'filha'], grupo: GRUPOS_PARENTESCO_GERID.filhos, confirmado: false },
+  { termos: ['filho', 'filha'], grupo: GRUPOS_PARENTESCO_GERID.filhos, confirmado: true },
   { termos: ['tutelad'], grupo: GRUPOS_PARENTESCO_GERID.menorTutelado, confirmado: true },
 ];
 

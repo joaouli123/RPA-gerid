@@ -422,12 +422,10 @@ async function passo4GrupoFamiliar(
         `Linha ${linha.indice + 1}: não achei a opção de parentesco "${resolvido.grupo}".`,
       );
     } else if (!resolvido.exato) {
-      // Decisão do escritório: cai em "Outros" em vez de virar pendência —
-      // mas sempre avisa, para o advogado conferir na tela de Confirmar.
-      avisos.push(
-        `CPF ${linha.cpf}: parentesco "${parentescoPlanilha}" não tem opção própria no GERID; ` +
-          `marquei "Outros". Confira antes de concluir.`,
-      );
+      const decisao = resolvido.grupo === 'Outros'
+        ? 'não tem opção própria no GERID; marquei "Outros"'
+        : `foi interpretado como "${resolvido.grupo}"`;
+      avisos.push(`CPF ${linha.cpf}: parentesco "${parentescoPlanilha}" ${decisao}. Confira antes de concluir.`);
     }
   }
 

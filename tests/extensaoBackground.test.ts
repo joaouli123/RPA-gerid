@@ -283,8 +283,6 @@ describe('extensão Gerid — service worker', () => {
     const alarmesCriados: string[] = [];
     const urlsAutenticacao: string[] = [];
     const scriptsControle: any[] = [];
-    const comandosDebugger: string[] = [];
-    let debuggerAnexado = false;
     const abaCas = {
       id: 91,
       active: true,
@@ -334,28 +332,13 @@ describe('extensão Gerid — service worker', () => {
         executeScript: async (opcoes: any) => {
           scriptsControle.push(opcoes);
           if (opcoes.world === 'MAIN' && opcoes.args?.length === 3) {
-            const ok = opcoes.args[1] !== 'undefined-Nao';
-            return [{ result: { ok, motivo: ok ? 'react' : 'evento' } }];
-          }
-          if (String(opcoes.func).includes('getBoundingClientRect')) {
-            return [{ result: { x: 120, y: 240 } }];
-          }
-          if (String(opcoes.func).includes("tipoControle === 'marcar'")) {
-            return [{ result: debuggerAnexado }];
+            return [{ result: {
+              ok: true,
+              motivo: opcoes.args[0] === 'marcar' ? 'react_click' : 'react_onchange',
+            } }];
           }
           if (!opcoes.args) return [{ result: true }];
           return [{ result: { status: 'revisao', erro: 'Preenchido até a revisão final.' } }];
-        },
-      },
-      debugger: {
-        attach: async () => {
-          debuggerAnexado = true;
-          comandosDebugger.push('attach');
-        },
-        sendCommand: async (_alvo: any, comando: string) => { comandosDebugger.push(comando); },
-        detach: async () => {
-          debuggerAnexado = false;
-          comandosDebugger.push('detach');
         },
       },
     };
@@ -414,33 +397,26 @@ describe('extensão Gerid — service worker', () => {
     while (respostasControle.length === 0 && Date.now() < limiteControle) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    expect(respostasControle).toEqual([{ ok: true, motivo: 'react' }]);
+    expect(respostasControle).toEqual([{ ok: true, motivo: 'react_onchange' }]);
     expect(scriptsControle).toContainEqual(expect.objectContaining({
       target: { tabId: 77 },
       world: 'MAIN',
       args: ['combobox', 'selectEstadoCivil0', 'Solteiro'],
     }));
 
-    const respostasCliqueFisico: any[] = [];
+    const respostasMarcacaoReact: any[] = [];
     for (const listener of listeners) {
       listener(
         { action: 'gerid_react_control', tipo: 'marcar', id: 'undefined-Nao' },
         { tab: { id: 77 } },
-        (resposta) => respostasCliqueFisico.push(resposta),
+        (resposta) => respostasMarcacaoReact.push(resposta),
       );
     }
     const limiteClique = Date.now() + 1_000;
-    while (respostasCliqueFisico.length === 0 && Date.now() < limiteClique) {
+    while (respostasMarcacaoReact.length === 0 && Date.now() < limiteClique) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    expect(respostasCliqueFisico).toEqual([{ ok: true, motivo: 'clique_fisico' }]);
-    expect(comandosDebugger).toEqual([
-      'attach',
-      'Input.dispatchMouseEvent',
-      'Input.dispatchMouseEvent',
-      'Input.dispatchMouseEvent',
-      'detach',
-    ]);
+    expect(respostasMarcacaoReact).toEqual([{ ok: true, motivo: 'react_click' }]);
 
     for (const listener of listeners) {
       listener({ action: 'start', apiUrl: 'https://rpa.teste', apiToken: 'segredo', modoTeste: true });
