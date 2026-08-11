@@ -286,11 +286,13 @@ async function passo1SelecionarServico(page: Page): Promise<void> {
     await busca.click();
   }
 
-  // O rádio interno pode estar oculto e ser apenas uma implementação do
-  // componente React. Alterá-lo diretamente não atualiza necessariamente o
-  // estado controlado do combobox. Clique primeiro na opção que o operador vê.
+  // O rádio interno é apenas a implementação do componente React. O evento
+  // que confirma a seleção fica no item com role=option; clicar no texto
+  // interno exibe o serviço, mas não atualiza o valor controlado do campo.
   const opcaoVisivel = visivel(
-    page.getByText(SERVICO_BPC_PCD.rotulo, { exact: true }),
+    page.getByRole('option', {
+      name: /^Benefício Assistencial à Pessoa com Deficiência Atendimento (?:à distância|a distância)$/i,
+    }),
   ).first();
   await opcaoVisivel.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {
     throw new ErroGerid(

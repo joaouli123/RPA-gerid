@@ -717,7 +717,9 @@
       await busca.click();
     }
     const opcaoVisivel = visivel(
-      page.getByText(SERVICO_BPC_PCD.rotulo, { exact: true })
+      page.getByRole("option", {
+        name: /^Benefício Assistencial à Pessoa com Deficiência Atendimento (?:à distância|a distância)$/i
+      })
     ).first();
     await opcaoVisivel.waitFor({ state: "visible", timeout: 1e4 }).catch(() => {
       throw new ErroGerid(
