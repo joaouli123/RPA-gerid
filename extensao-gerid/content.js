@@ -884,28 +884,30 @@
   }
   async function acionarControleReactViaEvento(tipo, id, valor) {
     if (!document.documentElement.dataset.geridRpaControlBridge) return false;
-    const eventoSolicitacao = "__gerid_rpa_control_request__";
-    const eventoResposta = "__gerid_rpa_control_response__";
+    const canal = "__gerid_rpa_control__";
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     return new Promise((resolve) => {
       let encerrado = false;
       const finalizar = (resultado) => {
         if (encerrado) return;
         encerrado = true;
-        window.removeEventListener(eventoResposta, receberResposta);
+        window.removeEventListener("message", receberResposta);
         resolve(resultado);
       };
       const receberResposta = (evento) => {
-        try {
-          const detalhe = JSON.parse(evento.detail || "{}");
-          if (detalhe.requestId === requestId) finalizar(detalhe.resposta?.ok === true);
-        } catch {
-        }
+        if (evento.source !== window || evento.data?.canal !== canal) return;
+        if (evento.data?.tipoMensagem !== "resposta" || evento.data?.requestId !== requestId) return;
+        finalizar(evento.data.resposta?.ok === true);
       };
-      window.addEventListener(eventoResposta, receberResposta);
-      window.dispatchEvent(new CustomEvent(eventoSolicitacao, {
-        detail: JSON.stringify({ requestId, tipo, id, valor })
-      }));
+      window.addEventListener("message", receberResposta);
+      window.postMessage({
+        canal,
+        tipoMensagem: "solicitacao",
+        requestId,
+        tipoControle: tipo,
+        id,
+        valor
+      }, "*");
       setTimeout(() => finalizar(false), 3e3);
     });
   }
@@ -1645,10 +1647,9 @@
       init_classificarPreenchimento();
       init_detectarProtocolo();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.5.6-20260811.1";
+      var CONTENT_BUILD_ID = "1.5.7-20260811.1";
       var EVENTO_LOG_GERID = "__gerid_rpa_log__";
-      var EVENTO_CONTROLE_GERID = "__gerid_rpa_control_request__";
-      var EVENTO_RESPOSTA_CONTROLE_GERID = "__gerid_rpa_control_response__";
+      var CANAL_CONTROLE_GERID = "__gerid_rpa_control__";
       var emContextoExtensao = typeof chrome !== "undefined" && Boolean(chrome.runtime?.id);
       window.__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
       console.log(
@@ -1662,22 +1663,30 @@
           chrome.runtime.sendMessage({ action: "content_log", message: mensagem }).catch(() => {
           });
         });
-        window.addEventListener(EVENTO_CONTROLE_GERID, (evento) => {
-          const detalhe = JSON.parse(evento.detail || "{}");
-          if (!detalhe.requestId || !detalhe.tipo || !detalhe.id) return;
+        window.addEventListener("message", (evento) => {
+          if (evento.source !== window || evento.data?.canal !== CANAL_CONTROLE_GERID) return;
+          if (evento.data?.tipoMensagem !== "solicitacao") return;
+          const detalhe = evento.data;
+          if (!detalhe.requestId || !detalhe.tipoControle || !detalhe.id) return;
           chrome.runtime.sendMessage({
             action: "gerid_react_control",
-            tipo: detalhe.tipo,
+            tipo: detalhe.tipoControle,
             id: detalhe.id,
             valor: detalhe.valor
           }).then((resposta) => {
-            window.dispatchEvent(new CustomEvent(EVENTO_RESPOSTA_CONTROLE_GERID, {
-              detail: JSON.stringify({ requestId: detalhe.requestId, resposta })
-            }));
+            window.postMessage({
+              canal: CANAL_CONTROLE_GERID,
+              tipoMensagem: "resposta",
+              requestId: detalhe.requestId,
+              resposta
+            }, "*");
           }).catch((erro) => {
-            window.dispatchEvent(new CustomEvent(EVENTO_RESPOSTA_CONTROLE_GERID, {
-              detail: JSON.stringify({ requestId: detalhe.requestId, resposta: { ok: false, motivo: String(erro) } })
-            }));
+            window.postMessage({
+              canal: CANAL_CONTROLE_GERID,
+              tipoMensagem: "resposta",
+              requestId: detalhe.requestId,
+              resposta: { ok: false, motivo: String(erro) }
+            }, "*");
           });
         });
       }

@@ -11,10 +11,9 @@ import {
   resumirDiagnosticoGerid,
 } from './estadoGerid';
 
-const CONTENT_BUILD_ID = '1.5.6-20260811.1';
+const CONTENT_BUILD_ID = '1.5.7-20260811.1';
 const EVENTO_LOG_GERID = '__gerid_rpa_log__';
-const EVENTO_CONTROLE_GERID = '__gerid_rpa_control_request__';
-const EVENTO_RESPOSTA_CONTROLE_GERID = '__gerid_rpa_control_response__';
+const CANAL_CONTROLE_GERID = '__gerid_rpa_control__';
 const emContextoExtensao = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.id);
 (window as any).__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
 console.log(
@@ -28,22 +27,30 @@ if (emContextoExtensao) {
     if (typeof mensagem !== 'string') return;
     chrome.runtime.sendMessage({ action: 'content_log', message: mensagem }).catch(() => {});
   });
-  window.addEventListener(EVENTO_CONTROLE_GERID, (evento) => {
-    const detalhe = JSON.parse((evento as CustomEvent<string>).detail || '{}');
-    if (!detalhe.requestId || !detalhe.tipo || !detalhe.id) return;
+  window.addEventListener('message', (evento) => {
+    if (evento.source !== window || evento.data?.canal !== CANAL_CONTROLE_GERID) return;
+    if (evento.data?.tipoMensagem !== 'solicitacao') return;
+    const detalhe = evento.data;
+    if (!detalhe.requestId || !detalhe.tipoControle || !detalhe.id) return;
     chrome.runtime.sendMessage({
       action: 'gerid_react_control',
-      tipo: detalhe.tipo,
+      tipo: detalhe.tipoControle,
       id: detalhe.id,
       valor: detalhe.valor,
     }).then((resposta) => {
-      window.dispatchEvent(new CustomEvent(EVENTO_RESPOSTA_CONTROLE_GERID, {
-        detail: JSON.stringify({ requestId: detalhe.requestId, resposta }),
-      }));
+      window.postMessage({
+        canal: CANAL_CONTROLE_GERID,
+        tipoMensagem: 'resposta',
+        requestId: detalhe.requestId,
+        resposta,
+      }, '*');
     }).catch((erro) => {
-      window.dispatchEvent(new CustomEvent(EVENTO_RESPOSTA_CONTROLE_GERID, {
-        detail: JSON.stringify({ requestId: detalhe.requestId, resposta: { ok: false, motivo: String(erro) } }),
-      }));
+      window.postMessage({
+        canal: CANAL_CONTROLE_GERID,
+        tipoMensagem: 'resposta',
+        requestId: detalhe.requestId,
+        resposta: { ok: false, motivo: String(erro) },
+      }, '*');
     });
   });
 }

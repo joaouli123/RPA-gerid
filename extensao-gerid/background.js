@@ -363,7 +363,7 @@ async function obterEstadoNaAba(tabId) {
 async function garantirContentScript(tabId) {
   const verificacaoIsolada = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.6-20260811.1',
+    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.7-20260811.1',
   });
   if (!verificacaoIsolada[0]?.result) {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
@@ -372,7 +372,7 @@ async function garantirContentScript(tabId) {
   const verificacaoPrincipal = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.6-20260811.1',
+    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.7-20260811.1',
   });
   if (!verificacaoPrincipal[0]?.result) {
     await chrome.scripting.executeScript({
@@ -551,6 +551,31 @@ async function aguardarCentroControle(tabId, tipo, id, valor, timeoutMs = 1_500)
   return null;
 }
 
+async function aguardarComboboxExpandido(tabId, id, timeoutMs = 2_000) {
+  const limite = Date.now() + timeoutMs;
+  do {
+    const resultados = await chrome.scripting.executeScript({
+      target: { tabId },
+      args: [id],
+      func: (idControle) => {
+        const combo = document.getElementById(idControle);
+        const lista = document.getElementById(`${idControle}-itens`);
+        if (!combo || !lista) return false;
+        const estilo = window.getComputedStyle(lista);
+        const retangulo = lista.getBoundingClientRect();
+        return combo.getAttribute('aria-expanded') === 'true'
+          && estilo.visibility !== 'hidden'
+          && estilo.display !== 'none'
+          && retangulo.width > 0
+          && retangulo.height > 0;
+      },
+    });
+    if (resultados[0]?.result === true) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } while (Date.now() < limite);
+  return false;
+}
+
 async function validarControle(tabId, tipo, id, valor) {
   const resultados = await chrome.scripting.executeScript({
     target: { tabId },
@@ -581,6 +606,10 @@ async function acionarControleFisico(tabId, tipo, id, valor) {
       const combo = await aguardarCentroControle(tabId, tipo, id);
       if (!combo) return { ok: false, motivo: 'combobox_sem_coordenadas' };
       await clicarComDebugger(alvo, combo);
+      if (!await aguardarComboboxExpandido(tabId, id)) {
+        return { ok: false, motivo: 'combobox_nao_expandiu' };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       const opcao = await aguardarCentroControle(tabId, tipo, id, valor);
       if (!opcao) return { ok: false, motivo: 'opcao_sem_coordenadas' };

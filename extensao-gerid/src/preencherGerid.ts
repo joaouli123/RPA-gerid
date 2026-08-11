@@ -236,8 +236,7 @@ async function acionarControleReactViaEvento(
 ): Promise<boolean> {
   if (!document.documentElement.dataset.geridRpaControlBridge) return false;
 
-  const eventoSolicitacao = '__gerid_rpa_control_request__';
-  const eventoResposta = '__gerid_rpa_control_response__';
+  const canal = '__gerid_rpa_control__';
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   return new Promise((resolve) => {
@@ -245,20 +244,24 @@ async function acionarControleReactViaEvento(
     const finalizar = (resultado: boolean) => {
       if (encerrado) return;
       encerrado = true;
-      window.removeEventListener(eventoResposta, receberResposta as EventListener);
+      window.removeEventListener('message', receberResposta);
       resolve(resultado);
     };
-    const receberResposta = (evento: Event) => {
-      try {
-        const detalhe = JSON.parse((evento as CustomEvent<string>).detail || '{}');
-        if (detalhe.requestId === requestId) finalizar(detalhe.resposta?.ok === true);
-      } catch {}
+    const receberResposta = (evento: MessageEvent) => {
+      if (evento.source !== window || evento.data?.canal !== canal) return;
+      if (evento.data?.tipoMensagem !== 'resposta' || evento.data?.requestId !== requestId) return;
+      finalizar(evento.data.resposta?.ok === true);
     };
 
-    window.addEventListener(eventoResposta, receberResposta as EventListener);
-    window.dispatchEvent(new CustomEvent(eventoSolicitacao, {
-      detail: JSON.stringify({ requestId, tipo, id, valor }),
-    }));
+    window.addEventListener('message', receberResposta);
+    window.postMessage({
+      canal,
+      tipoMensagem: 'solicitacao',
+      requestId,
+      tipoControle: tipo,
+      id,
+      valor,
+    }, '*');
     setTimeout(() => finalizar(false), 3_000);
   });
 }

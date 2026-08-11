@@ -110,20 +110,25 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
           },
         };
 
-        window.addEventListener('__gerid_rpa_control_request__', (evento) => {
-          const detalhe = JSON.parse((evento as CustomEvent<string>).detail);
+        window.addEventListener('message', (evento) => {
+          if (evento.source !== window || evento.data?.canal !== '__gerid_rpa_control__') return;
+          if (evento.data?.tipoMensagem !== 'solicitacao') return;
+          const detalhe = evento.data;
           (window as any).__geridBridgeCalls.push(detalhe);
-          if (detalhe.tipo === 'combobox') {
+          if (detalhe.tipoControle === 'combobox') {
             const combo = document.getElementById(detalhe.id) as HTMLInputElement | null;
             if (combo) combo.value = detalhe.valor;
           }
-          if (detalhe.tipo === 'marcar') {
+          if (detalhe.tipoControle === 'marcar') {
             const input = document.getElementById(detalhe.id) as HTMLInputElement | null;
             if (input) input.checked = true;
           }
-          window.dispatchEvent(new CustomEvent('__gerid_rpa_control_response__', {
-            detail: JSON.stringify({ requestId: detalhe.requestId, resposta: { ok: true } }),
-          }));
+          window.postMessage({
+            canal: '__gerid_rpa_control__',
+            tipoMensagem: 'resposta',
+            requestId: detalhe.requestId,
+            resposta: { ok: true },
+          }, '*');
         });
 
         for (const item of document.querySelectorAll<HTMLElement>('[id$="-itens"] .br-item')) {
@@ -190,8 +195,8 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
       );
       expect(await pagina.evaluate(() => (window as any).__geridBridgeCalls)).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ tipo: 'combobox', id: 'selectEstadoCivil0', valor: 'Solteiro' }),
-          expect.objectContaining({ tipo: 'marcar', id: 'undefined-Nao' }),
+          expect.objectContaining({ tipoControle: 'combobox', id: 'selectEstadoCivil0', valor: 'Solteiro' }),
+          expect.objectContaining({ tipoControle: 'marcar', id: 'undefined-Nao' }),
         ]),
       );
       await execucao;
