@@ -9,8 +9,8 @@ describe('manifesto publicado da extensao', () => {
       'utf8',
     ));
 
-    expect(manifesto.version).toBe('1.5.5');
-    expect(manifesto.permissions).not.toContain('debugger');
+    expect(manifesto.version).toBe('1.5.6');
+    expect(manifesto.permissions).toContain('debugger');
     expect(manifesto.permissions).not.toContain('activeTab');
     expect(manifesto.permissions).not.toContain('downloads');
     expect(manifesto.host_permissions).toEqual([

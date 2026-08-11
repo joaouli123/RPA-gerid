@@ -11,8 +11,10 @@ import {
   resumirDiagnosticoGerid,
 } from './estadoGerid';
 
-const CONTENT_BUILD_ID = '1.5.5-20260811.1';
+const CONTENT_BUILD_ID = '1.5.6-20260811.1';
 const EVENTO_LOG_GERID = '__gerid_rpa_log__';
+const EVENTO_CONTROLE_GERID = '__gerid_rpa_control_request__';
+const EVENTO_RESPOSTA_CONTROLE_GERID = '__gerid_rpa_control_response__';
 const emContextoExtensao = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.id);
 (window as any).__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
 console.log(
@@ -20,10 +22,29 @@ console.log(
 );
 
 if (emContextoExtensao) {
+  document.documentElement.dataset.geridRpaControlBridge = CONTENT_BUILD_ID;
   window.addEventListener(EVENTO_LOG_GERID, (evento) => {
     const mensagem = (evento as CustomEvent<string>).detail;
     if (typeof mensagem !== 'string') return;
     chrome.runtime.sendMessage({ action: 'content_log', message: mensagem }).catch(() => {});
+  });
+  window.addEventListener(EVENTO_CONTROLE_GERID, (evento) => {
+    const detalhe = JSON.parse((evento as CustomEvent<string>).detail || '{}');
+    if (!detalhe.requestId || !detalhe.tipo || !detalhe.id) return;
+    chrome.runtime.sendMessage({
+      action: 'gerid_react_control',
+      tipo: detalhe.tipo,
+      id: detalhe.id,
+      valor: detalhe.valor,
+    }).then((resposta) => {
+      window.dispatchEvent(new CustomEvent(EVENTO_RESPOSTA_CONTROLE_GERID, {
+        detail: JSON.stringify({ requestId: detalhe.requestId, resposta }),
+      }));
+    }).catch((erro) => {
+      window.dispatchEvent(new CustomEvent(EVENTO_RESPOSTA_CONTROLE_GERID, {
+        detail: JSON.stringify({ requestId: detalhe.requestId, resposta: { ok: false, motivo: String(erro) } }),
+      }));
+    });
   });
 }
 

@@ -224,9 +224,43 @@ async function acionarControleReactNaPagina(
       valor,
     });
     return resposta?.ok === true;
-  } catch {
-    return false;
-  }
+  } catch {}
+
+  return acionarControleReactViaEvento(tipo, id, valor);
+}
+
+async function acionarControleReactViaEvento(
+  tipo: 'combobox' | 'marcar',
+  id: string,
+  valor?: string,
+): Promise<boolean> {
+  if (!document.documentElement.dataset.geridRpaControlBridge) return false;
+
+  const eventoSolicitacao = '__gerid_rpa_control_request__';
+  const eventoResposta = '__gerid_rpa_control_response__';
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  return new Promise((resolve) => {
+    let encerrado = false;
+    const finalizar = (resultado: boolean) => {
+      if (encerrado) return;
+      encerrado = true;
+      window.removeEventListener(eventoResposta, receberResposta as EventListener);
+      resolve(resultado);
+    };
+    const receberResposta = (evento: Event) => {
+      try {
+        const detalhe = JSON.parse((evento as CustomEvent<string>).detail || '{}');
+        if (detalhe.requestId === requestId) finalizar(detalhe.resposta?.ok === true);
+      } catch {}
+    };
+
+    window.addEventListener(eventoResposta, receberResposta as EventListener);
+    window.dispatchEvent(new CustomEvent(eventoSolicitacao, {
+      detail: JSON.stringify({ requestId, tipo, id, valor }),
+    }));
+    setTimeout(() => finalizar(false), 3_000);
+  });
 }
 
 function acionarControleReactLocal(

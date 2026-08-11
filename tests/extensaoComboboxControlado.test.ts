@@ -96,27 +96,38 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
       `);
 
       await pagina.evaluate(() => {
+        document.documentElement.dataset.geridRpaControlBridge = 'teste';
         (window as any).__geridReactMessages = [];
         (window as any).__geridReactDirectCalls = [];
+        (window as any).__geridBridgeCalls = [];
         (window as any).chrome = {
           runtime: {
             sendMessage: async (mensagem: any) => {
               if (mensagem.action !== 'gerid_react_control') return undefined;
               (window as any).__geridReactMessages.push(mensagem);
-              if (mensagem.tipo === 'combobox') {
-                const combo = document.getElementById(mensagem.id) as HTMLInputElement | null;
-                if (combo) combo.value = mensagem.valor;
-              }
-              if (mensagem.tipo === 'marcar') {
-                const input = document.getElementById(mensagem.id) as HTMLInputElement | null;
-                if (input) input.checked = true;
-              }
-              return { ok: true, motivo: 'react' };
+              throw new Error('runtime indisponivel no contexto da pagina');
             },
           },
         };
 
+        window.addEventListener('__gerid_rpa_control_request__', (evento) => {
+          const detalhe = JSON.parse((evento as CustomEvent<string>).detail);
+          (window as any).__geridBridgeCalls.push(detalhe);
+          if (detalhe.tipo === 'combobox') {
+            const combo = document.getElementById(detalhe.id) as HTMLInputElement | null;
+            if (combo) combo.value = detalhe.valor;
+          }
+          if (detalhe.tipo === 'marcar') {
+            const input = document.getElementById(detalhe.id) as HTMLInputElement | null;
+            if (input) input.checked = true;
+          }
+          window.dispatchEvent(new CustomEvent('__gerid_rpa_control_response__', {
+            detail: JSON.stringify({ requestId: detalhe.requestId, resposta: { ok: true } }),
+          }));
+        });
+
         for (const item of document.querySelectorAll<HTMLElement>('[id$="-itens"] .br-item')) {
+          if (item.closest<HTMLElement>('[id$="-itens"]')?.id !== 'idSelecionarServico-itens') continue;
           Object.defineProperty(item, '__reactProps$teste', {
             enumerable: true,
             value: {
@@ -130,18 +141,6 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
                 if (combo && label) combo.value = label.textContent?.trim() ?? '';
                 if (radio) radio.checked = true;
                 (window as any).__geridReactDirectCalls.push({ tipo: 'combobox', id: combo?.id });
-              },
-            },
-          });
-        }
-        for (const controle of document.querySelectorAll<HTMLElement>('.interaction-select')) {
-          Object.defineProperty(controle, '__reactProps$teste', {
-            enumerable: true,
-            value: {
-              onClick: () => {
-                const input = controle.querySelector<HTMLInputElement>('input');
-                if (input) input.checked = true;
-                (window as any).__geridReactDirectCalls.push({ tipo: 'marcar', id: input?.id });
               },
             },
           });
@@ -186,14 +185,13 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
       expect(await pagina.inputValue('#selectEstadoCivil0')).toBe('Solteiro');
       expect(await pagina.evaluate(() => (window as any).__geridReactDirectCalls)).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ tipo: 'combobox', id: 'selectEstadoCivil0' }),
-          expect.objectContaining({ tipo: 'marcar', id: 'undefined-Nao' }),
+          expect.objectContaining({ tipo: 'combobox', id: 'idSelecionarServico' }),
         ]),
       );
-      expect(await pagina.evaluate(() => (window as any).__geridReactMessages)).not.toEqual(
+      expect(await pagina.evaluate(() => (window as any).__geridBridgeCalls)).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ id: 'selectEstadoCivil0' }),
-          expect.objectContaining({ id: 'undefined-Nao' }),
+          expect.objectContaining({ tipo: 'combobox', id: 'selectEstadoCivil0', valor: 'Solteiro' }),
+          expect.objectContaining({ tipo: 'marcar', id: 'undefined-Nao' }),
         ]),
       );
       await execucao;

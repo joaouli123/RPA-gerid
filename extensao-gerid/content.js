@@ -879,8 +879,35 @@
       });
       return resposta?.ok === true;
     } catch {
-      return false;
     }
+    return acionarControleReactViaEvento(tipo, id, valor);
+  }
+  async function acionarControleReactViaEvento(tipo, id, valor) {
+    if (!document.documentElement.dataset.geridRpaControlBridge) return false;
+    const eventoSolicitacao = "__gerid_rpa_control_request__";
+    const eventoResposta = "__gerid_rpa_control_response__";
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return new Promise((resolve) => {
+      let encerrado = false;
+      const finalizar = (resultado) => {
+        if (encerrado) return;
+        encerrado = true;
+        window.removeEventListener(eventoResposta, receberResposta);
+        resolve(resultado);
+      };
+      const receberResposta = (evento) => {
+        try {
+          const detalhe = JSON.parse(evento.detail || "{}");
+          if (detalhe.requestId === requestId) finalizar(detalhe.resposta?.ok === true);
+        } catch {
+        }
+      };
+      window.addEventListener(eventoResposta, receberResposta);
+      window.dispatchEvent(new CustomEvent(eventoSolicitacao, {
+        detail: JSON.stringify({ requestId, tipo, id, valor })
+      }));
+      setTimeout(() => finalizar(false), 3e3);
+    });
   }
   function acionarControleReactLocal(tipo, id, valor) {
     const obterPropsReact = (elemento) => {
@@ -1618,18 +1645,39 @@
       init_classificarPreenchimento();
       init_detectarProtocolo();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.5.5-20260811.1";
+      var CONTENT_BUILD_ID = "1.5.6-20260811.1";
       var EVENTO_LOG_GERID = "__gerid_rpa_log__";
+      var EVENTO_CONTROLE_GERID = "__gerid_rpa_control_request__";
+      var EVENTO_RESPOSTA_CONTROLE_GERID = "__gerid_rpa_control_response__";
       var emContextoExtensao = typeof chrome !== "undefined" && Boolean(chrome.runtime?.id);
       window.__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
       console.log(
         `[GERID RPA BUILD] ${CONTENT_BUILD_ID} carregado no contexto ${emContextoExtensao ? "extensao" : "pagina"}`
       );
       if (emContextoExtensao) {
+        document.documentElement.dataset.geridRpaControlBridge = CONTENT_BUILD_ID;
         window.addEventListener(EVENTO_LOG_GERID, (evento) => {
           const mensagem = evento.detail;
           if (typeof mensagem !== "string") return;
           chrome.runtime.sendMessage({ action: "content_log", message: mensagem }).catch(() => {
+          });
+        });
+        window.addEventListener(EVENTO_CONTROLE_GERID, (evento) => {
+          const detalhe = JSON.parse(evento.detail || "{}");
+          if (!detalhe.requestId || !detalhe.tipo || !detalhe.id) return;
+          chrome.runtime.sendMessage({
+            action: "gerid_react_control",
+            tipo: detalhe.tipo,
+            id: detalhe.id,
+            valor: detalhe.valor
+          }).then((resposta) => {
+            window.dispatchEvent(new CustomEvent(EVENTO_RESPOSTA_CONTROLE_GERID, {
+              detail: JSON.stringify({ requestId: detalhe.requestId, resposta })
+            }));
+          }).catch((erro) => {
+            window.dispatchEvent(new CustomEvent(EVENTO_RESPOSTA_CONTROLE_GERID, {
+              detail: JSON.stringify({ requestId: detalhe.requestId, resposta: { ok: false, motivo: String(erro) } })
+            }));
           });
         });
       }
