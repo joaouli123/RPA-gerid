@@ -3,10 +3,12 @@ const URL_LOGIN_GERID = 'https://geridinss.dataprev.gov.br/';
 const CHAVE_EXECUCAO_ATIVA = 'execucaoAtivaGerid';
 const CHAVE_ESTADO_AUTENTICACAO = 'estadoAutenticacaoGerid';
 const CHAVE_ULTIMO_AVISO_AUTENTICACAO = 'ultimoAvisoAutenticacaoGerid';
+const CHAVE_LOGS = 'logsGerid';
 const ALARME_RETOMADA = 'retomarExecucaoGerid';
 const ALARME_AUTENTICACAO = 'aguardarAutenticacaoGerid';
 const ALARME_CONFIRMACAO = 'verificarConfirmacaoGerid';
 const MAX_RETOMADAS_AUTOMATICAS = 3;
+const MAX_LOGS = 80;
 
 const EstadoAutenticacao = {
   SEM_ABA: 'sem_aba',
@@ -15,10 +17,17 @@ const EstadoAutenticacao = {
 };
 
 let isRunning = false;
+let filaLogs = Promise.resolve();
 
 function sendLog(message) {
   console.log(message);
   chrome.runtime.sendMessage({ action: 'log', message }).catch(() => {});
+  filaLogs = filaLogs.then(async () => {
+    const salvo = await chrome.storage.local.get([CHAVE_LOGS]);
+    const logs = Array.isArray(salvo[CHAVE_LOGS]) ? salvo[CHAVE_LOGS] : [];
+    logs.unshift({ mensagem: String(message), em: new Date().toISOString() });
+    await chrome.storage.local.set({ [CHAVE_LOGS]: logs.slice(0, MAX_LOGS) });
+  }).catch(() => undefined);
 }
 
 function estadoDaAba(tab) {
@@ -142,6 +151,24 @@ async function localizarAbaGerid(tabId) {
   return aba;
 }
 
+async function lerJsonResposta(resposta, mensagemPadrao) {
+  const texto = typeof resposta.text === 'function'
+    ? await resposta.text()
+    : typeof resposta.json === 'function'
+      ? JSON.stringify(await resposta.json())
+      : '{}';
+  let dados;
+  try {
+    dados = texto ? JSON.parse(texto) : {};
+  } catch {
+    throw new Error(`${mensagemPadrao} O servidor retornou uma resposta invalida (HTTP ${resposta.status}).`);
+  }
+  if (!resposta.ok) {
+    throw new Error(dados.erro || dados.mensagem || `${mensagemPadrao} (HTTP ${resposta.status}).`);
+  }
+  return dados;
+}
+
 async function abrirAutenticacao() {
   let aba;
   try {
@@ -257,8 +284,8 @@ async function buscarFila(apiUrl, apiToken) {
   const resposta = await buscarComTimeout(apiUrl.replace(/\/$/, '') + '/api/ext/fila', {
     headers: headersAutorizacao(apiToken),
   });
-  const dados = await resposta.json();
-  if (!resposta.ok || !dados.sucesso || !dados.casos) {
+  const dados = await lerJsonResposta(resposta, 'Erro ao buscar a fila.');
+  if (!dados.sucesso || !dados.casos) {
     throw new Error(dados.erro || 'Erro ao buscar fila.');
   }
   return dados;
@@ -269,8 +296,8 @@ async function prepararFila(apiUrl, apiToken) {
     method: 'POST',
     headers: headersAutorizacao(apiToken, true),
   });
-  const dados = await resposta.json();
-  if (!resposta.ok || !dados.sucesso) {
+  const dados = await lerJsonResposta(resposta, 'Nao foi possivel preparar a fila.');
+  if (!dados.sucesso) {
     throw new Error(dados.erro || 'Nao foi possivel preparar a fila.');
   }
   return dados;
@@ -350,7 +377,7 @@ async function enviarResultado(apiUrl, apiToken, idExecucao, caso, resultado) {
       pdfNome: resultado.pdfNome,
     }),
   });
-  if (!resposta.ok) throw new Error(`Não foi possível registrar o resultado (HTTP ${resposta.status}).`);
+  await lerJsonResposta(resposta, 'Nao foi possivel registrar o resultado.');
 }
 
 async function detectarProtocoloNaAba(tabId) {
@@ -602,10 +629,8 @@ async function processQueue(
         }
         break;
       }
-      await enviarResultado(apiUrl, apiToken, data.idExecucao, caso, resultado);
-
-      // Revisão é uma parada intencional: preserva a tela preenchida para o
-      // operador e nunca abre outro requerimento por cima dela.
+      // Grave a parada local antes da chamada ao servidor. Se a rede cair
+      // exatamente aqui, a tela preenchida e o CPF atual continuam recuperaveis.
       if (resultado.status === 'revisao') {
         manterExecucaoPendente = true;
         await salvarExecucaoAtiva({
@@ -618,6 +643,13 @@ async function processQueue(
           tentativasRetomada,
           iniciadoEm: new Date().toISOString(),
         });
+      }
+
+      await enviarResultado(apiUrl, apiToken, data.idExecucao, caso, resultado);
+
+      // Revisão é uma parada intencional: preserva a tela preenchida para o
+      // operador e nunca abre outro requerimento por cima dela.
+      if (resultado.status === 'revisao') {
         await enviarHeartbeat(
           apiUrl,
           apiToken,
@@ -634,6 +666,19 @@ async function processQueue(
     }
   } catch (erro) {
     sendLog(`Erro fatal: ${erro?.message || erro}`);
+    const salvo = await chrome.storage.local.get([CHAVE_EXECUCAO_ATIVA]).catch(() => ({}));
+    const ativa = salvo[CHAVE_EXECUCAO_ATIVA];
+    if (ativa?.idExecucao) {
+      manterExecucaoPendente = true;
+      const proximaTentativa = (Number(ativa.tentativasRetomada) || 0) + 1;
+      await salvarExecucaoAtiva({ ...ativa, tentativasRetomada: proximaTentativa });
+      if (proximaTentativa <= MAX_RETOMADAS_AUTOMATICAS && chrome.alarms?.create) {
+        chrome.alarms.create(ALARME_RETOMADA, { delayInMinutes: 0.25 });
+        sendLog(`Nova tentativa automatica agendada (${proximaTentativa}/${MAX_RETOMADAS_AUTOMATICAS}).`);
+      } else {
+        sendLog('A fila foi preservada. Abra a extensao e clique em Iniciar para tentar novamente.');
+      }
+    }
   } finally {
     isRunning = false;
     if (!manterExecucaoPendente) await limparExecucaoAtiva();
@@ -686,6 +731,10 @@ chrome.runtime.onMessage.addListener((request) => {
           return;
         }
         await processQueue(request.apiUrl, request.apiToken, modoTeste, undefined, 0, true);
+      })
+      .catch((erro) => {
+        isRunning = false;
+        sendLog(`Nao foi possivel iniciar: ${erro?.message || erro}`);
       });
   }
   if (request.action === 'open_auth') {
@@ -698,6 +747,9 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  void retomarExecucaoPersistida();
+});
+chrome.runtime.onInstalled?.addListener(() => {
   void retomarExecucaoPersistida();
 });
 chrome.alarms?.onAlarm.addListener((alarme) => {

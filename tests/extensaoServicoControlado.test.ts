@@ -36,6 +36,24 @@ describe('extensão Gerid — combobox controlado de serviço', () => {
         <script>
           const combo = document.querySelector('#idSelecionarServico');
           const radio = document.querySelector('input[id="1655"]');
+          const cpf = document.querySelector('input[id="idRequerente.cpf"]');
+          const descritorValor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+          let valorRastreado = descritorValor.get.call(cpf);
+          Object.defineProperty(cpf, 'value', {
+            configurable: true,
+            get() { return descritorValor.get.call(cpf); },
+            set(valor) {
+              valorRastreado = String(valor);
+              descritorValor.set.call(cpf, valor);
+            },
+          });
+          cpf.addEventListener('input', () => {
+            const valorDom = descritorValor.get.call(cpf);
+            if (valorDom !== valorRastreado) {
+              cpf.dataset.reactAtualizado = 'sim';
+              valorRastreado = valorDom;
+            }
+          });
           document.querySelector('#abrir-lista').addEventListener('click', () => {
             document.querySelector('#idSelecionarServico-itens').hidden = false;
           });
@@ -89,13 +107,17 @@ describe('extensão Gerid — combobox controlado de serviço', () => {
         const combo = document.querySelector<HTMLInputElement>('#idSelecionarServico');
         const cpf = document.querySelector<HTMLInputElement>('input[id="idRequerente.cpf"]');
         return combo?.value === 'Benefício Assistencial à Pessoa com Deficiência'
-          && cpf?.value === '12345678901';
+          && cpf?.value === '12345678901'
+          && cpf?.dataset.reactAtualizado === 'sim';
       }, undefined, { timeout: 13_000 });
 
       expect(await pagina.inputValue('#idSelecionarServico')).toBe(
         'Benefício Assistencial à Pessoa com Deficiência',
       );
       expect(await pagina.inputValue('input[id="idRequerente.cpf"]')).toBe('12345678901');
+      expect(
+        await pagina.getAttribute('input[id="idRequerente.cpf"]', 'data-react-atualizado'),
+      ).toBe('sim');
     } finally {
       await pagina.close();
       await navegador.close();

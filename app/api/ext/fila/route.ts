@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getConfig, getExecucaoAtual, getResultado } from '@/lib/server/store';
+import {
+  garantirFonteConfiavelParaExecucao,
+  getConfig,
+  getExecucaoAtual,
+  getResultado,
+} from '@/lib/server/store';
 import { classificarDocumentos } from '@/src/domain/validacaoDocs';
 import { apenasDigitos } from '@/src/domain/texto';
 import { autorizarExtensao } from '@/lib/server/extensaoAuth';
@@ -30,6 +35,7 @@ export async function GET(req: Request) {
     }
 
     const [resultado, config] = await Promise.all([getResultado(), getConfig()]);
+    garantirFonteConfiavelParaExecucao();
     const prontosPorCpf = new Map(
       resultado.clientesProntos.map((c) => [apenasDigitos(c.cliente.cpf), c]),
     );

@@ -7,7 +7,7 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { MobileNav } from '@/components/layout/MobileNav';
 
 /** Rotas que não usam o shell (sem menu, sem sessão). */
-const SEM_SHELL = ['/login'];
+const SEM_SHELL = ['/login', '/privacidade-extensao'];
 
 /**
  * Client component de propósito: precisa do pathname para esconder o menu na

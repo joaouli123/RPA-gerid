@@ -3,11 +3,6 @@
 import { useCallback, useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CasoExecucao, ExecucaoAtual } from '@/lib/types';
-import {
-  acaoIniciarExecucao,
-  acaoLimparExecucao,
-  acaoObterExecucaoAtual,
-} from '@/lib/server/actions';
 import { Card } from '@/components/ui/Card';
 import { Botao } from '@/components/ui/Botao';
 import { StatusPill, type Tom } from '@/components/ui/Badge';
@@ -40,6 +35,13 @@ const ESTADO_GERID = {
   revisao: { rotulo: 'Aguardando revisão', tom: 'ambar' },
 } as const satisfies Record<NonNullable<ExecucaoAtual['estadoGerid']>, { rotulo: string; tom: Tom }>;
 
+async function mensagemDaResposta(resposta: Response, padrao: string): Promise<string> {
+  const dados = await resposta.json().catch(() => null) as
+    | { erro?: string; mensagem?: string }
+    | null;
+  return dados?.mensagem || dados?.erro || padrao;
+}
+
 export function ExecucaoProgresso({
   inicial,
   prontos,
@@ -67,7 +69,12 @@ export function ExecucaoProgresso({
   const progresso = casos.length > 0 ? Math.round((concluidos / casos.length) * 100) : 0;
 
   const buscarProgresso = useCallback(async (): Promise<ExecucaoAtual | null> => {
-    const execucao = await acaoObterExecucaoAtual();
+    const resposta = await fetch('/api/execucao/atual', { cache: 'no-store' });
+    if (!resposta.ok) {
+      throw new Error(await mensagemDaResposta(resposta, 'Falha ao consultar o progresso.'));
+    }
+    const dados = await resposta.json() as { execucao: ExecucaoAtual | null };
+    const execucao = dados.execucao;
     setAtual(execucao);
     setErro(null);
     return execucao;
@@ -100,7 +107,10 @@ export function ExecucaoProgresso({
     setErro(null);
     startTransition(async () => {
       try {
-        await acaoIniciarExecucao();
+        const resposta = await fetch('/api/executar', { method: 'POST' });
+        if (!resposta.ok) {
+          throw new Error(await mensagemDaResposta(resposta, 'Nao foi possivel iniciar a execucao.'));
+        }
         await buscarProgresso();
       } catch (e: unknown) {
         setErro(e instanceof Error ? e.message : 'Não foi possível iniciar a execução.');
@@ -112,7 +122,10 @@ export function ExecucaoProgresso({
     setErro(null);
     startTransition(async () => {
       try {
-        await acaoLimparExecucao();
+        const resposta = await fetch('/api/execucao/atual', { method: 'DELETE' });
+        if (!resposta.ok) {
+          throw new Error(await mensagemDaResposta(resposta, 'Nao foi possivel limpar a execucao.'));
+        }
         setAtual(null);
       } catch (e: unknown) {
         setErro(e instanceof Error ? e.message : 'Não foi possível limpar a execução.');

@@ -9,12 +9,18 @@ describe('GET /api/health', () => {
     expect(resposta.status).toBe(200);
     expect(await resposta.json()).toEqual({
       status: 'ok',
-      release: 'gerid-rpa-1.2.0',
+      release: 'gerid-rpa-1.4.0',
     });
   });
 
   it('é público para permitir a verificação externa do Coolify', async () => {
     const resposta = await middleware(new NextRequest('https://rpa.test/api/health'));
+    expect(resposta.status).toBe(200);
+    expect(resposta.headers.get('x-middleware-next')).toBe('1');
+  });
+
+  it('mantem a politica de privacidade publica para a Chrome Web Store', async () => {
+    const resposta = await middleware(new NextRequest('https://rpa.test/privacidade-extensao'));
     expect(resposta.status).toBe(200);
     expect(resposta.headers.get('x-middleware-next')).toBe('1');
   });

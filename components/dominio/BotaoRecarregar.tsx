@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { acaoRecarregarDados } from '@/lib/server/actions';
+import { useRouter } from 'next/navigation';
 import { Botao } from '@/components/ui/Botao';
 import { Icone } from '@/components/ui/Icone';
 
 /** Re-roda o Módulo 1 (leitura do Drive + planilha) e atualiza todas as telas. */
 export function BotaoRecarregar() {
+  const router = useRouter();
   const [pendente, startTransition] = useTransition();
   const [erro, setErro] = useState<string | null>(null);
 
@@ -14,7 +15,10 @@ export function BotaoRecarregar() {
     setErro(null);
     startTransition(async () => {
       try {
-        await acaoRecarregarDados();
+        const resposta = await fetch('/api/resultado', { method: 'POST' });
+        const dados = await resposta.json().catch(() => null);
+        if (!resposta.ok) throw new Error(dados?.mensagem || 'Falha ao recarregar os dados.');
+        router.refresh();
       } catch (e: unknown) {
         setErro(e instanceof Error ? e.message : 'Falha ao recarregar os dados.');
       }

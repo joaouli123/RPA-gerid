@@ -34,6 +34,19 @@
     }
     .auth-dot { width: 9px; height: 9px; border-radius: 50%; background: #d97706; flex: none; }
     .auth-box.ok .auth-dot { background: #15803d; }
+    .consent-box {
+      border: 1px solid #93c5fd;
+      background: #eff6ff;
+      border-radius: 6px;
+      padding: 10px;
+      margin-bottom: 12px;
+      font-size: 12px;
+      line-height: 1.4;
+      color: #1e3a8a;
+    }
+    .consent-box p { margin: 0 0 8px; }
+    .consent-box a { color: #1d4ed8; }
+    .consent-box button { margin-top: 10px; }
     button {
       width: 100%;
       padding: 10px;
@@ -74,6 +87,20 @@
 </head>
 <body>
   <h2>Gerid RPA Automator <span id="versionLabel"></span></h2>
+
+  <div class="consent-box" id="consentBox" hidden>
+    <p>
+      Para preencher o GERID, a extensao recebe do sistema da organizacao dados cadastrais,
+      grupo familiar e documentos do caso. Esses dados sao usados somente no protocolo do INSS
+      e nao sao vendidos nem usados para publicidade.
+    </p>
+    <a
+      href="https://vmkcogtpgc1dgd5ae6gjfz1n.179.198.98.63.sslip.io/privacidade-extensao"
+      target="_blank"
+      rel="noreferrer"
+    >Ler politica de privacidade</a>
+    <button id="btnConsent">Li e concordo</button>
+  </div>
   
   <div class="status-box">
     <div class="status-text" id="statusLabel">Verificando fila...</div>

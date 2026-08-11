@@ -27,6 +27,12 @@
     esperado.lastIndex = 0;
     return esperado.test(texto);
   }
+  function definirPropriedadeNativa(elemento, propriedade, valor) {
+    const prototipo = elemento instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototipo, propriedade)?.set;
+    if (setter) setter.call(elemento, valor);
+    else elemento[propriedade] = valor;
+  }
   var MockLocator, MockPage;
   var init_playwright_polyfill = __esm({
     "src/playwright-polyfill.ts"() {
@@ -59,7 +65,16 @@
           throw new Error(`Timeout waiting for selector: ${this.selector}`);
         }
         async waitFor(options) {
-          await this._waitForElement(options?.timeout || 5e3);
+          const estado = options?.state || "visible";
+          const limite = Date.now() + (options?.timeout || 5e3);
+          while (Date.now() < limite) {
+            const elemento = await this._getElement();
+            const anexado = Boolean(elemento?.isConnected);
+            const visivel2 = Boolean(elemento && estaInteragivel(elemento));
+            if (estado === "visible" && visivel2 || estado === "hidden" && !visivel2 || estado === "attached" && anexado || estado === "detached" && !anexado) return;
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          throw new Error(`Timeout waiting for selector (${estado}): ${this.selector}`);
         }
         async count() {
           try {
@@ -104,14 +119,14 @@
         }
         async click() {
           const el = await this._waitForElement();
-          el.click();
-          if (el.tagName === "INPUT") {
-            el.dispatchEvent(new Event("change", { bubbles: true }));
+          if ((el instanceof HTMLButtonElement || el instanceof HTMLInputElement) && (el.disabled || el.getAttribute("aria-disabled") === "true")) {
+            throw new Error(`Element is disabled: ${this.selector}`);
           }
+          el.click();
         }
         async fill(value) {
           const el = await this._waitForElement();
-          el.value = value;
+          definirPropriedadeNativa(el, "value", value);
           el.dispatchEvent(new Event("input", { bubbles: true }));
           el.dispatchEvent(new Event("change", { bubbles: true }));
         }
@@ -139,7 +154,7 @@
             else el.click();
           }
           if (!el.checked) {
-            el.checked = true;
+            definirPropriedadeNativa(el, "checked", true);
             el.dispatchEvent(new Event("input", { bubbles: true }));
             el.dispatchEvent(new Event("change", { bubbles: true }));
           }

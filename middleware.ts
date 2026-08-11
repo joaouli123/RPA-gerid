@@ -9,7 +9,7 @@ import { COOKIE_SESSAO, lerSessao } from '@/lib/server/sessao';
  * esteja na lista abaixo exige sessão válida — inclusive as rotas de API.
  */
 
-const ROTAS_PUBLICAS = new Set(['/login', '/api/health']);
+const ROTAS_PUBLICAS = new Set(['/login', '/privacidade-extensao', '/api/health']);
 
 /** Valor aleatório que autoriza os scripts desta resposta (e só desta). */
 function gerarNonce(): string {
@@ -78,7 +78,7 @@ export async function middleware(req: NextRequest) {
   const sessao = await lerSessao(req.cookies.get(COOKIE_SESSAO)?.value).catch(() => null);
 
   // Já logado tentando abrir /login -> manda para o painel.
-  if (ROTAS_PUBLICAS.has(pathname) && sessao) {
+  if (pathname === '/login' && sessao) {
     return comSeguranca(NextResponse.redirect(new URL('/painel', req.url)), req, nonce);
   }
 

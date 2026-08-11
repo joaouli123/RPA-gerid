@@ -17,6 +17,19 @@ function casaTexto(elemento: HTMLElement, esperado: string | RegExp, exato = fal
   return esperado.test(texto);
 }
 
+function definirPropriedadeNativa(
+  elemento: HTMLInputElement | HTMLTextAreaElement,
+  propriedade: 'value' | 'checked',
+  valor: string | boolean,
+): void {
+  const prototipo = elemento instanceof HTMLTextAreaElement
+    ? HTMLTextAreaElement.prototype
+    : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(prototipo, propriedade)?.set;
+  if (setter) setter.call(elemento, valor);
+  else (elemento as any)[propriedade] = valor;
+}
+
 class MockLocator {
   selector: string;
   parent?: MockLocator;
@@ -50,7 +63,21 @@ class MockLocator {
   }
 
   async waitFor(options?: { state?: 'visible' | 'hidden' | 'attached' | 'detached', timeout?: number }) {
-    await this._waitForElement(options?.timeout || 5000);
+    const estado = options?.state || 'visible';
+    const limite = Date.now() + (options?.timeout || 5000);
+    while (Date.now() < limite) {
+      const elemento = await this._getElement();
+      const anexado = Boolean(elemento?.isConnected);
+      const visivel = Boolean(elemento && estaInteragivel(elemento));
+      if (
+        (estado === 'visible' && visivel) ||
+        (estado === 'hidden' && !visivel) ||
+        (estado === 'attached' && anexado) ||
+        (estado === 'detached' && !anexado)
+      ) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`Timeout waiting for selector (${estado}): ${this.selector}`);
   }
 
   async count() {
@@ -103,16 +130,18 @@ class MockLocator {
 
   async click() {
     const el = await this._waitForElement();
-    el.click();
-    // Dispatch events if it's a radio or checkbox
-    if (el.tagName === 'INPUT') {
-      el.dispatchEvent(new Event('change', { bubbles: true }));
+    if (
+      (el instanceof HTMLButtonElement || el instanceof HTMLInputElement) &&
+      (el.disabled || el.getAttribute('aria-disabled') === 'true')
+    ) {
+      throw new Error(`Element is disabled: ${this.selector}`);
     }
+    el.click();
   }
 
   async fill(value: string) {
-    const el = await this._waitForElement() as HTMLInputElement;
-    el.value = value;
+    const el = await this._waitForElement() as HTMLInputElement | HTMLTextAreaElement;
+    definirPropriedadeNativa(el, 'value', value);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }
@@ -148,7 +177,7 @@ class MockLocator {
       else el.click();
     }
     if (!el.checked) {
-      el.checked = true;
+      definirPropriedadeNativa(el, 'checked', true);
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
     }

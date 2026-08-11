@@ -4,7 +4,6 @@ import { useMemo, useState, useTransition } from 'react';
 import type { ClienteRevisao } from '@/src/domain/types';
 import type { CodigoMotivo as Codigo } from '@/src/domain/motivos';
 import { infoDoMotivo } from '@/lib/motivos';
-import { acaoDesfazerRevisao, acaoRegistrarRevisao } from '@/lib/server/actions';
 import type { RegistroAcaoRevisao } from '@/lib/types';
 import { Card } from '@/components/ui/Card';
 import { Badge, type Tom } from '@/components/ui/Badge';
@@ -34,6 +33,8 @@ export function FilaRevisao({
   acoes: Record<string, RegistroAcaoRevisao>;
 }) {
   const [pendente, setPendente] = useState<string | null>(null);
+  const [registros, setRegistros] = useState(acoes);
+  const [erro, setErro] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
   const grupos = useMemo(() => {
@@ -55,17 +56,41 @@ export function FilaRevisao({
 
   function registrar(chave: string, acao: 'resolvido' | 'reprocessar') {
     setPendente(chave);
+    setErro(null);
     startTransition(async () => {
-      await acaoRegistrarRevisao(chave, acao);
-      setPendente(null);
+      try {
+        const resposta = await fetch('/api/revisao', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chave, acao }),
+        });
+        const dados = await resposta.json().catch(() => null);
+        if (!resposta.ok) throw new Error(dados?.mensagem || 'Nao foi possivel salvar a revisao.');
+        setRegistros(dados);
+      } catch (e) {
+        setErro(e instanceof Error ? e.message : 'Nao foi possivel salvar a revisao.');
+      } finally {
+        setPendente(null);
+      }
     });
   }
 
   function desfazer(chave: string) {
     setPendente(chave);
+    setErro(null);
     startTransition(async () => {
-      await acaoDesfazerRevisao(chave);
-      setPendente(null);
+      try {
+        const resposta = await fetch(`/api/revisao?chave=${encodeURIComponent(chave)}`, {
+          method: 'DELETE',
+        });
+        const dados = await resposta.json().catch(() => null);
+        if (!resposta.ok) throw new Error(dados?.mensagem || 'Nao foi possivel desfazer a revisao.');
+        setRegistros(dados);
+      } catch (e) {
+        setErro(e instanceof Error ? e.message : 'Nao foi possivel desfazer a revisao.');
+      } finally {
+        setPendente(null);
+      }
     });
   }
 
@@ -73,10 +98,11 @@ export function FilaRevisao({
     return <EmptyState titulo="Fila vazia" descricao="Nenhum caso em revisão manual." />;
   }
 
-  const totalResolvidos = Object.values(acoes).filter((a) => a.acao === 'resolvido').length;
+  const totalResolvidos = Object.values(registros).filter((a) => a.acao === 'resolvido').length;
 
   return (
     <div className="space-y-5">
+      {erro && <p className="text-sm text-rose-600 dark:text-rose-400">{erro}</p>}
       {totalResolvidos > 0 && (
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
           {totalResolvidos} caso(s) marcados como resolvidos. As marcações ficam salvas.
@@ -102,7 +128,7 @@ export function FilaRevisao({
 
             <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
               {itens.map((item) => {
-                const registro = acoes[item.chave];
+                const registro = registros[item.chave];
                 const resolvido = registro?.acao === 'resolvido';
                 const reprocessar = registro?.acao === 'reprocessar';
                 const ocupado = pendente === item.chave;

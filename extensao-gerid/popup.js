@@ -10,6 +10,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const apiTokenInput = document.getElementById('apiToken');
   const modoTesteInput = document.getElementById('modoTeste');
   const logDiv = document.getElementById('log');
+  const consentBox = document.getElementById('consentBox');
+  const btnConsent = document.getElementById('btnConsent');
   document.getElementById('versionLabel').innerText = `v${chrome.runtime.getManifest().version}`;
 
   function log(msg) {
@@ -18,7 +20,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Migra automaticamente a configuração que apontava para o Railway.
   chrome.storage.local.get(
-    ['apiUrl', 'apiToken', 'modoTeste', 'estadoAutenticacaoGerid', 'execucaoAtivaGerid'],
+    [
+      'apiUrl',
+      'apiToken',
+      'modoTeste',
+      'estadoAutenticacaoGerid',
+      'execucaoAtivaGerid',
+      'logsGerid',
+      'consentimentoPrivacidadeGerid',
+    ],
     (result) => {
     if (result.apiUrl && !/\.railway\.app(?:\/|$)/i.test(result.apiUrl)) {
       apiUrlInput.value = result.apiUrl;
@@ -27,13 +37,27 @@ document.addEventListener('DOMContentLoaded', () => {
       chrome.storage.local.set({ apiUrl: API_URL_PADRAO });
     }
     if (result.apiToken) apiTokenInput.value = result.apiToken;
+    if (Array.isArray(result.logsGerid) && result.logsGerid.length > 0) {
+      logDiv.innerText = result.logsGerid
+        .slice(0, 20)
+        .map((item) => item?.mensagem || String(item))
+        .join('\n');
+    }
     modoTesteInput.checked = result.modoTeste !== false;
     renderAuth(result.estadoAutenticacaoGerid);
     if (result.execucaoAtivaGerid?.aguardandoConfirmacao) {
       statusLabel.innerText = 'Aguardando confirmação no GERID';
       btnStart.innerText = 'Verificar protocolo';
     }
-    checkQueue();
+    if (result.consentimentoPrivacidadeGerid === true) {
+      consentBox.hidden = true;
+      checkQueue();
+    } else {
+      consentBox.hidden = false;
+      statusLabel.innerText = 'Ativacao necessaria';
+      countLabel.innerText = '-';
+      btnStart.disabled = true;
+    }
     },
   );
 
@@ -58,13 +82,28 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   modoTesteInput.addEventListener('change', salvarConfiguracao);
 
+  btnConsent.addEventListener('click', async () => {
+    await chrome.storage.local.set({ consentimentoPrivacidadeGerid: true });
+    consentBox.hidden = true;
+    checkQueue();
+  });
+
   async function checkQueue() {
     const url = apiUrlInput.value.replace(/\/$/, '') + '/api/ext/fila';
+    const controlador = new AbortController();
+    const temporizador = setTimeout(() => controlador.abort(), 20_000);
     try {
       if (!apiTokenInput.value.trim()) throw new Error('Informe a chave da extensão configurada no Coolify.');
       log('Buscando fila em ' + url);
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${apiTokenInput.value.trim()}` } });
-      const data = await res.json();
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${apiTokenInput.value.trim()}` },
+        signal: controlador.signal,
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.erro || `Servidor respondeu HTTP ${res.status}.`);
+      }
+      if (!data) throw new Error('O servidor retornou uma resposta invalida.');
       const salvo = await chrome.storage.local.get(['execucaoAtivaGerid']);
       const aguardandoConfirmacao = salvo.execucaoAtivaGerid?.aguardandoConfirmacao;
       
@@ -96,11 +135,14 @@ document.addEventListener('DOMContentLoaded', () => {
       statusLabel.innerText = 'Erro de conexão';
       countLabel.innerText = 'X';
       btnStart.disabled = true;
-      log('Erro: ' + e.message);
+      log('Erro: ' + (e.name === 'AbortError' ? 'a conexao excedeu 20 segundos.' : e.message));
+    } finally {
+      clearTimeout(temporizador);
     }
   }
 
   btnStart.addEventListener('click', () => {
+    salvarConfiguracao();
     btnStart.disabled = true;
     chrome.runtime.sendMessage({
       action: 'start',

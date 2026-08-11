@@ -3,7 +3,6 @@
 import { useState, useTransition, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Cliente, Integrante } from '@/src/domain/types';
-import { acaoExcluirCliente, acaoSalvarCliente } from '@/lib/server/actions';
 import { Card } from '@/components/ui/Card';
 import { Botao } from '@/components/ui/Botao';
 import { Icone } from '@/components/ui/Icone';
@@ -81,11 +80,17 @@ export function ClienteForm({
     setErros([]);
     startTransition(async () => {
       try {
-        await acaoSalvarCliente({ cliente, integrantes });
+        const resposta = await fetch('/api/clientes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cliente, integrantes }),
+        });
+        const dados = await resposta.json().catch(() => null);
+        if (!resposta.ok) throw new Error(dados?.mensagem || 'Nao foi possivel salvar o cliente.');
+        router.push('/clientes');
+        router.refresh();
       } catch (err: unknown) {
-        // redirect() do Next lança um erro de controle — não é falha real.
         const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes('NEXT_REDIRECT')) return;
         setErros(msg.split(/(?<=\.)\s+/).filter(Boolean));
       }
     });
@@ -108,10 +113,15 @@ export function ClienteForm({
     setConfirmandoExclusao(false);
     startTransition(async () => {
       try {
-        await acaoExcluirCliente(clienteInicial.cpf);
+        const resposta = await fetch(`/api/clientes/${encodeURIComponent(clienteInicial.cpf)}`, {
+          method: 'DELETE',
+        });
+        const dados = await resposta.json().catch(() => null);
+        if (!resposta.ok) throw new Error(dados?.mensagem || 'Nao foi possivel excluir o cliente.');
+        router.push('/clientes');
+        router.refresh();
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes('NEXT_REDIRECT')) return;
         setErros([msg]);
       }
     });

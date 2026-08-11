@@ -9,7 +9,10 @@ export const dynamic = 'force-dynamic';
 export async function POST() {
   try {
     const execucao = await iniciarExecucao();
-    return NextResponse.json({ execucao, simulado: false, executor: 'extensao' }, { status: 202 });
+    return NextResponse.json(
+      { execucao, simulado: false, executor: 'extensao' },
+      { status: 202, headers: { 'Cache-Control': 'no-store' } },
+    );
   } catch (erro: unknown) {
     return NextResponse.json(
       {

@@ -2,7 +2,6 @@
 
 import { useState, useTransition, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import type { AppConfig } from '@/config/default';
-import { acaoSalvarConfig } from '@/lib/server/actions';
 import { Card } from '@/components/ui/Card';
 import { Botao } from '@/components/ui/Botao';
 import { Icone } from '@/components/ui/Icone';
@@ -50,20 +49,26 @@ export function ConfiguracoesForm({ config }: { config: AppConfig }) {
 
     startTransition(async () => {
       try {
-        await acaoSalvarConfig({
-          limiteTamanhoArquivoBytes: Math.round(limiteMB * 1024 * 1024),
-          telefonePadrao: form.telefonePadrao,
-          procurador: {
-            nome: form.procNome,
-            cpf: form.procCpf,
-            oab: form.procOab,
-            email: form.procEmail,
-          },
-          pastaRaizId: form.pastaRaizId,
-          spreadsheetId: form.spreadsheetId,
-          abaClientes: form.abaClientes,
-          abaGrupoFamiliar: form.abaGrupoFamiliar,
+        const resposta = await fetch('/api/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            limiteTamanhoArquivoBytes: Math.round(limiteMB * 1024 * 1024),
+            telefonePadrao: form.telefonePadrao,
+            procurador: {
+              nome: form.procNome,
+              cpf: form.procCpf,
+              oab: form.procOab,
+              email: form.procEmail,
+            },
+            pastaRaizId: form.pastaRaizId,
+            spreadsheetId: form.spreadsheetId,
+            abaClientes: form.abaClientes,
+            abaGrupoFamiliar: form.abaGrupoFamiliar,
+          }),
         });
+        const dados = await resposta.json().catch(() => null);
+        if (!resposta.ok) throw new Error(dados?.mensagem || 'Nao foi possivel salvar as configuracoes.');
         setSalvo(true);
       } catch (err: unknown) {
         setErro(err instanceof Error ? err.message : 'Não foi possível salvar as configurações.');

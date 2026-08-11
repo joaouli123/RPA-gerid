@@ -1,34 +1,27 @@
-GERID RPA AUTOMATOR - ATUALIZACAO 1.3.2
+GERID RPA AUTOMATOR - VERSAO ESTAVEL 1.4.0
 
-O QUE ESTA VERSAO FAZ
+PRINCIPAIS GARANTIAS
 
 - prepara a fila diretamente pela extensao;
-- abre a autenticacao quando nao existe sessao do GERID;
-- preserva a fila durante SafeID e codigo de 6 digitos;
-- retoma o preenchimento quando a sessao autenticada volta;
+- preserva e retoma a fila durante SafeID, MFA, reinicio do Chrome e atualizacao;
 - seleciona automaticamente abrangencia e papel no LOGIN - PAT;
 - confirma somente o aviso informativo do certificado A3;
-- reconhece modais de autenticacao antes de considerar a sessao pronta;
-- seleciona o servico BPC pelo item controlado do portal;
-- aguarda a validacao do GERID liberar o botao Avancar em cada etapa;
-- para na tela Confirmar para revisao humana;
-- depois do clique humano, detecta e registra o protocolo real;
-- continua o proximo caso automaticamente quando o modo teste esta desligado;
-- nunca marca sucesso sem um numero de protocolo encontrado na tela do GERID.
+- nunca confirma o requerimento final no lugar do operador;
+- preenche campos React pelo evento nativo esperado pelo GERID;
+- aguarda a validacao de cada etapa antes de avancar;
+- mantem os ultimos 80 eventos para diagnostico, mesmo com o popup fechado;
+- preserva o caso e agenda nova tentativa em falhas de rede ou reinicio;
+- registra sucesso somente depois de encontrar um protocolo real na tela;
+- bloqueia a execucao se a origem Google estiver indisponivel ou em demonstracao.
 
-COMO INSTALAR OU ATUALIZAR
+INSTALACAO PELA CHROME WEB STORE
 
-1. Abra chrome://extensions no Google Chrome.
-2. Ative o Modo do desenvolvedor.
-3. Remova ou desative a versao antiga do Gerid RPA Automator.
-4. Clique em "Carregar sem compactacao".
-5. Selecione esta pasta extensao-gerid.
-6. Confirme que a versao exibida e 1.3.2.
-7. Abra a extensao e expanda "Configuracao avancada".
-8. Informe a URL do Coolify e a chave RPA_EXTENSAO_TOKEN.
-9. Clique fora dos campos para salvar.
+1. Instale a extensao pela ficha privada ou nao listada fornecida pela organizacao.
+2. Na primeira instalacao, abra Configuracao avancada e informe a chave uma vez.
+3. A configuracao fica no armazenamento local do Chrome.
+4. Atualizacoes futuras sao instaladas automaticamente e preservam a chave.
 
-PRIMEIRO TESTE
+PRIMEIRA VALIDACAO
 
 1. Deixe "Testar somente o primeiro caso da fila" marcado.
 2. Clique em "Preparar e iniciar".
@@ -37,16 +30,16 @@ PRIMEIRO TESTE
 5. Confirme manualmente.
 6. Verifique no painel se o protocolo real foi registrado.
 
-OPERACAO DA FILA
+OPERACAO
 
-- Depois que o primeiro teste for validado, desmarque o modo teste.
+- Depois da validacao, desmarque o modo teste para processar toda a fila.
 - A extensao preenche um caso e espera a revisao humana.
 - Ao confirmar, ela registra o protocolo e abre o proximo caso.
-- Se a sessao expirar, a fila fica pausada ate a nova autenticacao.
+- Se a sessao expirar, a fila pausa e retoma depois da autenticacao.
 - Mantenha a aba do GERID aberta durante a execucao.
 
 SEGURANCA
 
 - O SafeID e o MFA continuam sendo confirmados pelo titular.
-- A extensao nao confirma o requerimento no lugar do advogado.
-- Esta pasta nao contem senhas, chaves nem dados de clientes.
+- A extensao nao confirma o requerimento no lugar do operador.
+- O pacote publicado nao contem senhas, chaves nem dados de clientes.

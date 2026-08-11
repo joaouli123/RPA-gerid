@@ -441,6 +441,19 @@ export async function atualizarStatusCaso(
   await persistir();
 }
 
+/** Impede que um lote real seja criado com o fallback de demonstracao. */
+export function garantirFonteConfiavelParaExecucao(): void {
+  if (process.env.NODE_ENV === 'test') return;
+  if (!usandoDadosReais()) {
+    throw new Error(
+      'Execucao bloqueada: as credenciais e os IDs do Google Drive nao estao completos.',
+    );
+  }
+  if (cache.erroFonte) {
+    throw new Error(`Execucao bloqueada: a leitura do Google Drive falhou. ${cache.erroFonte}`);
+  }
+}
+
 /** Registra que a extensao continua ativa e informa a etapa atual do GERID. */
 export async function registrarSinalExtensao(
   idExecucao: string,
@@ -516,6 +529,7 @@ export async function iniciarExecucao(): Promise<ExecucaoAtual> {
   if (estado.execucaoAtual?.status === 'rodando') return structuredClone(estado.execucaoAtual);
 
   const resultado = await getResultado();
+  garantirFonteConfiavelParaExecucao();
   const casos: CasoExecucao[] = resultado.clientesProntos.map((c) => ({
     cpf: c.cliente.cpf,
     nome: c.cliente.nome,
