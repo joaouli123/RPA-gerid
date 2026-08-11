@@ -33,9 +33,14 @@ export interface DiagnosticoGerid {
 function estaVisivel(elemento: Element | null): elemento is HTMLElement {
   if (!(elemento instanceof HTMLElement)) return false;
   if (elemento instanceof HTMLInputElement && elemento.type === 'file') {
-    return Boolean(elemento.closest<HTMLElement>('.containerAnexo')?.offsetParent);
+    elemento = elemento.closest<HTMLElement>('.containerAnexo') ?? elemento;
   }
-  return elemento.offsetParent !== null;
+  if (!elemento.isConnected) return false;
+  const estilo = window.getComputedStyle(elemento);
+  return estilo.display !== 'none' &&
+    estilo.visibility !== 'hidden' &&
+    estilo.visibility !== 'collapse' &&
+    elemento.getClientRects().length > 0;
 }
 
 function normalizar(texto: string | null | undefined): string {

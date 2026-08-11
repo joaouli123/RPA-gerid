@@ -98,6 +98,23 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
         </script>
       `);
 
+      // Reproduz o carrossel do GERID real: os controles possuem geometria e
+      // estilo visivel, mas offsetParent e null em toda a etapa 4.
+      await pagina.evaluate(() => {
+        const getterOriginal = Object.getOwnPropertyDescriptor(
+          HTMLElement.prototype,
+          'offsetParent',
+        )?.get;
+        Object.defineProperty(HTMLElement.prototype, 'offsetParent', {
+          configurable: true,
+          get() {
+            if ((this as HTMLElement).closest('#passo4')) return null;
+            if ((this as HTMLElement).closest('[hidden]')) return null;
+            return getterOriginal?.call(this) ?? document.body;
+          },
+        });
+      });
+
       const bundle = await readFile(path.join(process.cwd(), 'extensao-gerid', 'content.js'), 'utf8');
       await pagina.addScriptTag({ content: bundle });
       const execucao = pagina.evaluate(() =>

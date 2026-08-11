@@ -861,7 +861,13 @@ async function contatoExisteNoDialogo(page: Page, tipo: string, valor: string): 
     const soDigitos = (entrada: string) => entrada.replace(/\D/g, '');
     const dialogo = document.querySelector<HTMLElement>('#selectTipoContato')?.closest<HTMLElement>('[role="dialog"]') ??
       Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]'))
-        .find((elemento) => elemento.offsetParent !== null && /contatos/i.test(elemento.innerText));
+        .find((elemento) => {
+          const estilo = window.getComputedStyle(elemento);
+          return elemento.getClientRects().length > 0 &&
+            estilo.display !== 'none' &&
+            estilo.visibility !== 'hidden' &&
+            /contatos/i.test(elemento.innerText);
+        });
     if (!dialogo) return false;
     return Array.from(dialogo.querySelectorAll<HTMLElement>('tbody tr')).some((linha) => {
       const texto = normalizarTexto(linha.innerText);

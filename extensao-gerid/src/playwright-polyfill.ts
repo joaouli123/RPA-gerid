@@ -4,10 +4,18 @@
  */
 
 function estaInteragivel(elemento: HTMLElement): boolean {
-  return (
-    (elemento instanceof HTMLInputElement && elemento.type === 'file') ||
-    elemento.offsetParent !== null
-  );
+  if (elemento instanceof HTMLInputElement && elemento.type === 'file') return true;
+  if (!elemento.isConnected) return false;
+
+  const estilo = window.getComputedStyle(elemento);
+  if (estilo.display === 'none' || estilo.visibility === 'hidden' || estilo.visibility === 'collapse') {
+    return false;
+  }
+
+  // Alguns paineis do wizard real possuem geometria visivel, mas o Chrome
+  // devolve offsetParent=null para toda a arvore. getClientRects acompanha o
+  // que esta efetivamente renderizado sem descartar esses controles.
+  return elemento.getClientRects().length > 0;
 }
 
 function casaTexto(elemento: HTMLElement, esperado: string | RegExp, exato = false): boolean {
@@ -72,11 +80,7 @@ class MockLocator {
     const start = Date.now();
     while (Date.now() - start < timeout) {
       const el = await this._getElement();
-      // considera visível se offsetParent não for nulo, exceto p/ inputs hidden/file
-      if (el) {
-        if (el.tagName === 'INPUT' && (el as HTMLInputElement).type === 'file') return el;
-        if (el.offsetParent !== null) return el;
-      }
+      if (el && estaInteragivel(el)) return el;
       await new Promise(r => setTimeout(r, 25));
     }
     throw new Error(`Timeout waiting for selector: ${this.selector}`);

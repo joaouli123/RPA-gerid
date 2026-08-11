@@ -11,7 +11,7 @@ import {
   resumirDiagnosticoGerid,
 } from './estadoGerid';
 
-const CONTENT_BUILD_ID = '1.5.1-20260811.7';
+const CONTENT_BUILD_ID = '1.5.1-20260811.8';
 (window as any).__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
 
 function logToBackground(message: string) {
@@ -29,6 +29,15 @@ function textoNormalizado(valor: string | null | undefined): string {
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
+}
+
+function elementoRenderizado(elemento: HTMLElement): boolean {
+  const estilo = window.getComputedStyle(elemento);
+  return elemento.isConnected &&
+    estilo.display !== 'none' &&
+    estilo.visibility !== 'hidden' &&
+    estilo.visibility !== 'collapse' &&
+    elemento.getClientRects().length > 0;
 }
 
 function selecionarOpcaoNativa(
@@ -55,7 +64,7 @@ async function resolverBloqueiosConhecidosGerid() {
     // ser concluido antes que /tarefas ou /requerimentos fique disponivel.
     if (textoPagina.includes('login - pat') && textoPagina.includes('abrangencia')) {
       const selects = Array.from(document.querySelectorAll<HTMLSelectElement>('select'))
-        .filter((campo) => campo.offsetParent !== null);
+        .filter(elementoRenderizado);
       const abrangencia = selects[0];
       const papel = selects[1];
 
@@ -130,7 +139,7 @@ async function resolverBloqueiosConhecidosGerid() {
   const botaoPrimeiroPasso = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
     .find((botao) => {
       const texto = textoNormalizado(botao.innerText);
-      return botao.offsetParent !== null && texto.includes('selecionar servico');
+      return elementoRenderizado(botao) && texto.includes('selecionar servico');
     });
   if (!botaoPrimeiroPasso) return false;
 

@@ -19,7 +19,13 @@
 
   // src/playwright-polyfill.ts
   function estaInteragivel(elemento) {
-    return elemento instanceof HTMLInputElement && elemento.type === "file" || elemento.offsetParent !== null;
+    if (elemento instanceof HTMLInputElement && elemento.type === "file") return true;
+    if (!elemento.isConnected) return false;
+    const estilo = window.getComputedStyle(elemento);
+    if (estilo.display === "none" || estilo.visibility === "hidden" || estilo.visibility === "collapse") {
+      return false;
+    }
+    return elemento.getClientRects().length > 0;
   }
   function casaTexto(elemento, esperado, exato = false) {
     const texto = elemento.textContent?.trim() ?? "";
@@ -75,10 +81,7 @@
           const start = Date.now();
           while (Date.now() - start < timeout) {
             const el = await this._getElement();
-            if (el) {
-              if (el.tagName === "INPUT" && el.type === "file") return el;
-              if (el.offsetParent !== null) return el;
-            }
+            if (el && estaInteragivel(el)) return el;
             await new Promise((r) => setTimeout(r, 25));
           }
           throw new Error(`Timeout waiting for selector: ${this.selector}`);
@@ -435,9 +438,11 @@
   function estaVisivel(elemento) {
     if (!(elemento instanceof HTMLElement)) return false;
     if (elemento instanceof HTMLInputElement && elemento.type === "file") {
-      return Boolean(elemento.closest(".containerAnexo")?.offsetParent);
+      elemento = elemento.closest(".containerAnexo") ?? elemento;
     }
-    return elemento.offsetParent !== null;
+    if (!elemento.isConnected) return false;
+    const estilo = window.getComputedStyle(elemento);
+    return estilo.display !== "none" && estilo.visibility !== "hidden" && estilo.visibility !== "collapse" && elemento.getClientRects().length > 0;
   }
   function normalizar2(texto) {
     return (texto || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -1297,7 +1302,10 @@
     return page.evaluate(({ tipoEsperado, valorEsperado }) => {
       const normalizarTexto = (entrada) => entrada.replace(/\s+/g, " ").trim().toLowerCase();
       const soDigitos = (entrada) => entrada.replace(/\D/g, "");
-      const dialogo = document.querySelector("#selectTipoContato")?.closest('[role="dialog"]') ?? Array.from(document.querySelectorAll('[role="dialog"]')).find((elemento) => elemento.offsetParent !== null && /contatos/i.test(elemento.innerText));
+      const dialogo = document.querySelector("#selectTipoContato")?.closest('[role="dialog"]') ?? Array.from(document.querySelectorAll('[role="dialog"]')).find((elemento) => {
+        const estilo = window.getComputedStyle(elemento);
+        return elemento.getClientRects().length > 0 && estilo.display !== "none" && estilo.visibility !== "hidden" && /contatos/i.test(elemento.innerText);
+      });
       if (!dialogo) return false;
       return Array.from(dialogo.querySelectorAll("tbody tr")).some((linha) => {
         const texto = normalizarTexto(linha.innerText);
@@ -1541,7 +1549,7 @@
       init_classificarPreenchimento();
       init_detectarProtocolo();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.5.1-20260811.7";
+      var CONTENT_BUILD_ID = "1.5.1-20260811.8";
       window.__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
       function logToBackground(message) {
         console.log(message);
@@ -1553,6 +1561,10 @@
       }
       function textoNormalizado(valor) {
         return (valor || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+      }
+      function elementoRenderizado(elemento) {
+        const estilo = window.getComputedStyle(elemento);
+        return elemento.isConnected && estilo.display !== "none" && estilo.visibility !== "hidden" && estilo.visibility !== "collapse" && elemento.getClientRects().length > 0;
       }
       function selecionarOpcaoNativa(campo, localizar) {
         const opcao = Array.from(campo.options).find(localizar);
@@ -1569,7 +1581,7 @@
         while (Date.now() < limite) {
           const textoPagina = textoNormalizado(document.body?.innerText);
           if (textoPagina.includes("login - pat") && textoPagina.includes("abrangencia")) {
-            const selects = Array.from(document.querySelectorAll("select")).filter((campo) => campo.offsetParent !== null);
+            const selects = Array.from(document.querySelectorAll("select")).filter(elementoRenderizado);
             const abrangencia = selects[0];
             const papel = selects[1];
             if (abrangencia && !abrangencia.value) {
@@ -1628,7 +1640,7 @@
         if (detectarEstadoGerid().etapa === "passo_1") return true;
         const botaoPrimeiroPasso = Array.from(document.querySelectorAll("button")).find((botao) => {
           const texto = textoNormalizado(botao.innerText);
-          return botao.offsetParent !== null && texto.includes("selecionar servico");
+          return elementoRenderizado(botao) && texto.includes("selecionar servico");
         });
         if (!botaoPrimeiroPasso) return false;
         botaoPrimeiroPasso.click();
