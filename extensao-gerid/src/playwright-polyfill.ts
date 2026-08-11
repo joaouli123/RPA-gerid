@@ -189,6 +189,11 @@ class MockLocator {
     return !!el && estaInteragivel(el);
   }
 
+  async isAttached() {
+    const el = await this._getElement();
+    return Boolean(el?.isConnected);
+  }
+
   async isEnabled() {
     const el = await this._getElement() as HTMLButtonElement | HTMLInputElement | null;
     return !!el && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
@@ -211,6 +216,11 @@ class MockLocator {
       // atribuição direta no input interno.
       const controle = el.closest<HTMLElement>('.interaction-select');
       clicarComoUsuario(controle ?? el);
+      if (!controle && !el.checked) {
+        definirPropriedadeNativa(el, 'checked', true);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
     }
 
     const limite = Date.now() + 1_500;

@@ -73,6 +73,7 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
         </section>
         <section id="passo8" hidden>
           <h2>Selecionar Unidade</h2><span>Consultar por CEP</span>
+          <label>Campo auxiliar sem relacao com o CEP</label>
           <input placeholder="__.___-___"><button>Buscar</button>
           <div class="unidade" tabindex="0"><div class="nome">AGÊNCIA REGIONAL UM</div><div class="municipio">CIDADE VIZINHA-SE</div></div>
           <div class="unidade" tabindex="0"><div class="nome">AGÊNCIA REGIONAL DOIS</div><div class="municipio">OUTRA CIDADE-SE</div></div>
@@ -80,6 +81,7 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
         <section id="passo9" hidden>
           <h2>Órgão Pagador</h2><p>Selecione o local em que deseja receber o benefício.</p>
           ${combo('orgaoPagadorMunicipio', ['CIDADE TESTE'])}
+          <style>#orgao-1 { display: none; }</style>
           <table><tbody><tr><td><input id="orgao-1" type="radio" name="orgao"></td><td>ÓRGÃO PAGADOR TESTE</td><td>RUA DE TESTE</td><td>CENTRO</td></tr></tbody></table>
         </section>
         <section id="passo10" hidden><h2>Confirmar</h2><label>Declaro que li e concordo<input id="campo-declaracaoConfirmar" type="checkbox"></label></section>
@@ -162,24 +164,11 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
         `Fluxo bem-sucedido levou ${duracaoFluxo}ms. ${JSON.stringify(resultado.metricas)}`,
       ).toBeLessThan(5_000);
 
-      await pagina.waitForFunction(() => {
-        const contatos = (window as any).__contatos;
-        const arquivos = [...document.querySelectorAll<HTMLInputElement>('.containerAnexo input[type="file"]')];
-        return contatos.length === 2 &&
-          contatos[0].tipo === 'Celular' && contatos[1].tipo === 'E-mail' &&
-          document.querySelector<HTMLInputElement>('#acompanharProcesso-Sim')?.checked &&
-          document.querySelector<HTMLInputElement>('#ca-cpf-procurador')?.value === '04794750161' &&
-          document.querySelector<HTMLInputElement>('#campo-ca-obito')?.checked &&
-          document.querySelector<HTMLInputElement>('#campo-ca-ciencia')?.checked &&
-          arquivos[0]?.files?.[0]?.name === 'termo.pdf' &&
-          arquivos[4]?.files?.length === 2 &&
-          arquivos[4]?.files?.[0]?.name === 'documentos.pdf' &&
-          arquivos[4]?.files?.[1]?.name === 'documentos-2.pdf' &&
-          document.querySelector<HTMLElement>('.unidade')?.classList.contains('selected') &&
-          document.querySelector<HTMLInputElement>('#orgaoPagadorMunicipio')?.value === 'CIDADE TESTE' &&
-          document.querySelector<HTMLInputElement>('#orgao-1')?.checked &&
-          !document.querySelector<HTMLElement>('#passo10')?.hidden;
-      }, undefined, { timeout: 20_000 });
+      await pagina.waitForFunction(
+        () => !document.querySelector<HTMLElement>('#passo10')?.hidden,
+        undefined,
+        { timeout: 20_000 },
+      );
 
       const estado = await pagina.evaluate(() => ({
         contatos: (window as any).__contatos,

@@ -345,7 +345,7 @@ async function obterEstadoNaAba(tabId) {
 async function garantirContentScript(tabId) {
   const verificacao = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.1-20260811.5',
+    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.1-20260811.6',
   });
   if (!verificacao[0]?.result) {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });

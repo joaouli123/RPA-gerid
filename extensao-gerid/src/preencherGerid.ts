@@ -137,6 +137,11 @@ async function existeInputNoDom(loc: Locator): Promise<boolean> {
   return (await loc.getAttribute('id').catch(() => null)) !== null;
 }
 
+async function estaAnexado(loc: Locator): Promise<boolean> {
+  const verificar = (loc as Locator & { isAttached?: () => Promise<boolean> }).isAttached;
+  return verificar ? verificar.call(loc) : existeInputNoDom(loc);
+}
+
 async function contarAnexados(loc: Locator): Promise<number> {
   const contar = (loc as Locator & { countAttached?: () => Promise<number> }).countAttached;
   return contar ? contar.call(loc) : loc.count();
@@ -494,6 +499,8 @@ async function passo4GrupoFamiliar(
 ): Promise<void> {
   await esperarTela(page, /Grupo Familiar/i);
 
+  await aguardarGrupoFamiliarEstavel(page, caso.grupoFamiliar.integrantes.length);
+
   const porCpf = new Map<string, string>(); // cpf -> parentesco da planilha
   for (const i of caso.grupoFamiliar.integrantes) {
     const c = apenasDigitos(i.cpf ?? '');
@@ -599,6 +606,33 @@ async function passo4GrupoFamiliar(
   }
 
   await avancar(page, 'passo_4');
+}
+
+async function aguardarGrupoFamiliarEstavel(page: Page, totalEsperado: number): Promise<void> {
+  const limite = Date.now() + 5_000;
+  let assinaturaAnterior = '';
+  let estavelDesde = 0;
+
+  while (Date.now() < limite) {
+    const atual = await page.evaluate(() => {
+      const controles = Array.from(document.querySelectorAll<HTMLInputElement>('[id^="selectEstadoCivil"]'));
+      return controles
+        .map((controle) => {
+          const linha = controle.closest('tr');
+          const cpf = linha?.querySelector<HTMLElement>('td')?.innerText.replace(/\D/g, '') ?? '';
+          return `${controle.id}:${cpf}`;
+        })
+        .join('|');
+    });
+    const totalAtual = atual ? atual.split('|').length : 0;
+
+    if (atual !== assinaturaAnterior) {
+      assinaturaAnterior = atual;
+      estavelDesde = Date.now();
+    }
+    if (totalAtual >= Math.max(1, totalEsperado) && Date.now() - estavelDesde >= 250) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -940,12 +974,12 @@ async function passo8SelecionarUnidade(
   await esperarTela(page, /Consultar por CEP|Selecionar Unidade/i);
 
   // ⚠️ único campo do fluxo sem id.
-  const cep =
-    (await visivel(page.getByLabel(/^CEP$/i)).count())
-      ? visivel(page.getByLabel(/^CEP$/i)).first()
-      : visivel(page.getByPlaceholder(mapaGerid.passo8.cepPlaceholder)).first();
+  const cepPorRotulo = visivel(page.getByLabel(/^CEP$/i)).first();
+  const cep = (await cepPorRotulo.isVisible().catch(() => false))
+    ? cepPorRotulo
+    : visivel(page.getByPlaceholder(mapaGerid.passo8.cepPlaceholder)).first();
 
-  if (!(await cep.count())) {
+  if (!(await cep.isVisible().catch(() => false))) {
     avisos.push('Campo de CEP não encontrado no passo 8 — selecione a unidade manualmente.');
     return false;
   }
@@ -981,10 +1015,15 @@ async function passo9OrgaoPagador(
     return false;
   }
 
-  const radios = visivel(page.locator(mapaGerid.passo9.radioOrgaoPagador));
-  const primeiro = radios.first();
-  await primeiro.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => undefined);
-  if (!(await primeiro.count().catch(() => 0))) {
+  const marcouAlvo = await marcarPrimeiroRadioDoOrgaoPagador(page);
+  if (!marcouAlvo) {
+    avisos.push(`Nenhum orgao pagador foi listado para o municipio "${municipio}".`);
+    return false;
+  }
+
+  const primeiro = page.locator('[data-gerid-rpa-orgao="primeiro"]').first();
+  await primeiro.waitFor({ state: 'attached', timeout: 10_000 }).catch(() => undefined);
+  if (!(await estaAnexado(primeiro))) {
     avisos.push(`Nenhum orgao pagador foi listado para o municipio "${municipio}".`);
     return false;
   }
@@ -1000,6 +1039,31 @@ async function passo9OrgaoPagador(
 
   await avancar(page, 'passo_9');
   return true;
+}
+
+async function marcarPrimeiroRadioDoOrgaoPagador(page: Page): Promise<boolean> {
+  const limite = Date.now() + 10_000;
+  while (Date.now() < limite) {
+    const encontrou = await page.evaluate(() => {
+      document.querySelectorAll('[data-gerid-rpa-orgao]').forEach((elemento) => {
+        elemento.removeAttribute('data-gerid-rpa-orgao');
+      });
+
+      const municipio = document.querySelector<HTMLElement>('#orgaoPagadorMunicipio');
+      let escopo = municipio?.parentElement ?? null;
+      for (let nivel = 0; escopo && nivel < 10; nivel++, escopo = escopo.parentElement) {
+        const radio = escopo.querySelector<HTMLElement>('table tbody input[type="radio"]');
+        if (radio) {
+          radio.setAttribute('data-gerid-rpa-orgao', 'primeiro');
+          return true;
+        }
+      }
+      return false;
+    });
+    if (encontrou) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return false;
 }
 
 function cidadeSemUf(cidade: string): string {

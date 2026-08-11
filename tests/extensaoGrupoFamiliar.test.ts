@@ -55,7 +55,7 @@ describe('extensão Gerid — grupo familiar real', () => {
         </section>
         <section id="passo4" hidden>
           <h2>Grupo Familiar</h2>
-          <table><tbody>
+          <table><tbody id="linhas-grupo-familiar">
             <tr><td>987.654.321-09</td><td>${combo('selectParentesco0', parentescos)}</td><td>${combo('selectEstadoCivil0', estados)}</td></tr>
             <tr><td>876.543.210-98</td><td>${combo('selectParentesco1', parentescos)}</td><td>${combo('selectEstadoCivil1', estados)}</td></tr>
             <tr><td>123.456.789-0</td><td>${combo('selectParentesco2', parentescos)}</td><td>${combo('selectEstadoCivil2', estados)}</td></tr>
@@ -74,13 +74,19 @@ describe('extensão Gerid — grupo familiar real', () => {
         </section>
         <button id="btn-next">Avançar</button>
         <script>
-          for (const label of document.querySelectorAll('[id$="-itens"] label')) {
-            label.addEventListener('click', () => {
-              const caixa = label.closest('[id$="-itens"]');
-              const combo = document.getElementById(caixa.id.slice(0, -6));
-              if (combo) combo.value = label.textContent?.trim() || '';
-            });
+          function ativarComboboxes(raiz) {
+            for (const label of raiz.querySelectorAll('[id$="-itens"] label')) {
+              label.addEventListener('click', () => {
+                const caixa = label.closest('[id$="-itens"]');
+                const combo = document.getElementById(caixa.id.slice(0, -6));
+                if (combo) combo.value = label.textContent?.trim() || '';
+              });
+            }
           }
+          ativarComboboxes(document);
+          const corpoGrupo = document.querySelector('#linhas-grupo-familiar');
+          const linhasGrupoAtrasadas = Array.from(corpoGrupo.children);
+          linhasGrupoAtrasadas.forEach((linha) => linha.remove());
           for (const tag of document.querySelectorAll('.interaction-select')) {
             tag.addEventListener('click', () => {
               const input = tag.querySelector('input');
@@ -97,6 +103,9 @@ describe('extensão Gerid — grupo familiar real', () => {
             if (atual >= 0 && atual < passos.length - 1) {
               passos[atual].hidden = true;
               passos[atual + 1].hidden = false;
+              if (passos[atual + 1].id === 'passo4') {
+                setTimeout(() => corpoGrupo.append(...linhasGrupoAtrasadas), 150);
+              }
             }
           });
         </script>

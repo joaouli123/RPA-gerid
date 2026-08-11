@@ -165,6 +165,10 @@
           const el = await this._getElement();
           return !!el && estaInteragivel(el);
         }
+        async isAttached() {
+          const el = await this._getElement();
+          return Boolean(el?.isConnected);
+        }
         async isEnabled() {
           const el = await this._getElement();
           return !!el && !el.disabled && el.getAttribute("aria-disabled") !== "true";
@@ -182,6 +186,11 @@
           if (!el.checked) {
             const controle = el.closest(".interaction-select");
             clicarComoUsuario(controle ?? el);
+            if (!controle && !el.checked) {
+              definirPropriedadeNativa(el, "checked", true);
+              el.dispatchEvent(new Event("input", { bubbles: true }));
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+            }
           }
           const limite = Date.now() + 1500;
           while (!el.checked && Date.now() < limite) {
@@ -790,6 +799,10 @@
   async function existeInputNoDom(loc) {
     return await loc.getAttribute("id").catch(() => null) !== null;
   }
+  async function estaAnexado(loc) {
+    const verificar = loc.isAttached;
+    return verificar ? verificar.call(loc) : existeInputNoDom(loc);
+  }
   async function contarAnexados(loc) {
     const contar = loc.countAttached;
     return contar ? contar.call(loc) : loc.count();
@@ -1017,6 +1030,7 @@
   }
   async function passo4GrupoFamiliar(page, caso, avisos) {
     await esperarTela(page, /Grupo Familiar/i);
+    await aguardarGrupoFamiliarEstavel(page, caso.grupoFamiliar.integrantes.length);
     const porCpf = /* @__PURE__ */ new Map();
     for (const i of caso.grupoFamiliar.integrantes) {
       const c = apenasDigitos(i.cpf ?? "");
@@ -1098,6 +1112,28 @@
       else avisos.push('N\xE3o achei a op\xE7\xE3o "N\xE3o" de incluir/excluir integrante \u2014 marque manualmente.');
     }
     await avancar(page, "passo_4");
+  }
+  async function aguardarGrupoFamiliarEstavel(page, totalEsperado) {
+    const limite = Date.now() + 5e3;
+    let assinaturaAnterior = "";
+    let estavelDesde = 0;
+    while (Date.now() < limite) {
+      const atual = await page.evaluate(() => {
+        const controles = Array.from(document.querySelectorAll('[id^="selectEstadoCivil"]'));
+        return controles.map((controle) => {
+          const linha = controle.closest("tr");
+          const cpf = linha?.querySelector("td")?.innerText.replace(/\D/g, "") ?? "";
+          return `${controle.id}:${cpf}`;
+        }).join("|");
+      });
+      const totalAtual = atual ? atual.split("|").length : 0;
+      if (atual !== assinaturaAnterior) {
+        assinaturaAnterior = atual;
+        estavelDesde = Date.now();
+      }
+      if (totalAtual >= Math.max(1, totalEsperado) && Date.now() - estavelDesde >= 250) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
   }
   async function passo5e6Perguntas(page, avisos) {
     await marcarNaoSimples(page, avisos, "Comprometimento de Renda");
@@ -1329,8 +1365,9 @@
   }
   async function passo8SelecionarUnidade(page, caso, avisos) {
     await esperarTela(page, /Consultar por CEP|Selecionar Unidade/i);
-    const cep = await visivel(page.getByLabel(/^CEP$/i)).count() ? visivel(page.getByLabel(/^CEP$/i)).first() : visivel(page.getByPlaceholder(mapaGerid.passo8.cepPlaceholder)).first();
-    if (!await cep.count()) {
+    const cepPorRotulo = visivel(page.getByLabel(/^CEP$/i)).first();
+    const cep = await cepPorRotulo.isVisible().catch(() => false) ? cepPorRotulo : visivel(page.getByPlaceholder(mapaGerid.passo8.cepPlaceholder)).first();
+    if (!await cep.isVisible().catch(() => false)) {
       avisos.push("Campo de CEP n\xE3o encontrado no passo 8 \u2014 selecione a unidade manualmente.");
       return false;
     }
@@ -1356,10 +1393,14 @@
       avisos.push(`Nao encontrei o municipio "${municipio}" na lista de orgao pagador.`);
       return false;
     }
-    const radios = visivel(page.locator(mapaGerid.passo9.radioOrgaoPagador));
-    const primeiro = radios.first();
-    await primeiro.waitFor({ state: "visible", timeout: 1e4 }).catch(() => void 0);
-    if (!await primeiro.count().catch(() => 0)) {
+    const marcouAlvo = await marcarPrimeiroRadioDoOrgaoPagador(page);
+    if (!marcouAlvo) {
+      avisos.push(`Nenhum orgao pagador foi listado para o municipio "${municipio}".`);
+      return false;
+    }
+    const primeiro = page.locator('[data-gerid-rpa-orgao="primeiro"]').first();
+    await primeiro.waitFor({ state: "attached", timeout: 1e4 }).catch(() => void 0);
+    if (!await estaAnexado(primeiro)) {
       avisos.push(`Nenhum orgao pagador foi listado para o municipio "${municipio}".`);
       return false;
     }
@@ -1370,6 +1411,29 @@
     }
     await avancar(page, "passo_9");
     return true;
+  }
+  async function marcarPrimeiroRadioDoOrgaoPagador(page) {
+    const limite = Date.now() + 1e4;
+    while (Date.now() < limite) {
+      const encontrou = await page.evaluate(() => {
+        document.querySelectorAll("[data-gerid-rpa-orgao]").forEach((elemento) => {
+          elemento.removeAttribute("data-gerid-rpa-orgao");
+        });
+        const municipio = document.querySelector("#orgaoPagadorMunicipio");
+        let escopo = municipio?.parentElement ?? null;
+        for (let nivel = 0; escopo && nivel < 10; nivel++, escopo = escopo.parentElement) {
+          const radio = escopo.querySelector('table tbody input[type="radio"]');
+          if (radio) {
+            radio.setAttribute("data-gerid-rpa-orgao", "primeiro");
+            return true;
+          }
+        }
+        return false;
+      });
+      if (encontrou) return true;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return false;
   }
   function cidadeSemUf(cidade) {
     return cidade.replace(/\s*[\/-]\s*[A-Za-z]{2}\s*$/u, "").trim();
@@ -1477,7 +1541,7 @@
       init_classificarPreenchimento();
       init_detectarProtocolo();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.5.1-20260811.5";
+      var CONTENT_BUILD_ID = "1.5.1-20260811.6";
       window.__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
       function logToBackground(message) {
         console.log(message);
