@@ -15,7 +15,10 @@ describe('extensão Gerid — máquina de estados', () => {
         <main id="lista"><button>Novo Requerimento</button></main>
         <section id="pat" hidden><h1>LOGIN - PAT</h1><label>Abrangência</label></section>
         <section id="a3" hidden><p>Certificado digital do tipo A3</p><button>OK</button></section>
-        <section id="p1" hidden><input id="idSelecionarServico"></section>
+        <section id="p1" hidden>
+          <h2>Seleção de Serviços</h2><input id="idSelecionarServico">
+          <p>Envie o comprovante do requerimento quando necessário.</p>
+        </section>
         <section id="p2" hidden><input id="idRequerente.cpf"></section>
         <section id="p3" hidden><input id="campo-autorizacaoCadunico" type="checkbox"></section>
         <section id="p4" hidden><h2>Grupo Familiar</h2><input id="selectEstadoCivil0"></section>
@@ -95,6 +98,23 @@ describe('extensão Gerid — máquina de estados', () => {
         return (window as any).obterEstadoGerid();
       });
       expect(confirmacao).toEqual({ etapa: 'passo_10', modal: 'confirmacao_final' });
+
+      const reinicio = await pagina.evaluate(async () => {
+        document.body.insertAdjacentHTML('beforeend', '<button id="voltar-passo-1">1 Selecionar Serviço</button>');
+        document.querySelector<HTMLButtonElement>('#voltar-passo-1')?.addEventListener('click', () => {
+          document.querySelectorAll<HTMLElement>('main, section').forEach((elemento) => {
+            elemento.hidden = elemento.id !== 'p1';
+          });
+        });
+        document.querySelectorAll<HTMLElement>('main, section').forEach((elemento) => {
+          elemento.hidden = elemento.id !== 'p7';
+        });
+        return {
+          reiniciou: await (window as any).reiniciarRequerimentoGerid(),
+          estado: (window as any).obterEstadoGerid(),
+        };
+      });
+      expect(reinicio).toEqual({ reiniciou: true, estado: { etapa: 'passo_1', modal: null } });
     } finally {
       await pagina.close();
       await navegador.close();

@@ -72,7 +72,12 @@ export function detectarEstadoGerid(documento: Document = document): EstadoGerid
   if (texto.includes('login - pat') && texto.includes('abrangencia')) etapa = 'autenticacao_pat';
   else if (texto.includes('certificado digital do tipo a3')) etapa = 'aviso_certificado_a3';
   else if (seletorVisivel(documento, 'input[id="campo-declaracaoConfirmar"]')) etapa = 'passo_10';
-  else if (texto.includes('comprovante') && /protocolo|requerimento/.test(texto)) etapa = 'comprovante';
+  else if (
+    texto.includes('protocolo') &&
+    Array.from(documento.querySelectorAll<HTMLElement>('h1, h2, h3')).some((titulo) =>
+      estaVisivel(titulo) && normalizar(titulo.innerText) === 'comprovante'
+    )
+  ) etapa = 'comprovante';
   else if (seletorVisivel(documento, '#orgaoPagadorMunicipio')) etapa = 'passo_9';
   else if (
     seletorVisivel(documento, 'input[placeholder="__.___-___"]') ||

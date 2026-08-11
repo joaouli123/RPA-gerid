@@ -121,6 +121,24 @@ async function resolverBloqueiosConhecidosGerid() {
 (window as any).obterEstadoGerid = () => detectarEstadoGerid();
 (window as any).diagnosticarGerid = () => capturarDiagnosticoGerid();
 (window as any).obterPendenciasGerid = () => listarPerguntasObrigatoriasPendentes();
+(window as any).reiniciarRequerimentoGerid = async () => {
+  if (detectarEstadoGerid().etapa === 'passo_1') return true;
+
+  const botaoPrimeiroPasso = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+    .find((botao) => {
+      const texto = textoNormalizado(botao.innerText);
+      return botao.offsetParent !== null && texto.includes('selecionar servico');
+    });
+  if (!botaoPrimeiroPasso) return false;
+
+  botaoPrimeiroPasso.click();
+  const limite = Date.now() + 5_000;
+  while (Date.now() < limite) {
+    if (detectarEstadoGerid().etapa === 'passo_1') return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return false;
+};
 
 async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> {
   const seletorServico = page.locator(mapaGerid.passo1.campoBusca);

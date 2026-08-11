@@ -190,8 +190,12 @@ class MockLocator {
     return !!el?.checked;
   }
 
-  async check() {
-    const el = await this._waitForElement() as HTMLInputElement;
+  async check(options?: { force?: boolean }) {
+    const encontrado = options?.force ? await this._getElement() : await this._waitForElement();
+    if (!(encontrado instanceof HTMLInputElement)) {
+      throw new Error(`Input nao encontrado para marcar: ${this.selector}`);
+    }
+    const el = encontrado;
     if (!el.checked) {
       // Os pares Sim/Não do GERID são tags customizadas. O estado React é
       // alterado pelo clique no contêiner `.interaction-select`, não por uma

@@ -165,8 +165,12 @@
           const el = await this._getElement();
           return !!el?.checked;
         }
-        async check() {
-          const el = await this._waitForElement();
+        async check(options) {
+          const encontrado = options?.force ? await this._getElement() : await this._waitForElement();
+          if (!(encontrado instanceof HTMLInputElement)) {
+            throw new Error(`Input nao encontrado para marcar: ${this.selector}`);
+          }
+          const el = encontrado;
           if (!el.checked) {
             const controle = el.closest(".interaction-select");
             clicarComoUsuario(controle ?? el);
@@ -439,7 +443,9 @@
     if (texto.includes("login - pat") && texto.includes("abrangencia")) etapa = "autenticacao_pat";
     else if (texto.includes("certificado digital do tipo a3")) etapa = "aviso_certificado_a3";
     else if (seletorVisivel(documento, 'input[id="campo-declaracaoConfirmar"]')) etapa = "passo_10";
-    else if (texto.includes("comprovante") && /protocolo|requerimento/.test(texto)) etapa = "comprovante";
+    else if (texto.includes("protocolo") && Array.from(documento.querySelectorAll("h1, h2, h3")).some(
+      (titulo) => estaVisivel(titulo) && normalizar2(titulo.innerText) === "comprovante"
+    )) etapa = "comprovante";
     else if (seletorVisivel(documento, "#orgaoPagadorMunicipio")) etapa = "passo_9";
     else if (seletorVisivel(documento, 'input[placeholder="__.___-___"]') || texto.includes("selecionar unidade") && texto.includes("consultar por cep")) etapa = "passo_8";
     else if (seletorVisivel(documento, 'input[id="acompanharProcesso-Sim"]') && seletorVisivel(documento, ".containerAnexo")) etapa = "passo_7";
@@ -821,31 +827,24 @@
     }
   }
   async function ativarOpcaoCombobox(opcao) {
-    await opcao.evaluate((elemento) => {
-      const item = elemento.closest('[role="option"]') ?? elemento;
-      item.dispatchEvent(new MouseEvent("mousedown", {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        button: 0,
-        buttons: 1,
-        view: window
-      }));
-      elemento.click();
-    });
+    await opcao.click();
   }
-  async function escolherNoCombobox(page, idCombobox, rotuloDesejado) {
-    const id = idCombobox.replace(/^#/, "");
+  async function escolherNoCombobox(page, idCombobox, rotuloDesejado, aceitarTextoAdicional = false) {
+    const idNoSeletor = idCombobox.match(/\[id="([^"]+)"\]/)?.[1];
+    const id = idNoSeletor ?? idCombobox.replace(/^#/, "");
     const combo = page.locator(`[id="${id}"]`);
     if (!await combo.isVisible().catch(() => false)) return false;
-    await combo.click().catch(() => void 0);
     const alvo = normalizar(rotuloDesejado);
     const rotulos = page.locator(`[id="${id}-itens"] label`);
+    if (await rotulos.count().catch(() => 0) === 0) {
+      await combo.click().catch(() => void 0);
+    }
     const total = await rotulos.count().catch(() => 0);
     for (let i = 0; i < total; i++) {
       const rotulo = rotulos.nth(i);
       const texto = await rotulo.innerText().catch(() => "");
-      if (normalizar(texto) === alvo) {
+      const textoNormalizado = normalizar(texto);
+      if (textoNormalizado === alvo || aceitarTextoAdicional && textoNormalizado.includes(alvo)) {
         await ativarOpcaoCombobox(rotulo).catch(() => void 0);
         if (await aguardarValorCombobox(combo, alvo, 150)) return true;
         const rid = await rotulo.getAttribute("for");
@@ -853,6 +852,7 @@
           const radio = page.locator(`[id="${id}-itens"] input[id="${cssEscape(rid)}"]`).first();
           await radio.check({ force: true }).catch(() => void 0);
           if (await aguardarValorCombobox(combo, alvo, 2e3)) return true;
+          if (await radio.isChecked().catch(() => false)) return true;
         }
         return false;
       }
@@ -926,46 +926,17 @@
     const busca = visivel(page.locator(mapaGerid.passo1.campoBusca)).first();
     await busca.waitFor({ state: "visible" });
     const abrirLista = visivel(page.getByRole("button", { name: /^Exibir lista$/i })).first();
-    if (await abrirLista.isVisible().catch(() => false)) {
-      await abrirLista.click();
-    } else {
-      await busca.click();
-    }
-    let opcaoVisivel = visivel(
-      page.getByRole("option", {
-        name: /^Benefício Assistencial à Pessoa com Deficiência\b/i
-      })
-    ).first();
-    if (!await opcaoVisivel.isVisible().catch(() => false)) {
-      opcaoVisivel = visivel(
-        page.getByText(SERVICO_BPC_PCD.rotulo, { exact: true })
-      ).first();
-    }
-    await opcaoVisivel.waitFor({ state: "visible", timeout: 1e4 }).catch(() => {
-      throw new ErroGerid(
-        FalhaGerid.CAMPO_NAO_ENCONTRADO,
-        "A lista de servi\xE7os do Gerid n\xE3o exibiu o BPC \xE0 Pessoa com Defici\xEAncia."
-      );
-    });
-    await ativarOpcaoCombobox(opcaoVisivel);
-    const inicioConfirmacao = Date.now();
-    while (Date.now() - inicioConfirmacao < 3e3) {
-      const valor = normalizar(await busca.inputValue().catch(() => ""));
-      if (valor.includes("beneficio assistencial") && valor.includes("pessoa com deficiencia")) {
-        await avancar(page, "passo_1");
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    const radio = visivel(page.locator(
-      `${mapaGerid.passo1.containerOpcoes} input[id="${SERVICO_BPC_PCD.id}"]`
-    )).first();
-    if (await radio.isVisible().catch(() => false)) {
-      await radio.check({ force: true });
-      if (await radio.isChecked().catch(() => false)) {
-        await avancar(page, "passo_1");
-        return;
-      }
+    if (await abrirLista.isVisible().catch(() => false)) await abrirLista.click();
+    else await busca.click();
+    const selecionou = await escolherNoCombobox(
+      page,
+      mapaGerid.passo1.campoBusca,
+      SERVICO_BPC_PCD.rotulo,
+      true
+    );
+    if (selecionou) {
+      await avancar(page, "passo_1");
+      return;
     }
     throw new ErroGerid(
       FalhaGerid.ERRO_PREENCHIMENTO,
@@ -1567,6 +1538,21 @@
       window.obterEstadoGerid = () => detectarEstadoGerid();
       window.diagnosticarGerid = () => capturarDiagnosticoGerid();
       window.obterPendenciasGerid = () => listarPerguntasObrigatoriasPendentes();
+      window.reiniciarRequerimentoGerid = async () => {
+        if (detectarEstadoGerid().etapa === "passo_1") return true;
+        const botaoPrimeiroPasso = Array.from(document.querySelectorAll("button")).find((botao) => {
+          const texto = textoNormalizado(botao.innerText);
+          return botao.offsetParent !== null && texto.includes("selecionar servico");
+        });
+        if (!botaoPrimeiroPasso) return false;
+        botaoPrimeiroPasso.click();
+        const limite = Date.now() + 5e3;
+        while (Date.now() < limite) {
+          if (detectarEstadoGerid().etapa === "passo_1") return true;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        return false;
+      };
       async function abrirNovoRequerimentoSeNecessario(page) {
         const seletorServico = page.locator(mapaGerid.passo1.campoBusca);
         const novoRequerimento = page.getByRole("button", { name: /^Novo Requerimento$/i });

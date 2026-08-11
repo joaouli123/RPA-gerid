@@ -188,20 +188,9 @@ async function garantirMarcado(loc: Locator): Promise<void> {
 
 /** Ativa os itens do Select oficial, que confirma a escolha em onMouseDown. */
 async function ativarOpcaoCombobox(opcao: Locator): Promise<void> {
-  await opcao.evaluate((elemento: HTMLElement) => {
-    const item = elemento.closest<HTMLElement>('[role="option"]') ?? elemento;
-    item.dispatchEvent(new MouseEvent('mousedown', {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      button: 0,
-      buttons: 1,
-      view: window,
-    }));
-
-    // Mantem compatibilidade com o componente legado, que usava onClick.
-    elemento.click();
-  });
+  // O polyfill reproduz mousedown, mouseup e click. O GERID confirma a opcao
+  // no mousedown; a sequencia completa evita deixar o estado React incompleto.
+  await opcao.click();
 }
 
 /**
@@ -218,15 +207,18 @@ async function escolherNoCombobox(
   page: Page,
   idCombobox: string,
   rotuloDesejado: string,
+  aceitarTextoAdicional = false,
 ): Promise<boolean> {
-  const id = idCombobox.replace(/^#/, '');
+  const idNoSeletor = idCombobox.match(/\[id="([^"]+)"\]/)?.[1];
+  const id = idNoSeletor ?? idCombobox.replace(/^#/, '');
   const combo = page.locator(`[id="${id}"]`);
   if (!(await combo.isVisible().catch(() => false))) return false;
 
-  await combo.click().catch(() => undefined);
-
   const alvo = normalizar(rotuloDesejado);
   const rotulos = page.locator(`[id="${id}-itens"] label`);
+  if ((await rotulos.count().catch(() => 0)) === 0) {
+    await combo.click().catch(() => undefined);
+  }
   const total = await rotulos.count().catch(() => 0);
 
   for (let i = 0; i < total; i++) {
@@ -236,7 +228,8 @@ async function escolherNoCombobox(
     // os ids se repetem e a busca global devolveria o rótulo do outro dropdown.
     const texto = await rotulo.innerText().catch(() => '');
 
-    if (normalizar(texto) === alvo) {
+    const textoNormalizado = normalizar(texto);
+    if (textoNormalizado === alvo || (aceitarTextoAdicional && textoNormalizado.includes(alvo))) {
       await ativarOpcaoCombobox(rotulo).catch(() => undefined);
       if (await aguardarValorCombobox(combo, alvo, 150)) return true;
 
@@ -247,6 +240,10 @@ async function escolherNoCombobox(
           .first();
         await radio.check({ force: true }).catch(() => undefined);
         if (await aguardarValorCombobox(combo, alvo, 2_000)) return true;
+        // Componentes legados confirmam pelo radio e deixam o campo de busca
+        // vazio. A transicao de etapa ou a verificacao de pendencias ainda
+        // valida se o formulario realmente aceitou a escolha.
+        if (await radio.isChecked().catch(() => false)) return true;
       }
       return false;
     }
@@ -367,56 +364,18 @@ async function passo1SelecionarServico(page: Page): Promise<void> {
   const busca = visivel(page.locator(mapaGerid.passo1.campoBusca)).first();
   await busca.waitFor({ state: 'visible' });
   const abrirLista = visivel(page.getByRole('button', { name: /^Exibir lista$/i })).first();
-  if (await abrirLista.isVisible().catch(() => false)) {
-    await abrirLista.click();
-  } else {
-    await busca.click();
-  }
+  if (await abrirLista.isVisible().catch(() => false)) await abrirLista.click();
+  else await busca.click();
 
-  // O componente oficial confirma a opcao em onMouseDown no role=option.
-  // HTMLElement.click() dispara apenas click e marca o radio sem atualizar
-  // o estado React/Redux, deixando o campo visivelmente vazio.
-  let opcaoVisivel = visivel(
-    page.getByRole('option', {
-      name: /^Benefício Assistencial à Pessoa com Deficiência\b/i,
-    }),
-  ).first();
-  if (!await opcaoVisivel.isVisible().catch(() => false)) {
-    // Compatibilidade com versoes antigas do componente que nao expunham
-    // role=option no item visivel.
-    opcaoVisivel = visivel(
-      page.getByText(SERVICO_BPC_PCD.rotulo, { exact: true }),
-    ).first();
-  }
-  await opcaoVisivel.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {
-    throw new ErroGerid(
-      FalhaGerid.CAMPO_NAO_ENCONTRADO,
-      'A lista de serviços do Gerid não exibiu o BPC à Pessoa com Deficiência.',
-    );
-  });
-  await ativarOpcaoCombobox(opcaoVisivel);
-
-  const inicioConfirmacao = Date.now();
-  while (Date.now() - inicioConfirmacao < 3_000) {
-    const valor = normalizar(await busca.inputValue().catch(() => ''));
-    if (valor.includes('beneficio assistencial') && valor.includes('pessoa com deficiencia')) {
-      await avancar(page, 'passo_1');
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-
-  // Compatibilidade com a versão anterior do componente, onde o rádio era
-  // visível e o próprio estado checked era aceito pelo formulário.
-  const radio = visivel(page.locator(
-    `${mapaGerid.passo1.containerOpcoes} input[id="${SERVICO_BPC_PCD.id}"]`,
-  )).first();
-  if (await radio.isVisible().catch(() => false)) {
-    await radio.check({ force: true });
-    if (await radio.isChecked().catch(() => false)) {
-      await avancar(page, 'passo_1');
-      return;
-    }
+  const selecionou = await escolherNoCombobox(
+    page,
+    mapaGerid.passo1.campoBusca,
+    SERVICO_BPC_PCD.rotulo,
+    true,
+  );
+  if (selecionou) {
+    await avancar(page, 'passo_1');
+    return;
   }
 
   throw new ErroGerid(

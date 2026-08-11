@@ -354,6 +354,14 @@ async function obterEstadoNaAba(tabId) {
   return resultado[0]?.result || { etapa: 'desconhecido', modal: null };
 }
 
+async function reiniciarWizardNaAba(tabId) {
+  const resultado = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => window.reiniciarRequerimentoGerid?.() || false,
+  });
+  return resultado[0]?.result === true;
+}
+
 async function executarCasoNoGerid(tabId, casoComAnexos) {
   for (let tentativa = 0; tentativa < 2; tentativa++) {
     try {
@@ -370,7 +378,8 @@ async function executarCasoNoGerid(tabId, casoComAnexos) {
 
       if (etapaInicial && !['lista_requerimentos', 'passo_1'].includes(etapaInicial)) {
         sendLog(`O GERID estava em ${etapaInicial}. Voltando ao início seguro antes de preencher o caso.`);
-        abaId = await prepararAbaGerid(abaId, true);
+        const reiniciouWizard = await reiniciarWizardNaAba(abaId).catch(() => false);
+        if (!reiniciouWizard) abaId = await prepararAbaGerid(abaId, true);
       }
 
       const verificacao = await chrome.scripting.executeScript({
