@@ -48,20 +48,23 @@ describe('forma de convívio (deriva do grupo familiar)', () => {
   });
 });
 
-describe('estado civil (padrão Solteiro)', () => {
+describe('estado civil da planilha', () => {
   it('vazio vira Solteiro', () => {
     expect(estadoCivilGerid(undefined)).toBe(ESTADO_CIVIL_PADRAO);
     expect(estadoCivilGerid('')).toBe('Solteiro');
   });
 
-  it('ignora a planilha e usa sempre Solteiro, conforme a regra do escritório', () => {
-    for (const valor of ['casado', 'viúvo', 'divorciado', 'união estável']) {
-      expect(estadoCivilGerid(valor)).toBe('Solteiro');
-    }
+  it('preserva cada opção conhecida do integrante', () => {
+    expect(estadoCivilGerid('casado')).toBe('Casado');
+    expect(estadoCivilGerid('viúvo')).toBe('Viúvo');
+    expect(estadoCivilGerid('divorciado')).toBe('Divorciado');
+    expect(estadoCivilGerid('separado')).toBe('Separado');
+    expect(estadoCivilGerid('união estável')).toBe('União Estável');
+    expect(estadoCivilGerid('amasiado')).toBe('União Estável');
   });
 
   it('valor desconhecido cai no padrão seguro (Solteiro)', () => {
-    expect(estadoCivilGerid('amigado')).toBe('Solteiro');
+    expect(estadoCivilGerid('não informado')).toBe('Solteiro');
   });
 });
 
@@ -142,7 +145,7 @@ describe('plano do grupo familiar (casado por CPF)', () => {
     ]);
 
     expect(plano[0]).toMatchObject({ cpf: '111', titular: true, estadoCivil: 'Solteiro' });
-    expect(plano[1]).toMatchObject({ cpf: '222', titular: false, estadoCivil: 'Solteiro' });
+    expect(plano[1]).toMatchObject({ cpf: '222', titular: false, estadoCivil: 'Viúvo' });
     expect(plano[1]?.parentesco.grupo).toBe('Pai / Mãe / Padrasto / Madrasta');
     expect(plano[2]).toMatchObject({ cpf: '333', estadoCivil: 'Solteiro' });
     expect(plano[2]?.parentesco.grupo).toBe('Irmão / Irmã');

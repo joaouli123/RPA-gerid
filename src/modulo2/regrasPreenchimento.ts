@@ -206,21 +206,16 @@ const ESTADOS_CIVIS_GERID: Record<string, string> = {
   viuvo: 'Viúvo',
   divorciado: 'Divorciado',
   separado: 'Separado', // CORRIGIDO: existe opção própria (id 5)
-  'uniao estavel': 'Casado',
-  amasiado: 'Casado',
-  concubinato: 'Casado',
+  'uniao estavel': 'União Estável',
+  amasiado: 'União Estável',
+  concubinato: 'União Estável',
 };
 
 /**
- * DECISÃO DO ESCRITÓRIO (28/07/2026): estado civil é SEMPRE "Solteiro",
- * independente do que a planilha diz.
- *
- * ⚠️ Isto descarta a coluna "Estado civil" da planilha, inclusive quando ela
- * diz "Casado", e é uma declaração ao INSS dentro do requerimento. Fica nesta
- * constante, isolada, para ser fácil de reverter: com `false`, volta a usar a
- * planilha e cai em Solteiro só quando o valor estiver vazio ou irreconhecível.
+ * Usa o estado civil individual da aba GrupoFamiliar. O padrão só é aplicado
+ * quando a célula está vazia ou não corresponde a uma opção conhecida.
  */
-export const ESTADO_CIVIL_SEMPRE_PADRAO = true;
+export const ESTADO_CIVIL_SEMPRE_PADRAO = false;
 
 export function estadoCivilGerid(valorPlanilha?: string): string {
   if (ESTADO_CIVIL_SEMPRE_PADRAO) return ESTADO_CIVIL_PADRAO;

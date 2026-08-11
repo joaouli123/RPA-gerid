@@ -272,13 +272,14 @@ describe('extensão Gerid — service worker', () => {
   });
 
   it('preserva a fila no CAS e retoma depois do SafeID e MFA', async () => {
-    const listeners: Array<(mensagem: any) => void> = [];
+    const listeners: Array<(mensagem: any, sender?: any, sendResponse?: (resposta: any) => void) => unknown> = [];
     const listenersAbas: Array<(id: number, info: any, tab: any) => void> = [];
     const storage: Record<string, any> = {};
     const heartbeats: any[] = [];
     const statusEnviados: any[] = [];
     const alarmesCriados: string[] = [];
     const urlsAutenticacao: string[] = [];
+    const scriptsControle: any[] = [];
     const abaCas = {
       id: 91,
       active: true,
@@ -326,6 +327,10 @@ describe('extensão Gerid — service worker', () => {
       },
       scripting: {
         executeScript: async (opcoes: any) => {
+          scriptsControle.push(opcoes);
+          if (opcoes.world === 'MAIN') {
+            return [{ result: { ok: true, motivo: 'react' } }];
+          }
           if (!opcoes.args) return [{ result: true }];
           return [{ result: { status: 'revisao', erro: 'Preenchido até a revisão final.' } }];
         },
@@ -373,6 +378,25 @@ describe('extensão Gerid — service worker', () => {
       Date,
       Promise,
     });
+
+    const respostasControle: any[] = [];
+    for (const listener of listeners) {
+      listener(
+        { action: 'gerid_react_control', tipo: 'combobox', id: 'selectEstadoCivil0', valor: 'Solteiro' },
+        { tab: { id: 77 } },
+        (resposta) => respostasControle.push(resposta),
+      );
+    }
+    const limiteControle = Date.now() + 1_000;
+    while (respostasControle.length === 0 && Date.now() < limiteControle) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(respostasControle).toEqual([{ ok: true, motivo: 'react' }]);
+    expect(scriptsControle).toContainEqual(expect.objectContaining({
+      target: { tabId: 77 },
+      world: 'MAIN',
+      args: ['combobox', 'selectEstadoCivil0', 'Solteiro'],
+    }));
 
     for (const listener of listeners) {
       listener({ action: 'start', apiUrl: 'https://rpa.teste', apiToken: 'segredo', modoTeste: true });

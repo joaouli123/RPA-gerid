@@ -707,11 +707,11 @@
         divorciado: "Divorciado",
         separado: "Separado",
         // CORRIGIDO: existe opção própria (id 5)
-        "uniao estavel": "Casado",
-        amasiado: "Casado",
-        concubinato: "Casado"
+        "uniao estavel": "Uni\xE3o Est\xE1vel",
+        amasiado: "Uni\xE3o Est\xE1vel",
+        concubinato: "Uni\xE3o Est\xE1vel"
       };
-      ESTADO_CIVIL_SEMPRE_PADRAO = true;
+      ESTADO_CIVIL_SEMPRE_PADRAO = false;
       GRUPOS_PARENTESCO_GERID = {
         paisPadrastos: "Pai / M\xE3e / Padrasto / Madrasta",
         irmaos: "Irm\xE3o / Irm\xE3",
@@ -856,8 +856,29 @@
     }
   }
   async function garantirMarcado(loc) {
+    const id = await loc.getAttribute("id").catch(() => null);
+    if (id && await acionarControleReactNaPagina("marcar", id)) {
+      const limite = Date.now() + 1e3;
+      while (Date.now() < limite) {
+        if (await loc.isChecked().catch(() => false)) return;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
     if (!await loc.isChecked().catch(() => false)) {
       await loc.check({ force: true });
+    }
+  }
+  async function acionarControleReactNaPagina(tipo, id, valor) {
+    try {
+      const resposta = await chrome.runtime.sendMessage({
+        action: "gerid_react_control",
+        tipo,
+        id,
+        valor
+      });
+      return resposta?.ok === true;
+    } catch {
+      return false;
     }
   }
   async function ativarOpcaoCombobox(opcao) {
@@ -884,6 +905,9 @@
       const texto = await rotulo.innerText().catch(() => "");
       const textoNormalizado = normalizar(texto);
       if (textoNormalizado === alvo || aceitarTextoAdicional && textoNormalizado.includes(alvo)) {
+        if (await acionarControleReactNaPagina("combobox", id, rotuloDesejado)) {
+          if (await aguardarValorCombobox(combo, alvo, 1e3)) return true;
+        }
         await ativarOpcaoCombobox(rotulo).catch(() => void 0);
         if (await aguardarValorCombobox(combo, alvo, 150)) return true;
         const rid = await rotulo.getAttribute("for");
@@ -1039,8 +1063,12 @@
     const porCpf = /* @__PURE__ */ new Map();
     for (const i of caso.grupoFamiliar.integrantes) {
       const c = apenasDigitos(i.cpf ?? "");
-      if (c) porCpf.set(c, i.parentesco ?? "");
+      if (c) porCpf.set(c, i);
     }
+    const cpfRequerente = apenasDigitos(caso.grupoFamiliar.requerenteCpf ?? caso.cliente.cpf);
+    const titularPlanilha = porCpf.get(cpfRequerente) ?? caso.grupoFamiliar.integrantes.find(
+      (i) => ["titular", "requerente"].includes(normalizar(i.parentesco ?? ""))
+    );
     const linhas = await page.evaluate(() => {
       const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
       const out = [];
@@ -1063,8 +1091,9 @@
     for (const linha of linhas) {
       const ehRequerente = linha.ehRequerente;
       if (linha.cpf) vistos.add(linha.cpf);
-      const parentescoPlanilha = linha.cpf ? porCpf.get(linha.cpf) ?? "" : "";
-      const estadoCivil = estadoCivilGerid(void 0);
+      const integrantePlanilha = (linha.cpf ? porCpf.get(linha.cpf) : void 0) ?? (ehRequerente ? titularPlanilha : void 0);
+      const parentescoPlanilha = integrantePlanilha?.parentesco ?? "";
+      const estadoCivil = estadoCivilGerid(integrantePlanilha?.estadoCivil);
       const okEc = await escolherNoCombobox(
         page,
         mapaGerid.passo4.estadoCivil(linha.indice),
@@ -1082,7 +1111,7 @@
         );
         continue;
       }
-      if (!porCpf.has(linha.cpf)) {
+      if (!integrantePlanilha) {
         avisos.push(
           `CPF ${linha.cpf} veio do Cad\xDAnico mas n\xE3o est\xE1 na planilha \u2014 confira o parentesco.`
         );
@@ -1549,7 +1578,7 @@
       init_classificarPreenchimento();
       init_detectarProtocolo();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.5.2-20260811.1";
+      var CONTENT_BUILD_ID = "1.5.3-20260811.1";
       window.__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
       function logToBackground(message) {
         console.log(message);

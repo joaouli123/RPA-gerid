@@ -121,10 +121,10 @@ describe('extensão Gerid — grupo familiar real', () => {
             grupoFamiliar: {
               requerenteCpf: '12345678901',
               integrantes: [
-                { cpf: '12345678901', parentesco: 'Titular' },
-                { cpf: '01234567890', parentesco: 'Mãe' },
-                { cpf: '98765432109', parentesco: 'Irmã' },
-                { cpf: '87654321098', parentesco: 'Irmão' },
+                { cpf: '12345678901', parentesco: 'Titular', estadoCivil: 'casado' },
+                { cpf: '01234567890', parentesco: 'Mãe', estadoCivil: 'solteiro' },
+                { cpf: '98765432109', parentesco: 'Irmã', estadoCivil: 'casado' },
+                { cpf: '87654321098', parentesco: 'Irmão', estadoCivil: 'solteiro' },
               ],
             },
           },
@@ -141,7 +141,10 @@ describe('extensão Gerid — grupo familiar real', () => {
         (document.querySelector<HTMLInputElement>('#selectParentesco0')?.value === 'Irmão / Irmã') &&
         (document.querySelector<HTMLInputElement>('#selectParentesco1')?.value === 'Irmão / Irmã') &&
         (document.querySelector<HTMLInputElement>('#selectParentesco2')?.value === 'Pai / Mãe / Padrasto / Madrasta') &&
-        [0, 1, 2, 3].every((i) => document.querySelector<HTMLInputElement>(`#selectEstadoCivil${i}`)?.value === 'Solteiro') &&
+        document.querySelector<HTMLInputElement>('#selectEstadoCivil0')?.value === 'Casado' &&
+        document.querySelector<HTMLInputElement>('#selectEstadoCivil1')?.value === 'Solteiro' &&
+        document.querySelector<HTMLInputElement>('#selectEstadoCivil2')?.value === 'Solteiro' &&
+        document.querySelector<HTMLInputElement>('#selectEstadoCivil3')?.value === 'Casado' &&
         document.querySelector<HTMLInputElement>('#undefined-Nao')?.checked,
       );
 

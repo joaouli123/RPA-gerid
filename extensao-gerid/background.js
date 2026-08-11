@@ -363,11 +363,89 @@ async function obterEstadoNaAba(tabId) {
 async function garantirContentScript(tabId) {
   const verificacao = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.2-20260811.1',
+    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.3-20260811.1',
   });
   if (!verificacao[0]?.result) {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
   }
+}
+
+async function acionarControleReact(tabId, tipo, id, valor) {
+  const resultados = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [tipo, id, valor],
+    func: async (tipoControle, idControle, valorDesejado) => {
+      const normalizar = (texto) => String(texto || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+      const obterPropsReact = (elemento) => {
+        if (!elemento) return null;
+        const chave = Object.keys(elemento).find((nome) => nome.startsWith('__reactProps$'));
+        return chave ? elemento[chave] : null;
+      };
+      const aguardarRender = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+      if (tipoControle === 'combobox') {
+        const combo = document.getElementById(idControle);
+        const lista = document.getElementById(`${idControle}-itens`);
+        if (!combo || !lista) return { ok: false, motivo: 'controle_nao_encontrado' };
+
+        const alvo = normalizar(valorDesejado);
+        const item = Array.from(lista.querySelectorAll('.br-item')).find((opcao) => {
+          const rotulo = opcao.querySelector('label')?.textContent;
+          return normalizar(rotulo) === alvo;
+        });
+        if (!item) return { ok: false, motivo: 'opcao_nao_encontrada' };
+
+        const props = obterPropsReact(item);
+        if (typeof props?.onMouseDown === 'function') {
+          props.onMouseDown({});
+        } else if (typeof props?.onKeyDown === 'function') {
+          props.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {} });
+        } else {
+          item.dispatchEvent(new MouseEvent('mousedown', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            button: 0,
+            buttons: 1,
+          }));
+        }
+        await aguardarRender();
+        return {
+          ok: normalizar(document.getElementById(idControle)?.value) === alvo,
+          motivo: props ? 'react' : 'evento',
+        };
+      }
+
+      if (tipoControle === 'marcar') {
+        const input = document.getElementById(idControle);
+        const controle = input?.closest('.interaction-select');
+        if (!input || !controle) return { ok: false, motivo: 'controle_nao_encontrado' };
+
+        const props = obterPropsReact(controle);
+        if (typeof props?.onClick === 'function') {
+          props.onClick({});
+        } else if (typeof props?.onKeyDown === 'function') {
+          props.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {} });
+        } else {
+          controle.click();
+        }
+        await aguardarRender();
+        return {
+          ok: document.getElementById(idControle)?.checked === true,
+          motivo: props ? 'react' : 'evento',
+        };
+      }
+
+      return { ok: false, motivo: 'tipo_invalido' };
+    },
+  });
+  return resultados[0]?.result || { ok: false, motivo: 'sem_resultado' };
 }
 
 async function reiniciarWizardNaAba(tabId) {
@@ -810,6 +888,22 @@ chrome.runtime.onMessage.addListener((request) => {
   if (request.action === 'open_auth') {
     void abrirAutenticacao();
   }
+});
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action !== 'gerid_react_control') return undefined;
+  const tabId = sender.tab?.id;
+  if (!Number.isInteger(tabId)) {
+    sendResponse({ ok: false, motivo: 'aba_nao_identificada' });
+    return undefined;
+  }
+  void acionarControleReact(tabId, request.tipo, request.id, request.valor)
+    .then(sendResponse)
+    .catch((erro) => sendResponse({
+      ok: false,
+      motivo: erro?.message || String(erro),
+    }));
+  return true;
 });
 
 chrome.runtime.onMessage.addListener((msg) => {

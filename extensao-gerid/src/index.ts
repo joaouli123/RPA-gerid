@@ -11,7 +11,7 @@ import {
   resumirDiagnosticoGerid,
 } from './estadoGerid';
 
-const CONTENT_BUILD_ID = '1.5.2-20260811.1';
+const CONTENT_BUILD_ID = '1.5.3-20260811.1';
 (window as any).__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
 
 function logToBackground(message: string) {

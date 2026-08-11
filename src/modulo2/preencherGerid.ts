@@ -340,11 +340,16 @@ async function passo4GrupoFamiliar(
 ): Promise<void> {
   await esperarTela(page, /Grupo Familiar/i);
 
-  const porCpf = new Map<string, string>(); // cpf -> parentesco da planilha
+  const porCpf = new Map<string, (typeof caso.grupoFamiliar.integrantes)[number]>();
   for (const i of caso.grupoFamiliar.integrantes) {
     const c = apenasDigitos(i.cpf ?? '');
-    if (c) porCpf.set(c, i.parentesco ?? '');
+    if (c) porCpf.set(c, i);
   }
+  const cpfRequerente = apenasDigitos(caso.grupoFamiliar.requerenteCpf ?? caso.cliente.cpf);
+  const titularPlanilha = porCpf.get(cpfRequerente)
+    ?? caso.grupoFamiliar.integrantes.find((i) =>
+      ['titular', 'requerente'].includes(normalizar(i.parentesco ?? '')),
+    );
 
   // Descobre quantas linhas o GERID renderizou e o CPF de cada uma.
   const linhas = await page.evaluate(() => {
@@ -374,8 +379,10 @@ async function passo4GrupoFamiliar(
     if (linha.cpf) vistos.add(linha.cpf);
 
     // --- Estado civil: existe em TODAS as linhas, inclusive a do requerente.
-    const parentescoPlanilha = linha.cpf ? (porCpf.get(linha.cpf) ?? '') : '';
-    const estadoCivil = estadoCivilGerid(undefined); // decisão: sempre o padrão
+    const integrantePlanilha = (linha.cpf ? porCpf.get(linha.cpf) : undefined)
+      ?? (ehRequerente ? titularPlanilha : undefined);
+    const parentescoPlanilha = integrantePlanilha?.parentesco ?? '';
+    const estadoCivil = estadoCivilGerid(integrantePlanilha?.estadoCivil);
     const okEc = await escolherNoCombobox(
       page,
       mapaGerid.passo4.estadoCivil(linha.indice),
@@ -397,7 +404,7 @@ async function passo4GrupoFamiliar(
       continue;
     }
 
-    if (!porCpf.has(linha.cpf)) {
+    if (!integrantePlanilha) {
       avisos.push(
         `CPF ${linha.cpf} veio do CadÚnico mas não está na planilha — confira o parentesco.`,
       );

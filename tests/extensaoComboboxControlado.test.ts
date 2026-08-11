@@ -30,10 +30,6 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
     const navegador = await chromium.launch({ headless: true });
     const pagina = await navegador.newPage();
     try {
-      await pagina.addInitScript(() => {
-        (window as any).chrome = { runtime: { sendMessage: async () => undefined } };
-      });
-
       await pagina.setContent(`
         <style>.br-radio input { position: absolute; opacity: 0; }</style>
         <section id="passo1">
@@ -99,6 +95,27 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
         </script>
       `);
 
+      await pagina.evaluate(() => {
+        (window as any).__geridReactMessages = [];
+        (window as any).chrome = {
+          runtime: {
+            sendMessage: async (mensagem: any) => {
+              if (mensagem.action !== 'gerid_react_control') return undefined;
+              (window as any).__geridReactMessages.push(mensagem);
+              if (mensagem.tipo === 'combobox') {
+                const combo = document.getElementById(mensagem.id) as HTMLInputElement | null;
+                if (combo) combo.value = mensagem.valor;
+              }
+              if (mensagem.tipo === 'marcar') {
+                const input = document.getElementById(mensagem.id) as HTMLInputElement | null;
+                if (input) input.checked = true;
+              }
+              return { ok: true, motivo: 'react' };
+            },
+          },
+        };
+      });
+
       // Reproduz o carrossel do GERID real: os controles possuem geometria e
       // estilo visivel, mas offsetParent e null em toda a etapa 4.
       await pagina.evaluate(() => {
@@ -135,6 +152,12 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
 
       await pagina.waitForFunction(() => !document.querySelector<HTMLElement>('#passo5')?.hidden);
       expect(await pagina.inputValue('#selectEstadoCivil0')).toBe('Solteiro');
+      expect(await pagina.evaluate(() => (window as any).__geridReactMessages)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ tipo: 'combobox', id: 'selectEstadoCivil0', valor: 'Solteiro' }),
+          expect.objectContaining({ tipo: 'marcar', id: 'undefined-Nao' }),
+        ]),
+      );
       await execucao;
     } finally {
       await pagina.close();

@@ -195,8 +195,35 @@ async function esperarTela(page: Page, marca: RegExp): Promise<void> {
 }
 
 async function garantirMarcado(loc: Locator): Promise<void> {
+  const id = await loc.getAttribute('id').catch(() => null);
+  if (id && await acionarControleReactNaPagina('marcar', id)) {
+    const limite = Date.now() + 1_000;
+    while (Date.now() < limite) {
+      if (await loc.isChecked().catch(() => false)) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
   if (!(await loc.isChecked().catch(() => false))) {
     await loc.check({ force: true });
+  }
+}
+
+async function acionarControleReactNaPagina(
+  tipo: 'combobox' | 'marcar',
+  id: string,
+  valor?: string,
+): Promise<boolean> {
+  try {
+    const resposta = await chrome.runtime.sendMessage({
+      action: 'gerid_react_control',
+      tipo,
+      id,
+      valor,
+    });
+    return resposta?.ok === true;
+  } catch {
+    return false;
   }
 }
 
@@ -249,6 +276,10 @@ async function escolherNoCombobox(
 
     const textoNormalizado = normalizar(texto);
     if (textoNormalizado === alvo || (aceitarTextoAdicional && textoNormalizado.includes(alvo))) {
+      if (await acionarControleReactNaPagina('combobox', id, rotuloDesejado)) {
+        if (await aguardarValorCombobox(combo, alvo, 1_000)) return true;
+      }
+
       await ativarOpcaoCombobox(rotulo).catch(() => undefined);
       if (await aguardarValorCombobox(combo, alvo, 150)) return true;
 
@@ -499,11 +530,16 @@ async function passo4GrupoFamiliar(
 
   await aguardarGrupoFamiliarEstavel(page, caso.grupoFamiliar.integrantes.length);
 
-  const porCpf = new Map<string, string>(); // cpf -> parentesco da planilha
+  const porCpf = new Map<string, (typeof caso.grupoFamiliar.integrantes)[number]>();
   for (const i of caso.grupoFamiliar.integrantes) {
     const c = apenasDigitos(i.cpf ?? '');
-    if (c) porCpf.set(c, i.parentesco ?? '');
+    if (c) porCpf.set(c, i);
   }
+  const cpfRequerente = apenasDigitos(caso.grupoFamiliar.requerenteCpf ?? caso.cliente.cpf);
+  const titularPlanilha = porCpf.get(cpfRequerente)
+    ?? caso.grupoFamiliar.integrantes.find((i) =>
+      ['titular', 'requerente'].includes(normalizar(i.parentesco ?? '')),
+    );
 
   // Descobre quantas linhas o GERID renderizou e o CPF de cada uma.
   const linhas = await page.evaluate(() => {
@@ -534,8 +570,10 @@ async function passo4GrupoFamiliar(
     if (linha.cpf) vistos.add(linha.cpf);
 
     // --- Estado civil: existe em TODAS as linhas, inclusive a do requerente.
-    const parentescoPlanilha = linha.cpf ? (porCpf.get(linha.cpf) ?? '') : '';
-    const estadoCivil = estadoCivilGerid(undefined); // decisão: sempre o padrão
+    const integrantePlanilha = (linha.cpf ? porCpf.get(linha.cpf) : undefined)
+      ?? (ehRequerente ? titularPlanilha : undefined);
+    const parentescoPlanilha = integrantePlanilha?.parentesco ?? '';
+    const estadoCivil = estadoCivilGerid(integrantePlanilha?.estadoCivil);
     const okEc = await escolherNoCombobox(
       page,
       mapaGerid.passo4.estadoCivil(linha.indice),
@@ -557,7 +595,7 @@ async function passo4GrupoFamiliar(
       continue;
     }
 
-    if (!porCpf.has(linha.cpf)) {
+    if (!integrantePlanilha) {
       avisos.push(
         `CPF ${linha.cpf} veio do CadÚnico mas não está na planilha — confira o parentesco.`,
       );
