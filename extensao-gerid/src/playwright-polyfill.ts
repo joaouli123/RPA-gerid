@@ -173,7 +173,13 @@ class MockLocator {
     // HTMLElement.click() dispara somente `click`. Os selects oficiais do
     // GERID abrem e confirmam opções em `onMouseDown`, então a extensão precisa
     // reproduzir a sequência mínima de um clique real do navegador.
-    clicarComoUsuario(el);
+    // O Select do GERID registra onMouseDown no .br-item. Disparar no label
+    // funciona com um clique fisico, mas pode ser ignorado quando o evento vem
+    // do mundo isolado da extensao. Acionamos diretamente o dono do handler.
+    const alvo = el instanceof HTMLLabelElement
+      ? el.closest<HTMLElement>('.br-item') ?? el
+      : el;
+    clicarComoUsuario(alvo);
   }
 
   async fill(value: string) {

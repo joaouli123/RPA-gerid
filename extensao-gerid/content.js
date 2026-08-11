@@ -152,7 +152,8 @@
           if ((el instanceof HTMLButtonElement || el instanceof HTMLInputElement) && (el.disabled || el.getAttribute("aria-disabled") === "true")) {
             throw new Error(`Element is disabled: ${this.selector}`);
           }
-          clicarComoUsuario(el);
+          const alvo = el instanceof HTMLLabelElement ? el.closest(".br-item") ?? el : el;
+          clicarComoUsuario(alvo);
         }
         async fill(value) {
           const el = await this._waitForElement();
@@ -890,7 +891,6 @@
           const radio = page.locator(`[id="${id}-itens"] input[id="${cssEscape(rid)}"]`).first();
           await radio.check({ force: true }).catch(() => void 0);
           if (await aguardarValorCombobox(combo, alvo, 2e3)) return true;
-          if (await radio.isChecked().catch(() => false)) return true;
         }
         return false;
       }
@@ -1549,7 +1549,7 @@
       init_classificarPreenchimento();
       init_detectarProtocolo();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.5.1-20260811.9";
+      var CONTENT_BUILD_ID = "1.5.2-20260811.1";
       window.__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
       function logToBackground(message) {
         console.log(message);

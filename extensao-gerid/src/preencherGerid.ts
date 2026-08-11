@@ -259,10 +259,8 @@ async function escolherNoCombobox(
           .first();
         await radio.check({ force: true }).catch(() => undefined);
         if (await aguardarValorCombobox(combo, alvo, 2_000)) return true;
-        // Componentes legados confirmam pelo radio e deixam o campo de busca
-        // vazio. A transicao de etapa ou a verificacao de pendencias ainda
-        // valida se o formulario realmente aceitou a escolha.
-        if (await radio.isChecked().catch(() => false)) return true;
+        // O radio interno pode ficar marcado por alguns milissegundos sem o
+        // React aceitar a opcao. So o valor visivel confirma a selecao.
       }
       return false;
     }

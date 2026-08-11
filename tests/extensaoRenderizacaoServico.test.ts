@@ -29,8 +29,10 @@ describe('extensão Gerid — renderização tardia do passo de serviço', () =>
               <input id="idSelecionarServico" role="combobox" aria-label="Selecione um Serviço">
               <button id="abrir-lista" aria-label="Exibir lista">Exibir lista</button>
               <div id="idSelecionarServico-itens" hidden>
-                <label for="1655">Benefício Assistencial à Pessoa com Deficiência</label>
-                <input id="1655" type="radio" value="1655">
+                <div class="br-item" role="option">
+                  <input id="1655" type="radio" value="1655">
+                  <label for="1655">Benefício Assistencial à Pessoa com Deficiência</label>
+                </div>
               </div>
             </section>
             <section id="passo2" hidden>
@@ -42,6 +44,12 @@ describe('extensão Gerid — renderização tardia do passo de serviço', () =>
           `;
           document.querySelector('#abrir-lista')!.addEventListener('click', () => {
             document.querySelector<HTMLElement>('#idSelecionarServico-itens')!.hidden = false;
+          });
+          document.querySelector('#idSelecionarServico-itens .br-item')!.addEventListener('mousedown', (evento) => {
+            if (evento.target !== evento.currentTarget) return;
+            document.querySelector<HTMLInputElement>('#idSelecionarServico')!.value =
+              document.querySelector<HTMLLabelElement>('label[for="1655"]')!.textContent!.trim();
+            document.querySelector<HTMLInputElement>('input[id="1655"]')!.checked = true;
           });
           document.querySelector('#btn-next')!.addEventListener('click', () => {
             const passo1 = document.querySelector<HTMLElement>('#passo1')!;
