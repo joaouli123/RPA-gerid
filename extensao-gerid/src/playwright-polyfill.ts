@@ -111,6 +111,15 @@ class MockLocator {
     }
   }
 
+  async countAttached() {
+    try {
+      const root = this.parent ? await this.parent._getElement() : document;
+      return root ? root.querySelectorAll(this.selector).length : 0;
+    } catch {
+      return 0;
+    }
+  }
+
   locator(subSelector: string) {
     return new MockLocator(subSelector, this);
   }

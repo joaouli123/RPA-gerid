@@ -104,6 +104,14 @@
             return 0;
           }
         }
+        async countAttached() {
+          try {
+            const root = this.parent ? await this.parent._getElement() : document;
+            return root ? root.querySelectorAll(this.selector).length : 0;
+          } catch {
+            return 0;
+          }
+        }
         locator(subSelector) {
           return new _MockLocator(subSelector, this);
         }
@@ -779,6 +787,13 @@
   function visivel(loc) {
     return loc;
   }
+  async function existeInputNoDom(loc) {
+    return await loc.getAttribute("id").catch(() => null) !== null;
+  }
+  async function contarAnexados(loc) {
+    const contar = loc.countAttached;
+    return contar ? contar.call(loc) : loc.count();
+  }
   async function avancar(page, etapaAtual) {
     const antes = detectarEstadoGerid();
     if (antes.etapa !== etapaAtual) {
@@ -1070,11 +1085,11 @@
       }
     }
     const nao = visivel(page.locator(mapaGerid.passo4.incluirExcluirNao)).first();
-    if (await nao.count()) {
+    if (await existeInputNoDom(nao)) {
       await garantirMarcado(nao);
     } else {
       const alt = visivel(page.getByLabel(/^N.o$/i)).last();
-      if (await alt.count()) await garantirMarcado(alt);
+      if (await existeInputNoDom(alt)) await garantirMarcado(alt);
       else avisos.push('N\xE3o achei a op\xE7\xE3o "N\xE3o" de incluir/excluir integrante \u2014 marque manualmente.');
     }
     await avancar(page, "passo_4");
@@ -1087,12 +1102,12 @@
   }
   async function marcarNaoSimples(page, avisos, tela) {
     const porId = visivel(page.locator('input[id$="-Nao"]')).last();
-    if (await porId.count()) {
+    if (await existeInputNoDom(porId)) {
       await garantirMarcado(porId);
       return;
     }
     const porRotulo = visivel(page.getByLabel(/^N.o$/i)).last();
-    if (await porRotulo.count()) {
+    if (await existeInputNoDom(porRotulo)) {
       await garantirMarcado(porRotulo);
       return;
     }
@@ -1105,7 +1120,7 @@
     const emailConfirmado = await adicionarContato(page, "E-mail", opcoes.emailEscritorio, avisos);
     if (!celularConfirmado || !emailConfirmado) return false;
     const acompanha = visivel(page.locator(mapaGerid.passo7.acompanharProcessoSim)).first();
-    if (await acompanha.count()) await garantirMarcado(acompanha);
+    if (await existeInputNoDom(acompanha)) await garantirMarcado(acompanha);
     else {
       avisos.push('N\xE3o achei a op\xE7\xE3o "Sim" para acompanhar o processo \u2014 marque manualmente.');
       return false;
@@ -1174,7 +1189,7 @@
       return false;
     }
     const ciencias = visivel(page.locator('input[type="checkbox"][id^="campo-"]'));
-    const totalCiencias = await ciencias.count().catch(() => 0);
+    const totalCiencias = await contarAnexados(ciencias).catch(() => 0);
     for (let i = 0; i < totalCiencias; i++) {
       await garantirMarcado(ciencias.nth(i));
     }
@@ -1457,7 +1472,7 @@
       init_classificarPreenchimento();
       init_detectarProtocolo();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.5.1-20260811.3";
+      var CONTENT_BUILD_ID = "1.5.1-20260811.4";
       window.__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
       function logToBackground(message) {
         console.log(message);

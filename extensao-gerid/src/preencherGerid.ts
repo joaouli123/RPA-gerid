@@ -133,6 +133,15 @@ function visivel(loc: Locator): Locator {
   return loc;
 }
 
+async function existeInputNoDom(loc: Locator): Promise<boolean> {
+  return (await loc.getAttribute('id').catch(() => null)) !== null;
+}
+
+async function contarAnexados(loc: Locator): Promise<number> {
+  const contar = (loc as Locator & { countAttached?: () => Promise<number> }).countAttached;
+  return contar ? contar.call(loc) : loc.count();
+}
+
 /** Avança usando o id estável — nunca por texto, que existe várias vezes. */
 async function avancar(page: Page, etapaAtual: EtapaGerid): Promise<void> {
   const antes = detectarEstadoGerid();
@@ -576,11 +585,11 @@ async function passo4GrupoFamiliar(
   // ⚠️ São CHECKBOXES (`undefined-Nao`), não botões — o código antigo procurava
   // por getByRole('button') e falharia aqui.
   const nao = visivel(page.locator(mapaGerid.passo4.incluirExcluirNao)).first();
-  if (await nao.count()) {
+  if (await existeInputNoDom(nao)) {
     await garantirMarcado(nao);
   } else {
     const alt = visivel(page.getByLabel(/^N.o$/i)).last();
-    if (await alt.count()) await garantirMarcado(alt);
+    if (await existeInputNoDom(alt)) await garantirMarcado(alt);
     else avisos.push('Não achei a opção "Não" de incluir/excluir integrante — marque manualmente.');
   }
 
@@ -609,12 +618,12 @@ async function passo5e6Perguntas(page: Page, avisos: string[]): Promise<void> {
  */
 async function marcarNaoSimples(page: Page, avisos: string[], tela: string): Promise<void> {
   const porId = visivel(page.locator('input[id$="-Nao"]')).last();
-  if (await porId.count()) {
+  if (await existeInputNoDom(porId)) {
     await garantirMarcado(porId);
     return;
   }
   const porRotulo = visivel(page.getByLabel(/^N.o$/i)).last();
-  if (await porRotulo.count()) {
+  if (await existeInputNoDom(porRotulo)) {
     await garantirMarcado(porRotulo);
     return;
   }
@@ -641,7 +650,7 @@ async function passo7DadosRequerente(
 
   // Campo obrigatório separado dos comboboxes de dados adicionais.
   const acompanha = visivel(page.locator(mapaGerid.passo7.acompanharProcessoSim)).first();
-  if (await acompanha.count()) await garantirMarcado(acompanha);
+  if (await existeInputNoDom(acompanha)) await garantirMarcado(acompanha);
   else {
     avisos.push('Não achei a opção "Sim" para acompanhar o processo — marque manualmente.');
     return false;
@@ -727,7 +736,7 @@ async function passo7DadosRequerente(
   // só marca os que começam com "campo-", que é o padrão do GERID para
   // checkbox de campo (confirmado no DOM). Nada de marcar declaração por acaso.
   const ciencias = visivel(page.locator('input[type="checkbox"][id^="campo-"]'));
-  const totalCiencias = await ciencias.count().catch(() => 0);
+  const totalCiencias = await contarAnexados(ciencias).catch(() => 0);
   for (let i = 0; i < totalCiencias; i++) {
     await garantirMarcado(ciencias.nth(i));
   }
