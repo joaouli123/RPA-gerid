@@ -298,9 +298,11 @@ async function passo1SelecionarServico(page: Page): Promise<void> {
     await busca.click();
   }
 
-  // O rádio interno é apenas a implementação do componente React. O evento
-  // que confirma a seleção fica no item com role=option; clicar no texto
-  // interno exibe o serviço, mas não atualiza o valor controlado do campo.
+  // No componente atual do GERID o estado React esta ligado ao label do radio.
+  // A div role=option abre/fecha visualmente, mas nao confirma o valor.
+  const rotuloServico = visivel(
+    page.locator(`label[for="${SERVICO_BPC_PCD.id}"]`),
+  ).first();
   let opcaoVisivel = visivel(
     page.getByRole('option', {
       name: /^Benefício Assistencial à Pessoa com Deficiência\b/i,
@@ -319,7 +321,11 @@ async function passo1SelecionarServico(page: Page): Promise<void> {
       'A lista de serviços do Gerid não exibiu o BPC à Pessoa com Deficiência.',
     );
   });
-  await opcaoVisivel.click();
+  if (await rotuloServico.isVisible().catch(() => false)) {
+    await rotuloServico.click();
+  } else {
+    await opcaoVisivel.click();
+  }
 
   const inicioConfirmacao = Date.now();
   while (Date.now() - inicioConfirmacao < 3_000) {

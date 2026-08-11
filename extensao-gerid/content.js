@@ -747,6 +747,9 @@
     } else {
       await busca.click();
     }
+    const rotuloServico = visivel(
+      page.locator(`label[for="${SERVICO_BPC_PCD.id}"]`)
+    ).first();
     let opcaoVisivel = visivel(
       page.getByRole("option", {
         name: /^Benefício Assistencial à Pessoa com Deficiência\b/i
@@ -763,7 +766,11 @@
         "A lista de servi\xE7os do Gerid n\xE3o exibiu o BPC \xE0 Pessoa com Defici\xEAncia."
       );
     });
-    await opcaoVisivel.click();
+    if (await rotuloServico.isVisible().catch(() => false)) {
+      await rotuloServico.click();
+    } else {
+      await opcaoVisivel.click();
+    }
     const inicioConfirmacao = Date.now();
     while (Date.now() - inicioConfirmacao < 3e3) {
       const valor = normalizar(await busca.inputValue().catch(() => ""));
