@@ -225,10 +225,15 @@ async function escolherNoCombobox(
 
   const alvo = normalizar(rotuloDesejado);
   const rotulos = page.locator(`[id="${id}-itens"] label`);
-  if ((await rotulos.count().catch(() => 0)) === 0) {
+  let total = await rotulos.count().catch(() => 0);
+  if (total === 0) {
     await combo.click().catch(() => undefined);
+    const limite = Date.now() + 2_000;
+    while (total === 0 && Date.now() < limite) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      total = await rotulos.count().catch(() => 0);
+    }
   }
-  const total = await rotulos.count().catch(() => 0);
 
   for (let i = 0; i < total; i++) {
     const rotulo = rotulos.nth(i);

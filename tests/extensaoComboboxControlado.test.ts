@@ -68,7 +68,7 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
           for (const combo of document.querySelectorAll('input[role="combobox"]')) {
             combo.addEventListener('mousedown', () => {
               const caixa = document.getElementById(combo.id + '-itens');
-              if (caixa) caixa.hidden = false;
+              if (caixa) setTimeout(() => { caixa.hidden = false; }, 100);
             });
           }
           for (const item of document.querySelectorAll('[id$="-itens"] [role="option"]')) {

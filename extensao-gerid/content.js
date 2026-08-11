@@ -851,10 +851,15 @@
     if (!await combo.isVisible().catch(() => false)) return false;
     const alvo = normalizar(rotuloDesejado);
     const rotulos = page.locator(`[id="${id}-itens"] label`);
-    if (await rotulos.count().catch(() => 0) === 0) {
+    let total = await rotulos.count().catch(() => 0);
+    if (total === 0) {
       await combo.click().catch(() => void 0);
+      const limite = Date.now() + 2e3;
+      while (total === 0 && Date.now() < limite) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        total = await rotulos.count().catch(() => 0);
+      }
     }
-    const total = await rotulos.count().catch(() => 0);
     for (let i = 0; i < total; i++) {
       const rotulo = rotulos.nth(i);
       const texto = await rotulo.innerText().catch(() => "");
@@ -1472,7 +1477,7 @@
       init_classificarPreenchimento();
       init_detectarProtocolo();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.5.1-20260811.4";
+      var CONTENT_BUILD_ID = "1.5.1-20260811.5";
       window.__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
       function logToBackground(message) {
         console.log(message);
