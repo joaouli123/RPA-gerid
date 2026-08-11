@@ -9,7 +9,7 @@ describe('manifesto publicado da extensao', () => {
       'utf8',
     ));
 
-    expect(manifesto.version).toBe('1.4.0');
+    expect(manifesto.version).toBe('1.5.0');
     expect(manifesto.permissions).not.toContain('activeTab');
     expect(manifesto.permissions).not.toContain('downloads');
     expect(manifesto.host_permissions).toEqual([

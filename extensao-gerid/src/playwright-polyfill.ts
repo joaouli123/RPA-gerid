@@ -30,6 +30,26 @@ function definirPropriedadeNativa(
   else (elemento as any)[propriedade] = valor;
 }
 
+function clicarComoUsuario(elemento: HTMLElement): void {
+  elemento.dispatchEvent(new MouseEvent('mousedown', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    button: 0,
+    buttons: 1,
+    view: window,
+  }));
+  elemento.dispatchEvent(new MouseEvent('mouseup', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    button: 0,
+    buttons: 0,
+    view: window,
+  }));
+  elemento.click();
+}
+
 class MockLocator {
   selector: string;
   parent?: MockLocator;
@@ -140,23 +160,7 @@ class MockLocator {
     // HTMLElement.click() dispara somente `click`. Os selects oficiais do
     // GERID abrem e confirmam opções em `onMouseDown`, então a extensão precisa
     // reproduzir a sequência mínima de um clique real do navegador.
-    el.dispatchEvent(new MouseEvent('mousedown', {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      button: 0,
-      buttons: 1,
-      view: window,
-    }));
-    el.dispatchEvent(new MouseEvent('mouseup', {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      button: 0,
-      buttons: 0,
-      view: window,
-    }));
-    el.click();
+    clicarComoUsuario(el);
   }
 
   async fill(value: string) {
@@ -193,13 +197,15 @@ class MockLocator {
       // alterado pelo clique no contêiner `.interaction-select`, não por uma
       // atribuição direta no input interno.
       const controle = el.closest<HTMLElement>('.interaction-select');
-      if (controle) controle.click();
-      else el.click();
+      clicarComoUsuario(controle ?? el);
+    }
+
+    const limite = Date.now() + 1_500;
+    while (!el.checked && Date.now() < limite) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
     if (!el.checked) {
-      definirPropriedadeNativa(el, 'checked', true);
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
+      throw new Error(`O GERID não confirmou a marcação de ${this.selector}.`);
     }
   }
 
@@ -215,16 +221,28 @@ class MockLocator {
     return fn(await this._waitForElement(), arg);
   }
 
-  async setInputFiles(arquivo: string | { nome: string; mimeType?: string; base64: string }) {
-    if (typeof arquivo === 'string') {
+  async setInputFiles(
+    entrada:
+      | string
+      | { nome: string; mimeType?: string; base64: string }
+      | Array<{ nome: string; mimeType?: string; base64: string }>,
+  ) {
+    const arquivos = Array.isArray(entrada) ? entrada : [entrada];
+    if (arquivos.some((arquivo) => typeof arquivo === 'string')) {
       throw new Error('A extensão precisa receber o conteúdo do anexo, não um caminho local.');
     }
     const el = await this._waitForElement() as HTMLInputElement;
-    const binario = atob(arquivo.base64);
-    const bytes = Uint8Array.from(binario, (c) => c.charCodeAt(0));
-    const file = new File([bytes], arquivo.nome, { type: arquivo.mimeType || 'application/octet-stream' });
     const transferencia = new DataTransfer();
-    transferencia.items.add(file);
+    for (const arquivo of arquivos) {
+      if (typeof arquivo === 'string') continue;
+      const binario = atob(arquivo.base64);
+      const bytes = Uint8Array.from(binario, (c) => c.charCodeAt(0));
+      transferencia.items.add(new File(
+        [bytes],
+        arquivo.nome,
+        { type: arquivo.mimeType || 'application/octet-stream' },
+      ));
+    }
     el.files = transferencia.files;
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));

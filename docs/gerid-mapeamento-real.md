@@ -354,8 +354,12 @@ log para o advogado conferir na tela de Confirmar.
 - [x] ~~Identificar os 3 dropdowns `[Sim, Não]` do passo 7~~ — feito
 - [ ] "Forma de Convívio" existe mesmo? Não apareceu no DOM. Se não existir,
       remover `FORMA_CONVIVIO`, `formaDeConvivio()` e os 2 testes que a travam
-- [ ] Capturar passos 5, 6, 8, 9, 10
+- [x] Capturar passos 5, 6, 8, 9, 10
 - [ ] Data de Nascimento do requerente: obrigatória? A planilha não tem essa coluna
 - [ ] Nos prints de 23/07 o "TÍTULO ELEITORAL.pdf" foi anexado no slot 9
       (cadastro biométrico do titular) — contorno intencional do gate de biometria?
       O robô deve reproduzir?
+
+O contrato operacional atualizado, incluindo reconhecimento de estados,
+recuperacao, modais e validacoes pos-acao, esta em
+`docs/gerid-maquina-de-estados.md`.

@@ -64,8 +64,12 @@ interface Cache {
 }
 
 // Singleton em globalThis para sobreviver ao hot-reload do Next em dev.
-const globalCache = globalThis as unknown as { __rpaGeridCache?: Cache };
-const cache: Cache = (globalCache.__rpaGeridCache ??= {
+const globalStore = globalThis as unknown as {
+  __rpaGeridCache?: Cache;
+  __rpaGeridFilaGravacao?: Promise<void>;
+  __rpaGeridSequenciaGravacao?: number;
+};
+const cache: Cache = (globalStore.__rpaGeridCache ??= {
   estado: null,
   resultado: null,
   lidoEm: null,
@@ -97,26 +101,38 @@ async function carregarEstado(): Promise<Estado> {
 // O job de execução grava com frequência enquanto outras requisições leem.
 // Sem isto, duas gravações simultâneas deixam o arquivo pela metade e quem
 // estiver lendo recebe JSON inválido.
-let filaGravacao: Promise<void> = Promise.resolve();
-
 export async function persistir(): Promise<void> {
-  filaGravacao = filaGravacao.then(gravar, gravar);
-  return filaGravacao;
+  const fila = globalStore.__rpaGeridFilaGravacao ?? Promise.resolve();
+  globalStore.__rpaGeridFilaGravacao = fila.then(gravar, gravar);
+  return globalStore.__rpaGeridFilaGravacao;
 }
 
 async function gravar(): Promise<void> {
   if (!cache.estado) return;
+  const sequencia = (globalStore.__rpaGeridSequenciaGravacao ?? 0) + 1;
+  globalStore.__rpaGeridSequenciaGravacao = sequencia;
+  const temporario = `${ARQUIVO_ESTADO}.${process.pid}.${sequencia}.tmp`;
   try {
     await fs.mkdir(path.dirname(ARQUIVO_ESTADO), { recursive: true });
     // Grava em arquivo temporário e troca — o rename é atômico, então um
     // leitor nunca enxerga conteúdo parcial.
-    const temporario = `${ARQUIVO_ESTADO}.tmp`;
     await fs.writeFile(temporario, JSON.stringify(cache.estado, null, 2), 'utf8');
-    await fs.rename(temporario, ARQUIVO_ESTADO);
+    for (let tentativa = 0; ; tentativa++) {
+      try {
+        await fs.rename(temporario, ARQUIVO_ESTADO);
+        break;
+      } catch (erro) {
+        const codigo = (erro as NodeJS.ErrnoException).code;
+        if (!['EPERM', 'EACCES'].includes(codigo ?? '') || tentativa >= 4) throw erro;
+        await new Promise((resolve) => setTimeout(resolve, 25 * (tentativa + 1)));
+      }
+    }
   } catch (erro) {
     // Falha ao gravar não pode derrubar o processo: o estado em memória segue
     // válido e a próxima gravação tenta de novo.
     console.warn('[rpa-gerid] não foi possível persistir o estado:', erro);
+  } finally {
+    await fs.rm(temporario, { force: true }).catch(() => undefined);
   }
 }
 

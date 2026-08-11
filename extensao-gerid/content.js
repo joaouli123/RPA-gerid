@@ -33,6 +33,25 @@
     if (setter) setter.call(elemento, valor);
     else elemento[propriedade] = valor;
   }
+  function clicarComoUsuario(elemento) {
+    elemento.dispatchEvent(new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      button: 0,
+      buttons: 1,
+      view: window
+    }));
+    elemento.dispatchEvent(new MouseEvent("mouseup", {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      button: 0,
+      buttons: 0,
+      view: window
+    }));
+    elemento.click();
+  }
   var MockLocator, MockPage;
   var init_playwright_polyfill = __esm({
     "src/playwright-polyfill.ts"() {
@@ -122,23 +141,7 @@
           if ((el instanceof HTMLButtonElement || el instanceof HTMLInputElement) && (el.disabled || el.getAttribute("aria-disabled") === "true")) {
             throw new Error(`Element is disabled: ${this.selector}`);
           }
-          el.dispatchEvent(new MouseEvent("mousedown", {
-            bubbles: true,
-            cancelable: true,
-            composed: true,
-            button: 0,
-            buttons: 1,
-            view: window
-          }));
-          el.dispatchEvent(new MouseEvent("mouseup", {
-            bubbles: true,
-            cancelable: true,
-            composed: true,
-            button: 0,
-            buttons: 0,
-            view: window
-          }));
-          el.click();
+          clicarComoUsuario(el);
         }
         async fill(value) {
           const el = await this._waitForElement();
@@ -166,13 +169,14 @@
           const el = await this._waitForElement();
           if (!el.checked) {
             const controle = el.closest(".interaction-select");
-            if (controle) controle.click();
-            else el.click();
+            clicarComoUsuario(controle ?? el);
+          }
+          const limite = Date.now() + 1500;
+          while (!el.checked && Date.now() < limite) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
           }
           if (!el.checked) {
-            definirPropriedadeNativa(el, "checked", true);
-            el.dispatchEvent(new Event("input", { bubbles: true }));
-            el.dispatchEvent(new Event("change", { bubbles: true }));
+            throw new Error(`O GERID n\xE3o confirmou a marca\xE7\xE3o de ${this.selector}.`);
           }
         }
         async getAttribute(name) {
@@ -184,16 +188,23 @@
         async evaluate(fn, arg) {
           return fn(await this._waitForElement(), arg);
         }
-        async setInputFiles(arquivo) {
-          if (typeof arquivo === "string") {
+        async setInputFiles(entrada) {
+          const arquivos = Array.isArray(entrada) ? entrada : [entrada];
+          if (arquivos.some((arquivo) => typeof arquivo === "string")) {
             throw new Error("A extens\xE3o precisa receber o conte\xFAdo do anexo, n\xE3o um caminho local.");
           }
           const el = await this._waitForElement();
-          const binario = atob(arquivo.base64);
-          const bytes = Uint8Array.from(binario, (c) => c.charCodeAt(0));
-          const file = new File([bytes], arquivo.nome, { type: arquivo.mimeType || "application/octet-stream" });
           const transferencia = new DataTransfer();
-          transferencia.items.add(file);
+          for (const arquivo of arquivos) {
+            if (typeof arquivo === "string") continue;
+            const binario = atob(arquivo.base64);
+            const bytes = Uint8Array.from(binario, (c) => c.charCodeAt(0));
+            transferencia.items.add(new File(
+              [bytes],
+              arquivo.nome,
+              { type: arquivo.mimeType || "application/octet-stream" }
+            ));
+          }
           el.files = transferencia.files;
           el.dispatchEvent(new Event("input", { bubbles: true }));
           el.dispatchEvent(new Event("change", { bubbles: true }));
@@ -396,6 +407,113 @@
         // -------------------------------------------------------------------------
         pendencias: []
       };
+    }
+  });
+
+  // src/estadoGerid.ts
+  function estaVisivel(elemento) {
+    if (!(elemento instanceof HTMLElement)) return false;
+    if (elemento instanceof HTMLInputElement && elemento.type === "file") {
+      return Boolean(elemento.closest(".containerAnexo")?.offsetParent);
+    }
+    return elemento.offsetParent !== null;
+  }
+  function normalizar2(texto) {
+    return (texto || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+  function textoVisivel(documento) {
+    return normalizar2(documento.body?.innerText);
+  }
+  function seletorVisivel(documento, seletor) {
+    return Array.from(documento.querySelectorAll(seletor)).some(estaVisivel);
+  }
+  function detectarEstadoGerid(documento = document) {
+    const texto = textoVisivel(documento);
+    const dialogos = Array.from(documento.querySelectorAll('[role="dialog"]')).filter(estaVisivel);
+    const modalContatos = dialogos.some((dialogo) => normalizar2(dialogo.innerText).includes("contatos"));
+    const modalConfirmacao = dialogos.some((dialogo) => {
+      const conteudo = normalizar2(dialogo.innerText);
+      return conteudo.includes("atencao") && conteudo.includes("confirmar");
+    });
+    let etapa = "desconhecido";
+    if (texto.includes("login - pat") && texto.includes("abrangencia")) etapa = "autenticacao_pat";
+    else if (texto.includes("certificado digital do tipo a3")) etapa = "aviso_certificado_a3";
+    else if (seletorVisivel(documento, 'input[id="campo-declaracaoConfirmar"]')) etapa = "passo_10";
+    else if (texto.includes("comprovante") && /protocolo|requerimento/.test(texto)) etapa = "comprovante";
+    else if (seletorVisivel(documento, "#orgaoPagadorMunicipio")) etapa = "passo_9";
+    else if (seletorVisivel(documento, 'input[placeholder="__.___-___"]') || texto.includes("selecionar unidade") && texto.includes("consultar por cep")) etapa = "passo_8";
+    else if (seletorVisivel(documento, 'input[id="acompanharProcesso-Sim"]') && seletorVisivel(documento, ".containerAnexo")) etapa = "passo_7";
+    else if (seletorVisivel(documento, 'input[id^="perguntaSUAS-"]') || texto.includes("protecao especial suas")) etapa = "passo_6";
+    else if (seletorVisivel(documento, 'input[id^="perguntaGastos-"]') || texto.includes("comprometimento de renda")) etapa = "passo_5";
+    else if (seletorVisivel(documento, 'input[id^="selectEstadoCivil"]') && texto.includes("grupo familiar")) etapa = "passo_4";
+    else if (seletorVisivel(documento, 'input[id="campo-autorizacaoCadunico"]')) etapa = "passo_3";
+    else if (seletorVisivel(documento, 'input[id="idRequerente.cpf"]')) etapa = "passo_2";
+    else if (seletorVisivel(documento, 'input[id="idSelecionarServico"]')) etapa = "passo_1";
+    else if (Array.from(documento.querySelectorAll("button")).some(
+      (botao) => estaVisivel(botao) && normalizar2(botao.innerText) === "novo requerimento"
+    )) etapa = "lista_requerimentos";
+    return {
+      etapa,
+      modal: modalContatos ? "contatos" : modalConfirmacao ? "confirmacao_final" : null
+    };
+  }
+  function textoSeguro(valor) {
+    return valor.replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[email]").replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, "[cpf]").replace(/\b\d{10,13}\b/g, "[numero]").replace(/\s+/g, " ").trim().slice(0, 180);
+  }
+  function capturarDiagnosticoGerid(documento = document) {
+    const estado = detectarEstadoGerid(documento);
+    const campos = Array.from(
+      documento.querySelectorAll("input, textarea, select")
+    ).filter(estaVisivel).slice(0, 60).map((campo) => ({
+      id: campo.id || campo.getAttribute("name") || "(sem id)",
+      tipo: campo instanceof HTMLInputElement ? campo.type || "text" : campo.tagName.toLowerCase(),
+      preenchido: campo instanceof HTMLInputElement && ["checkbox", "radio"].includes(campo.type) ? campo.checked : Boolean(campo.value)
+    }));
+    const alertas = Array.from(
+      documento.querySelectorAll('[role="alert"], .br-message, .feedback')
+    ).filter(estaVisivel).map((alerta) => textoSeguro(alerta.innerText)).filter(Boolean).slice(0, 10);
+    const botoes = Array.from(documento.querySelectorAll("button")).filter(estaVisivel).map((botao) => ({
+      texto: textoSeguro(botao.innerText || botao.getAttribute("aria-label") || ""),
+      desabilitado: botao.disabled || botao.getAttribute("aria-disabled") === "true"
+    })).filter((botao) => botao.texto).slice(0, 30);
+    const anexos = Array.from(documento.querySelectorAll('.containerAnexo input[type="file"]')).filter(estaVisivel).map((input, indice) => ({
+      indice,
+      rotulo: textoSeguro(
+        input.closest(".containerAnexo")?.querySelector("strong")?.innerText || input.closest(".containerAnexo")?.innerText || ""
+      ),
+      arquivo: Boolean(input.files?.length)
+    }));
+    return {
+      ...estado,
+      caminho: window.location.pathname,
+      alertas,
+      campos,
+      botoes,
+      anexos
+    };
+  }
+  function listarPerguntasObrigatoriasPendentes(documento = document) {
+    const compactar = (valor) => valor.replace(/\s+/g, " ").trim();
+    return Array.from(documento.querySelectorAll('input[role="combobox"][id^="ca-"]')).filter((combo) => estaVisivel(combo) && !combo.value.trim()).map((combo) => {
+      let pai = combo.parentElement;
+      for (let nivel = 0; pai && nivel < 6; nivel++, pai = pai.parentElement) {
+        const texto = compactar(pai.innerText || "");
+        const pergunta = texto.split(/(?=Selecione o item|Exibir lista)/)[0]?.trim();
+        if (pergunta && pergunta.length > 10 && pergunta.length < 500) {
+          return pergunta.replace(/^\*\s*/, "");
+        }
+      }
+      return combo.id;
+    });
+  }
+  function resumirDiagnosticoGerid(diagnostico) {
+    const alertas = diagnostico.alertas.length ? ` Alertas: ${diagnostico.alertas.join(" | ")}.` : "";
+    const pendentes = diagnostico.campos.filter((campo) => !campo.preenchido).map((campo) => campo.id).slice(0, 12);
+    return `Estado ${diagnostico.etapa}${diagnostico.modal ? `, modal ${diagnostico.modal}` : ""}.` + (pendentes.length ? ` Campos pendentes: ${pendentes.join(", ")}.` : "") + alertas;
+  }
+  var init_estadoGerid = __esm({
+    "src/estadoGerid.ts"() {
+      "use strict";
     }
   });
 
@@ -635,20 +753,37 @@
   function visivel(loc) {
     return loc;
   }
-  async function avancar(page) {
+  async function avancar(page, etapaAtual) {
+    const antes = detectarEstadoGerid();
+    if (antes.etapa !== etapaAtual) {
+      const contexto2 = resumirDiagnosticoGerid(capturarDiagnosticoGerid());
+      throw new ErroGerid(
+        FalhaGerid.CAMPO_NAO_ENCONTRADO,
+        `A extens\xE3o esperava ${etapaAtual}, mas o GERID estava em ${antes.etapa}. ${contexto2}`
+      );
+    }
     const botao = visivel(page.locator(NAVEGACAO.avancar)).first();
     const limite = Date.now() + 1e4;
     while (Date.now() < limite) {
       if (await botao.isEnabled().catch(() => false)) {
         await botao.click();
-        await page.waitForLoadState("networkidle").catch(() => void 0);
-        return;
+        const limiteMudanca = Date.now() + 1e4;
+        while (Date.now() < limiteMudanca) {
+          const depois = detectarEstadoGerid();
+          if (depois.etapa !== etapaAtual && depois.etapa !== "desconhecido") {
+            await page.waitForLoadState("networkidle").catch(() => void 0);
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        break;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    const contexto = resumirDiagnosticoGerid(capturarDiagnosticoGerid());
     throw new ErroGerid(
       FalhaGerid.ERRO_PREENCHIMENTO,
-      "O Gerid n\xE3o liberou o bot\xE3o Avan\xE7ar ap\xF3s validar os dados da etapa."
+      `O GERID n\xE3o saiu de ${etapaAtual} ap\xF3s validar os dados. ${contexto}`
     );
   }
   async function esperarTela(page, marca) {
@@ -798,7 +933,7 @@
     while (Date.now() - inicioConfirmacao < 3e3) {
       const valor = normalizar(await busca.inputValue().catch(() => ""));
       if (valor.includes("beneficio assistencial") && valor.includes("pessoa com deficiencia")) {
-        await avancar(page);
+        await avancar(page, "passo_1");
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -809,7 +944,7 @@
     if (await radio.isVisible().catch(() => false)) {
       await radio.check({ force: true });
       if (await radio.isChecked().catch(() => false)) {
-        await avancar(page);
+        await avancar(page, "passo_1");
         return;
       }
     }
@@ -845,7 +980,7 @@
         "O Gerid n\xE3o retornou o nome do requerente ap\xF3s consultar o CPF."
       );
     }
-    await avancar(page);
+    await avancar(page, "passo_2");
     await verificarBloqueioDePedidoAberto(page);
   }
   async function verificarBloqueioDePedidoAberto(page) {
@@ -868,7 +1003,7 @@
       );
     });
     await garantirMarcado(check);
-    await avancar(page);
+    await avancar(page, "passo_3");
   }
   async function passo4GrupoFamiliar(page, caso, avisos) {
     await esperarTela(page, /Grupo Familiar/i);
@@ -952,13 +1087,13 @@
       if (await alt.count()) await garantirMarcado(alt);
       else avisos.push('N\xE3o achei a op\xE7\xE3o "N\xE3o" de incluir/excluir integrante \u2014 marque manualmente.');
     }
-    await avancar(page);
+    await avancar(page, "passo_4");
   }
   async function passo5e6Perguntas(page, avisos) {
     await marcarNaoSimples(page, avisos, "Comprometimento de Renda");
-    await avancar(page);
+    await avancar(page, "passo_5");
     await marcarNaoSimples(page, avisos, "Prote\xE7\xE3o Especial SUAS");
-    await avancar(page);
+    await avancar(page, "passo_6");
   }
   async function marcarNaoSimples(page, avisos, tela) {
     const porId = visivel(page.locator('input[id$="-Nao"]')).last();
@@ -976,11 +1111,15 @@
   async function passo7DadosRequerente(page, caso, opcoes, avisos) {
     await esperarTela(page, /Dados Adicionais|Interessados/i);
     const telefone = caso.cliente.telefone?.trim() || opcoes.telefonePadrao;
-    await adicionarContato(page, "Celular", telefone, avisos);
-    await adicionarContato(page, "E-mail", opcoes.emailEscritorio, avisos);
+    const celularConfirmado = await adicionarContato(page, "Celular", telefone, avisos);
+    const emailConfirmado = await adicionarContato(page, "E-mail", opcoes.emailEscritorio, avisos);
+    if (!celularConfirmado || !emailConfirmado) return false;
     const acompanha = visivel(page.locator(mapaGerid.passo7.acompanharProcessoSim)).first();
     if (await acompanha.count()) await garantirMarcado(acompanha);
-    else avisos.push('N\xE3o achei a op\xE7\xE3o "Sim" para acompanhar o processo \u2014 marque manualmente.');
+    else {
+      avisos.push('N\xE3o achei a op\xE7\xE3o "Sim" para acompanhar o processo \u2014 marque manualmente.');
+      return false;
+    }
     await responderPergunta(page, PERGUNTAS_PASSO7.estrangeiro, RESPOSTAS_FIXAS.estrangeiro, avisos);
     await responderPergunta(
       page,
@@ -994,7 +1133,8 @@
       page,
       PERGUNTAS_PASSO7.formaConvivio,
       formaDeConvivio(caso.grupoFamiliar),
-      avisos
+      avisos,
+      true
     );
     await responderPergunta(
       page,
@@ -1033,23 +1173,47 @@
     }
     const cpfProcId = await inputPorPergunta(page, "CPF do Procurador");
     if (cpfProcId) {
-      await visivel(page.locator(`[id="${cssEscape(cpfProcId)}"]`)).first().fill(apenasDigitos(opcoes.procuradorCpf));
+      const cpfProcurador = visivel(page.locator(`[id="${cssEscape(cpfProcId)}"]`)).first();
+      await cpfProcurador.fill(apenasDigitos(opcoes.procuradorCpf));
+      if (apenasDigitos(await cpfProcurador.inputValue().catch(() => "")) !== apenasDigitos(opcoes.procuradorCpf)) {
+        avisos.push("O GERID n\xE3o confirmou o CPF do procurador \u2014 preencha manualmente.");
+        return false;
+      }
     } else {
       avisos.push('Campo "CPF do Procurador" n\xE3o encontrado \u2014 preencha manualmente.');
+      return false;
     }
     const ciencias = visivel(page.locator('input[type="checkbox"][id^="campo-"]'));
     const totalCiencias = await ciencias.count().catch(() => 0);
     for (let i = 0; i < totalCiencias; i++) {
       await garantirMarcado(ciencias.nth(i));
     }
+    const perguntasPendentes = listarPerguntasObrigatoriasPendentes();
+    if (perguntasPendentes.length) {
+      avisos.push(
+        `O GERID deixou ${perguntasPendentes.length} pergunta(s) obrigat\xF3ria(s) sem resposta: ` + perguntasPendentes.join(" | ")
+      );
+      return false;
+    }
     await anexarDocumentos(page, opcoes, avisos);
-    await avancar(page);
+    const slotsObrigatorios = SLOTS_GERID.filter((slot) => slot.obrigatorio);
+    const anexosObrigatoriosAusentes = [];
+    for (const slot of slotsObrigatorios) {
+      const input = page.locator(mapaGerid.passo7.inputArquivo).nth(slot.indice);
+      const quantidade = await input.evaluate((elemento) => elemento.files?.length ?? 0).catch(() => 0);
+      if (quantidade === 0) anexosObrigatoriosAusentes.push(slot.rotulo);
+    }
+    if (anexosObrigatoriosAusentes.length) {
+      avisos.push(`Anexos obrigat\xF3rios n\xE3o confirmados: ${anexosObrigatoriosAusentes.join(" | ")}`);
+      return false;
+    }
+    await avancar(page, "passo_7");
     return true;
   }
   async function adicionarContato(page, tipo, valor, avisos) {
     if (!valor) {
       avisos.push(`Contato ${tipo} n\xE3o informado \u2014 adicione manualmente.`);
-      return;
+      return false;
     }
     try {
       const fechar = visivel(page.getByRole("button", { name: /^Fechar$/i })).first();
@@ -1060,14 +1224,42 @@
         if (await editar.isVisible().catch(() => false)) await editar.click();
         else await visivel(page.getByText(/^Adicionar$/i)).first().click();
       }
+      const jaExiste = await contatoExisteNoDialogo(page, tipo, valor);
+      if (jaExiste) {
+        await visivel(page.getByRole("button", { name: /Fechar/i })).first().click();
+        return true;
+      }
       const ok = await escolherNoCombobox(page, mapaGerid.passo7.tipoContato, tipo);
-      if (!ok) avisos.push(`N\xE3o consegui escolher o tipo de contato "${tipo}".`);
+      if (!ok) throw new Error(`Tipo de contato "${tipo}" n\xE3o confirmado.`);
       await visivel(page.getByPlaceholder(/^Informe o /i)).first().fill(valor);
       await visivel(page.getByRole("button", { name: /^Adicionar$/i })).first().click();
+      let confirmou = false;
+      const limiteConfirmacao = Date.now() + 3e3;
+      while (!confirmou && Date.now() < limiteConfirmacao) {
+        confirmou = await contatoExisteNoDialogo(page, tipo, valor);
+        if (!confirmou) await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (!confirmou) throw new Error(`O GERID n\xE3o exibiu o contato ${tipo} depois de adicionar.`);
       await visivel(page.getByRole("button", { name: /Fechar/i })).first().click();
+      return true;
     } catch {
-      avisos.push(`Falhei ao adicionar o contato ${tipo} (${valor}) \u2014 adicione manualmente.`);
+      avisos.push(`Falhei ao adicionar o contato ${tipo} \u2014 adicione manualmente.`);
+      return false;
     }
+  }
+  async function contatoExisteNoDialogo(page, tipo, valor) {
+    return page.evaluate(({ tipoEsperado, valorEsperado }) => {
+      const normalizarTexto = (entrada) => entrada.replace(/\s+/g, " ").trim().toLowerCase();
+      const soDigitos = (entrada) => entrada.replace(/\D/g, "");
+      const dialogo = document.querySelector("#selectTipoContato")?.closest('[role="dialog"]') ?? Array.from(document.querySelectorAll('[role="dialog"]')).find((elemento) => elemento.offsetParent !== null && /contatos/i.test(elemento.innerText));
+      if (!dialogo) return false;
+      return Array.from(dialogo.querySelectorAll("tbody tr")).some((linha) => {
+        const texto = normalizarTexto(linha.innerText);
+        const tipoOk = texto.includes(normalizarTexto(tipoEsperado));
+        const valorOk = tipoEsperado.toLowerCase().includes("mail") ? texto.includes(normalizarTexto(valorEsperado)) : soDigitos(texto).includes(soDigitos(valorEsperado));
+        return tipoOk && valorOk;
+      });
+    }, { tipoEsperado: tipo, valorEsperado: valor });
   }
   async function anexarDocumentos(page, opcoes, avisos) {
     const inputs = page.locator(mapaGerid.passo7.inputArquivo);
@@ -1077,6 +1269,7 @@
         `Esperava ${mapaGerid.passo7.totalSlots} caixas de anexo e encontrei ${total} \u2014 o GERID pode ter mudado. Confira os anexos antes de concluir.`
       );
     }
+    const porSlot = /* @__PURE__ */ new Map();
     for (const arq of opcoes.arquivos) {
       const slot = slotGeridDoDocumento(arq.tipo);
       if (!slot) {
@@ -1089,7 +1282,12 @@
         );
         continue;
       }
-      const indice = indiceSlotDoDocumento(arq.tipo);
+      const grupo = porSlot.get(slot) ?? [];
+      grupo.push(arq);
+      porSlot.set(slot, grupo);
+    }
+    for (const [slot, arquivos] of porSlot) {
+      const indice = indiceSlotDoDocumento(arquivos[0]?.tipo ?? "");
       let alvo = null;
       const caixa = page.locator("div.containerAnexo").filter({ hasText: slot }).locator('input[type="file"]').first();
       if (await caixa.count()) alvo = caixa;
@@ -1098,13 +1296,24 @@
         avisos.push(`Usei a posi\xE7\xE3o ${indice} para anexar "${slot}" \u2014 confira se caiu na caixa certa.`);
       }
       if (!alvo) {
-        avisos.push(`Caixa "${slot}" n\xE3o encontrada \u2014 anexe ${arq.tipo} manualmente.`);
+        avisos.push(`Caixa "${slot}" n\xE3o encontrada \u2014 anexe os documentos manualmente.`);
         continue;
       }
       try {
-        await alvo.setInputFiles(arq.caminho);
+        const conteudos = arquivos.map((arquivo) => arquivo.caminho);
+        if (conteudos.some((conteudo) => typeof conteudo === "string")) {
+          throw new Error("Conte\xFAdo do anexo n\xE3o foi recebido pela extens\xE3o.");
+        }
+        await alvo.setInputFiles(conteudos);
+        const nomesRecebidos = await alvo.evaluate(
+          (input) => Array.from(input.files ?? []).map((arquivo) => arquivo.name)
+        );
+        const nomesEsperados = arquivos.map((arquivo) => arquivo.nome).filter(Boolean);
+        if (nomesRecebidos.length !== arquivos.length || nomesEsperados.some((nome) => !nomesRecebidos.includes(nome))) {
+          throw new Error("O GERID n\xE3o preservou todos os arquivos selecionados.");
+        }
       } catch {
-        avisos.push(`Falha ao anexar ${arq.tipo} em "${slot}" \u2014 anexe manualmente.`);
+        avisos.push(`Falha ao anexar ${arquivos.length} arquivo(s) em "${slot}" \u2014 anexe manualmente.`);
       }
     }
   }
@@ -1123,7 +1332,7 @@
     await visivel(page.getByRole("button", { name: /^Buscar$/i })).first().click();
     await page.waitForLoadState("networkidle").catch(() => void 0);
     const ok = await selecionarUnidadeDeAtendimento(page, caso, avisos);
-    if (ok) await avancar(page);
+    if (ok) await avancar(page, "passo_8");
     return ok;
   }
   async function passo9OrgaoPagador(page, caso, avisos) {
@@ -1150,7 +1359,7 @@
       avisos.push(`Nao consegui selecionar o primeiro orgao pagador de "${municipio}".`);
       return false;
     }
-    await avancar(page);
+    await avancar(page, "passo_9");
     return true;
   }
   function cidadeSemUf(cidade) {
@@ -1182,7 +1391,13 @@
       );
     }
     const card = unidades.nth(escolhida.indice);
-    const selecionou = await card.click().then(async () => (await card.getAttribute("class"))?.split(/\s+/).includes("selected") ?? false, () => false);
+    await card.click().catch(() => void 0);
+    let selecionou = false;
+    const limiteSelecao = Date.now() + 3e3;
+    while (!selecionou && Date.now() < limiteSelecao) {
+      selecionou = (await card.getAttribute("class"))?.split(/\s+/).includes("selected") ?? false;
+      if (!selecionou) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     if (!selecionou) {
       avisos.push(`Nao consegui selecionar a unidade de atendimento "${escolhida.nome}".`);
       return false;
@@ -1196,6 +1411,7 @@
       init_tiposGerid();
       init_texto();
       init_mapaGerid();
+      init_estadoGerid();
       init_regrasPreenchimento();
     }
   });
@@ -1251,6 +1467,7 @@
       init_mapaGerid();
       init_classificarPreenchimento();
       init_detectarProtocolo();
+      init_estadoGerid();
       function logToBackground(message) {
         console.log(message);
         try {
@@ -1329,6 +1546,9 @@
         };
       }
       window.resolverBloqueiosGerid = resolverBloqueiosConhecidosGerid;
+      window.obterEstadoGerid = () => detectarEstadoGerid();
+      window.diagnosticarGerid = () => capturarDiagnosticoGerid();
+      window.obterPendenciasGerid = () => listarPerguntasObrigatoriasPendentes();
       async function abrirNovoRequerimentoSeNecessario(page) {
         const seletorServico = page.locator(mapaGerid.passo1.campoBusca);
         const novoRequerimento = page.getByRole("button", { name: /^Novo Requerimento$/i });
@@ -1376,11 +1596,13 @@
           }
         } catch (e) {
           const errorMsg = e instanceof Error ? e.message : "Erro interno no rob\xF4";
-          logToBackground(`[ROB\xD4 FINALIZADO com ERRO FATAL]: ${errorMsg}`);
+          const diagnostico = capturarDiagnosticoGerid();
+          const contexto = resumirDiagnosticoGerid(diagnostico);
+          logToBackground(`[ROB\xD4 FINALIZADO com ERRO FATAL]: ${errorMsg} ${contexto}`);
           if (e instanceof ErroGerid) {
-            return { status: "erro", erro: e.message };
+            return { status: "erro", erro: `${e.message} ${contexto}`, diagnostico };
           }
-          return { status: "erro", erro: errorMsg };
+          return { status: "erro", erro: `${errorMsg} ${contexto}`, diagnostico };
         }
       };
       window.detectarProtocoloGerid = () => detectarProtocoloEmTexto(document.body?.innerText || "");

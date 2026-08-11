@@ -329,10 +329,40 @@ function erroDeNavegacao(erro) {
   return /naveg|frame|context|recarreg|lista de servi|tela de servi|novo requerimento|script não retornou|timeout waiting|selector/.test(texto);
 }
 
+async function obterEstadoNaAba(tabId) {
+  const verificacao = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => typeof window.obterEstadoGerid === 'function',
+  });
+  if (!verificacao[0]?.result) {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+  }
+  const resultado = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => window.obterEstadoGerid?.() || { etapa: 'desconhecido', modal: null },
+  });
+  return resultado[0]?.result || { etapa: 'desconhecido', modal: null };
+}
+
 async function executarCasoNoGerid(tabId, casoComAnexos) {
   for (let tentativa = 0; tentativa < 2; tentativa++) {
     try {
-      const abaId = await prepararAbaGerid(tabId, tentativa > 0);
+      let abaId = await prepararAbaGerid(tabId, tentativa > 0);
+      const estadoInicial = await obterEstadoNaAba(abaId);
+      const etapaInicial = typeof estadoInicial?.etapa === 'string' ? estadoInicial.etapa : null;
+
+      if (etapaInicial && ['passo_10', 'comprovante'].includes(etapaInicial)) {
+        return {
+          status: 'erro',
+          erro: 'O GERID possui uma revisão ou comprovante pendente. Conclua esse caso antes de iniciar outro.',
+        };
+      }
+
+      if (etapaInicial && !['lista_requerimentos', 'passo_1'].includes(etapaInicial)) {
+        sendLog(`O GERID estava em ${etapaInicial}. Voltando ao início seguro antes de preencher o caso.`);
+        abaId = await prepararAbaGerid(abaId, true);
+      }
+
       const verificacao = await chrome.scripting.executeScript({
         target: { tabId: abaId },
         func: () => typeof window.iniciarProcessamento === 'function',

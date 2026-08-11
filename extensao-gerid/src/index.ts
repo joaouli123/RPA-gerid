@@ -4,6 +4,12 @@ import { ErroGerid } from './tiposGerid';
 import { mapaGerid } from './mapaGerid';
 import { classificarPreenchimento } from './classificarPreenchimento';
 import { detectarProtocoloEmTexto } from './detectarProtocolo';
+import {
+  capturarDiagnosticoGerid,
+  detectarEstadoGerid,
+  listarPerguntasObrigatoriasPendentes,
+  resumirDiagnosticoGerid,
+} from './estadoGerid';
 
 function logToBackground(message: string) {
   console.log(message);
@@ -112,6 +118,9 @@ async function resolverBloqueiosConhecidosGerid() {
 }
 
 (window as any).resolverBloqueiosGerid = resolverBloqueiosConhecidosGerid;
+(window as any).obterEstadoGerid = () => detectarEstadoGerid();
+(window as any).diagnosticarGerid = () => capturarDiagnosticoGerid();
+(window as any).obterPendenciasGerid = () => listarPerguntasObrigatoriasPendentes();
 
 async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> {
   const seletorServico = page.locator(mapaGerid.passo1.campoBusca);
@@ -172,12 +181,14 @@ async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> 
     }
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : 'Erro interno no robô';
-    logToBackground(`[ROBÔ FINALIZADO com ERRO FATAL]: ${errorMsg}`);
+    const diagnostico = capturarDiagnosticoGerid();
+    const contexto = resumirDiagnosticoGerid(diagnostico);
+    logToBackground(`[ROBÔ FINALIZADO com ERRO FATAL]: ${errorMsg} ${contexto}`);
     
     if (e instanceof ErroGerid) {
-      return { status: 'erro', erro: e.message };
+      return { status: 'erro', erro: `${e.message} ${contexto}`, diagnostico };
     }
-    return { status: 'erro', erro: errorMsg };
+    return { status: 'erro', erro: `${errorMsg} ${contexto}`, diagnostico };
   }
 };
 

@@ -83,6 +83,26 @@ describe('validarDocumentos', () => {
     expect(motivos[0]?.contexto?.arquivo).toBe('Documentos médicos.pdf');
   });
 
+  it('bloqueia quando a soma dos anexos ultrapassa 50 MB', () => {
+    const arquivos = Array.from({ length: 11 }, (_, indice) =>
+      arq(`documento-${indice}.pdf`, 4.9),
+    );
+    const documentosEsperados = [{
+      tipo: 'DOCUMENTOS_PESSOAIS',
+      rotulo: 'Documentos pessoais',
+      obrigatorio: true,
+      padroes: ['documento'],
+    }];
+
+    const motivos = validarDocumentos(arquivos, {
+      documentosEsperados,
+      limiteTamanhoArquivoBytes: 5 * MB,
+    });
+
+    expect(motivos.some((item) => item.codigo === CodigoMotivo.ANEXOS_TOTAL_GRANDE_DEMAIS)).toBe(true);
+    expect(motivos.some((item) => item.codigo === CodigoMotivo.ARQUIVO_GRANDE_DEMAIS)).toBe(false);
+  });
+
   it('arquivo exatamente no limite não é sinalizado', () => {
     expect(validarDocumentos([...OBRIGATORIOS, arq('Documentos médicos.pdf', 5)], opcoes)).toEqual(
       [],

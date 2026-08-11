@@ -3,6 +3,13 @@ import { ErroGerid, FalhaGerid, type CasoParaProtocolar } from './tiposGerid';
 import { apenasDigitos, normalizar } from './domain/texto';
 import { mapaGerid, NAVEGACAO } from './mapaGerid';
 import {
+  capturarDiagnosticoGerid,
+  detectarEstadoGerid,
+  listarPerguntasObrigatoriasPendentes,
+  resumirDiagnosticoGerid,
+  type EtapaGerid,
+} from './estadoGerid';
+import {
   RESPOSTAS_FIXAS,
   PERGUNTAS_PASSO7,
   SERVICO_BPC_PCD,
@@ -13,6 +20,7 @@ import {
   slotGeridDoDocumento,
   indiceSlotDoDocumento,
   extensaoAceita,
+  SLOTS_GERID,
 } from './regrasPreenchimento';
 
 /**
@@ -98,20 +106,38 @@ function visivel(loc: Locator): Locator {
 }
 
 /** Avança usando o id estável — nunca por texto, que existe várias vezes. */
-async function avancar(page: Page): Promise<void> {
+async function avancar(page: Page, etapaAtual: EtapaGerid): Promise<void> {
+  const antes = detectarEstadoGerid();
+  if (antes.etapa !== etapaAtual) {
+    const contexto = resumirDiagnosticoGerid(capturarDiagnosticoGerid());
+    throw new ErroGerid(
+      FalhaGerid.CAMPO_NAO_ENCONTRADO,
+      `A extensão esperava ${etapaAtual}, mas o GERID estava em ${antes.etapa}. ${contexto}`,
+    );
+  }
+
   const botao = visivel(page.locator(NAVEGACAO.avancar)).first();
   const limite = Date.now() + 10_000;
   while (Date.now() < limite) {
     if (await botao.isEnabled().catch(() => false)) {
       await botao.click();
-      await page.waitForLoadState('networkidle').catch(() => undefined);
-      return;
+      const limiteMudanca = Date.now() + 10_000;
+      while (Date.now() < limiteMudanca) {
+        const depois = detectarEstadoGerid();
+        if (depois.etapa !== etapaAtual && depois.etapa !== 'desconhecido') {
+          await page.waitForLoadState('networkidle').catch(() => undefined);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      break;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  const contexto = resumirDiagnosticoGerid(capturarDiagnosticoGerid());
   throw new ErroGerid(
     FalhaGerid.ERRO_PREENCHIMENTO,
-    'O Gerid não liberou o botão Avançar após validar os dados da etapa.',
+    `O GERID não saiu de ${etapaAtual} após validar os dados. ${contexto}`,
   );
 }
 
@@ -343,7 +369,7 @@ async function passo1SelecionarServico(page: Page): Promise<void> {
   while (Date.now() - inicioConfirmacao < 3_000) {
     const valor = normalizar(await busca.inputValue().catch(() => ''));
     if (valor.includes('beneficio assistencial') && valor.includes('pessoa com deficiencia')) {
-      await avancar(page);
+      await avancar(page, 'passo_1');
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -357,7 +383,7 @@ async function passo1SelecionarServico(page: Page): Promise<void> {
   if (await radio.isVisible().catch(() => false)) {
     await radio.check({ force: true });
     if (await radio.isChecked().catch(() => false)) {
-      await avancar(page);
+      await avancar(page, 'passo_1');
       return;
     }
   }
@@ -406,7 +432,7 @@ async function passo2InformarRequerente(page: Page, caso: CasoParaProtocolar): P
     );
   }
 
-  await avancar(page);
+  await avancar(page, 'passo_2');
   await verificarBloqueioDePedidoAberto(page);
 }
 
@@ -437,7 +463,7 @@ async function passo3AutorizacaoCadUnico(page: Page): Promise<void> {
     );
   });
   await garantirMarcado(check);
-  await avancar(page);
+  await avancar(page, 'passo_3');
 }
 
 // ---------------------------------------------------------------------------
@@ -568,7 +594,7 @@ async function passo4GrupoFamiliar(
     else avisos.push('Não achei a opção "Não" de incluir/excluir integrante — marque manualmente.');
   }
 
-  await avancar(page);
+  await avancar(page, 'passo_4');
 }
 
 // ---------------------------------------------------------------------------
@@ -578,11 +604,11 @@ async function passo4GrupoFamiliar(
 async function passo5e6Perguntas(page: Page, avisos: string[]): Promise<void> {
   // Passo 5 — Comprometimento de Renda: sempre Não.
   await marcarNaoSimples(page, avisos, 'Comprometimento de Renda');
-  await avancar(page);
+  await avancar(page, 'passo_5');
 
   // Passo 6 — Proteção Especial SUAS: sempre Não.
   await marcarNaoSimples(page, avisos, 'Proteção Especial SUAS');
-  await avancar(page);
+  await avancar(page, 'passo_6');
 }
 
 /**
@@ -619,13 +645,17 @@ async function passo7DadosRequerente(
 
   // --- Contatos
   const telefone = caso.cliente.telefone?.trim() || opcoes.telefonePadrao;
-  await adicionarContato(page, 'Celular', telefone, avisos);
-  await adicionarContato(page, 'E-mail', opcoes.emailEscritorio, avisos);
+  const celularConfirmado = await adicionarContato(page, 'Celular', telefone, avisos);
+  const emailConfirmado = await adicionarContato(page, 'E-mail', opcoes.emailEscritorio, avisos);
+  if (!celularConfirmado || !emailConfirmado) return false;
 
   // Campo obrigatório separado dos comboboxes de dados adicionais.
   const acompanha = visivel(page.locator(mapaGerid.passo7.acompanharProcessoSim)).first();
   if (await acompanha.count()) await garantirMarcado(acompanha);
-  else avisos.push('Não achei a opção "Sim" para acompanhar o processo — marque manualmente.');
+  else {
+    avisos.push('Não achei a opção "Sim" para acompanhar o processo — marque manualmente.');
+    return false;
+  }
 
   // --- Perguntas fixas, localizadas pelo texto (os ids são hash)
   await responderPergunta(page, PERGUNTAS_PASSO7.estrangeiro, RESPOSTAS_FIXAS.estrangeiro, avisos);
@@ -642,6 +672,7 @@ async function passo7DadosRequerente(
     PERGUNTAS_PASSO7.formaConvivio,
     formaDeConvivio(caso.grupoFamiliar),
     avisos,
+    true,
   );
   await responderPergunta(
     page,
@@ -690,11 +721,15 @@ async function passo7DadosRequerente(
   // --- CPF do procurador
   const cpfProcId = await inputPorPergunta(page, 'CPF do Procurador');
   if (cpfProcId) {
-    await visivel(page.locator(`[id="${cssEscape(cpfProcId)}"]`))
-      .first()
-      .fill(apenasDigitos(opcoes.procuradorCpf));
+    const cpfProcurador = visivel(page.locator(`[id="${cssEscape(cpfProcId)}"]`)).first();
+    await cpfProcurador.fill(apenasDigitos(opcoes.procuradorCpf));
+    if (apenasDigitos(await cpfProcurador.inputValue().catch(() => '')) !== apenasDigitos(opcoes.procuradorCpf)) {
+      avisos.push('O GERID não confirmou o CPF do procurador — preencha manualmente.');
+      return false;
+    }
   } else {
     avisos.push('Campo "CPF do Procurador" não encontrado — preencha manualmente.');
+    return false;
   }
 
   // --- Checkboxes de ciência.
@@ -707,8 +742,30 @@ async function passo7DadosRequerente(
     await garantirMarcado(ciencias.nth(i));
   }
 
+  const perguntasPendentes = listarPerguntasObrigatoriasPendentes();
+  if (perguntasPendentes.length) {
+    avisos.push(
+      `O GERID deixou ${perguntasPendentes.length} pergunta(s) obrigatória(s) sem resposta: ` +
+      perguntasPendentes.join(' | '),
+    );
+    return false;
+  }
+
   await anexarDocumentos(page, opcoes, avisos);
-  await avancar(page);
+  const slotsObrigatorios = SLOTS_GERID.filter((slot) => slot.obrigatorio);
+  const anexosObrigatoriosAusentes: string[] = [];
+  for (const slot of slotsObrigatorios) {
+    const input = page.locator(mapaGerid.passo7.inputArquivo).nth(slot.indice);
+    const quantidade = await input.evaluate((elemento: HTMLInputElement) => elemento.files?.length ?? 0)
+      .catch(() => 0) as number;
+    if (quantidade === 0) anexosObrigatoriosAusentes.push(slot.rotulo);
+  }
+  if (anexosObrigatoriosAusentes.length) {
+    avisos.push(`Anexos obrigatórios não confirmados: ${anexosObrigatoriosAusentes.join(' | ')}`);
+    return false;
+  }
+
+  await avancar(page, 'passo_7');
   return true;
 }
 
@@ -717,10 +774,10 @@ async function adicionarContato(
   tipo: string,
   valor: string,
   avisos: string[],
-): Promise<void> {
+): Promise<boolean> {
   if (!valor) {
     avisos.push(`Contato ${tipo} não informado — adicione manualmente.`);
-    return;
+    return false;
   }
   try {
     const fechar = visivel(page.getByRole('button', { name: /^Fechar$/i })).first();
@@ -731,14 +788,52 @@ async function adicionarContato(
       if (await editar.isVisible().catch(() => false)) await editar.click();
       else await visivel(page.getByText(/^Adicionar$/i)).first().click();
     }
+
+    const jaExiste = await contatoExisteNoDialogo(page, tipo, valor);
+
+    if (jaExiste) {
+      await visivel(page.getByRole('button', { name: /Fechar/i })).first().click();
+      return true;
+    }
+
     const ok = await escolherNoCombobox(page, mapaGerid.passo7.tipoContato, tipo);
-    if (!ok) avisos.push(`Não consegui escolher o tipo de contato "${tipo}".`);
+    if (!ok) throw new Error(`Tipo de contato "${tipo}" não confirmado.`);
     await visivel(page.getByPlaceholder(/^Informe o /i)).first().fill(valor);
     await visivel(page.getByRole('button', { name: /^Adicionar$/i })).first().click();
+
+    let confirmou = false;
+    const limiteConfirmacao = Date.now() + 3_000;
+    while (!confirmou && Date.now() < limiteConfirmacao) {
+      confirmou = await contatoExisteNoDialogo(page, tipo, valor);
+      if (!confirmou) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!confirmou) throw new Error(`O GERID não exibiu o contato ${tipo} depois de adicionar.`);
+
     await visivel(page.getByRole('button', { name: /Fechar/i })).first().click();
+    return true;
   } catch {
-    avisos.push(`Falhei ao adicionar o contato ${tipo} (${valor}) — adicione manualmente.`);
+    avisos.push(`Falhei ao adicionar o contato ${tipo} — adicione manualmente.`);
+    return false;
   }
+}
+
+async function contatoExisteNoDialogo(page: Page, tipo: string, valor: string): Promise<boolean> {
+  return page.evaluate(({ tipoEsperado, valorEsperado }) => {
+    const normalizarTexto = (entrada: string) => entrada.replace(/\s+/g, ' ').trim().toLowerCase();
+    const soDigitos = (entrada: string) => entrada.replace(/\D/g, '');
+    const dialogo = document.querySelector<HTMLElement>('#selectTipoContato')?.closest<HTMLElement>('[role="dialog"]') ??
+      Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]'))
+        .find((elemento) => elemento.offsetParent !== null && /contatos/i.test(elemento.innerText));
+    if (!dialogo) return false;
+    return Array.from(dialogo.querySelectorAll<HTMLElement>('tbody tr')).some((linha) => {
+      const texto = normalizarTexto(linha.innerText);
+      const tipoOk = texto.includes(normalizarTexto(tipoEsperado));
+      const valorOk = tipoEsperado.toLowerCase().includes('mail')
+        ? texto.includes(normalizarTexto(valorEsperado))
+        : soDigitos(texto).includes(soDigitos(valorEsperado));
+      return tipoOk && valorOk;
+    });
+  }, { tipoEsperado: tipo, valorEsperado: valor });
 }
 
 /**
@@ -763,6 +858,7 @@ async function anexarDocumentos(
     );
   }
 
+  const porSlot = new Map<string, ArquivoLocal[]>();
   for (const arq of opcoes.arquivos) {
     const slot = slotGeridDoDocumento(arq.tipo);
     if (!slot) {
@@ -777,7 +873,14 @@ async function anexarDocumentos(
       continue;
     }
 
-    const indice = indiceSlotDoDocumento(arq.tipo);
+    const grupo = porSlot.get(slot) ?? [];
+    grupo.push(arq);
+    porSlot.set(slot, grupo);
+  }
+
+  for (const [slot, arquivos] of porSlot) {
+    const indice = indiceSlotDoDocumento(arquivos[0]?.tipo ?? '');
+
     let alvo: Locator | null = null;
 
     // 1) pelo texto do slot — o caminho preferido.
@@ -795,14 +898,28 @@ async function anexarDocumentos(
     }
 
     if (!alvo) {
-      avisos.push(`Caixa "${slot}" não encontrada — anexe ${arq.tipo} manualmente.`);
+      avisos.push(`Caixa "${slot}" não encontrada — anexe os documentos manualmente.`);
       continue;
     }
 
     try {
-      await alvo.setInputFiles(arq.caminho);
+      const conteudos = arquivos.map((arquivo) => arquivo.caminho);
+      if (conteudos.some((conteudo) => typeof conteudo === 'string')) {
+        throw new Error('Conteúdo do anexo não foi recebido pela extensão.');
+      }
+      await alvo.setInputFiles(conteudos as Array<{ nome: string; mimeType?: string; base64: string }>);
+      const nomesRecebidos = await alvo.evaluate((input: HTMLInputElement) =>
+        Array.from(input.files ?? []).map((arquivo) => arquivo.name),
+      ) as string[];
+      const nomesEsperados = arquivos.map((arquivo) => arquivo.nome).filter(Boolean) as string[];
+      if (
+        nomesRecebidos.length !== arquivos.length ||
+        nomesEsperados.some((nome) => !nomesRecebidos.includes(nome))
+      ) {
+        throw new Error('O GERID não preservou todos os arquivos selecionados.');
+      }
     } catch {
-      avisos.push(`Falha ao anexar ${arq.tipo} em "${slot}" — anexe manualmente.`);
+      avisos.push(`Falha ao anexar ${arquivos.length} arquivo(s) em "${slot}" — anexe manualmente.`);
     }
   }
 }
@@ -840,7 +957,7 @@ async function passo8SelecionarUnidade(
   await page.waitForLoadState('networkidle').catch(() => undefined);
 
   const ok = await selecionarUnidadeDeAtendimento(page, caso, avisos);
-  if (ok) await avancar(page);
+  if (ok) await avancar(page, 'passo_8');
   return ok;
 }
 
@@ -879,7 +996,7 @@ async function passo9OrgaoPagador(
     return false;
   }
 
-  await avancar(page);
+  await avancar(page, 'passo_9');
   return true;
 }
 
@@ -924,9 +1041,13 @@ async function selecionarUnidadeDeAtendimento(
   }
 
   const card = unidades.nth(escolhida.indice);
-  const selecionou = await card
-    .click()
-    .then(async () => (await card.getAttribute('class'))?.split(/\s+/).includes('selected') ?? false, () => false);
+  await card.click().catch(() => undefined);
+  let selecionou = false;
+  const limiteSelecao = Date.now() + 3_000;
+  while (!selecionou && Date.now() < limiteSelecao) {
+    selecionou = (await card.getAttribute('class'))?.split(/\s+/).includes('selected') ?? false;
+    if (!selecionou) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 
   if (!selecionou) {
     avisos.push(`Nao consegui selecionar a unidade de atendimento "${escolhida.nome}".`);

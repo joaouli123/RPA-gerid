@@ -5,6 +5,8 @@ import { normalizar } from './texto';
 export interface OpcoesValidacaoDocs {
   documentosEsperados: DocumentoEsperado[];
   limiteTamanhoArquivoBytes: number;
+  /** O GERID aceita no máximo 50 MB somando todos os anexos. */
+  limiteTamanhoTotalBytes?: number;
 }
 
 /** Um arquivo casa um documento se algum padrão bate no nome (normalizado). */
@@ -82,6 +84,19 @@ export function validarDocumentos(
         ),
       );
     }
+  }
+
+  const limiteTotal = opcoes.limiteTamanhoTotalBytes ?? 50 * 1024 * 1024;
+  const tamanhoTotal = Array.from(relevantes.values())
+    .reduce((soma, arquivo) => soma + arquivo.tamanhoBytes, 0);
+  if (tamanhoTotal > limiteTotal) {
+    motivos.push(
+      motivo(
+        CodigoMotivo.ANEXOS_TOTAL_GRANDE_DEMAIS,
+        `Soma dos anexos acima do limite (${formatarMB(tamanhoTotal)} > ${formatarMB(limiteTotal)}).`,
+        { tamanhoBytes: tamanhoTotal, limiteBytes: limiteTotal },
+      ),
+    );
   }
 
   return motivos;

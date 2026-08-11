@@ -1,4 +1,4 @@
-GERID RPA AUTOMATOR - VERSAO ESTAVEL 1.4.0
+GERID RPA AUTOMATOR - VERSAO ESTAVEL 1.5.0
 
 PRINCIPAIS GARANTIAS
 
@@ -8,6 +8,11 @@ PRINCIPAIS GARANTIAS
 - confirma somente o aviso informativo do certificado A3;
 - nunca confirma o requerimento final no lugar do operador;
 - preenche campos React pelo evento nativo esperado pelo GERID;
+- reconhece explicitamente autenticacao, lista, passos 1 a 10 e comprovante;
+- valida a mudanca real de etapa depois de cada comando;
+- identifica perguntas obrigatorias novas e para com diagnostico seguro;
+- agrupa varios arquivos da mesma categoria sem substituir anexos;
+- valida os limites de 5 MB por arquivo e 50 MB no conjunto;
 - aguarda a validacao de cada etapa antes de avancar;
 - mantem os ultimos 80 eventos para diagnostico, mesmo com o popup fechado;
 - preserva o caso e agenda nova tentativa em falhas de rede ou reinicio;

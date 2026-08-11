@@ -49,9 +49,11 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
           <h2>Interessados</h2><h3>Dados Adicionais</h3>
           <button id="editar-contatos" aria-label="Clique para editar contatos do interessado">Adicionar</button>
           <div id="dialog-contatos" role="dialog">
+            <h1>Contatos</h1>
             ${combo('selectTipoContato', ['Celular', 'E-mail'])}
             <input id="valor-contato" placeholder="Informe o Celular">
             <button id="adicionar-contato">Adicionar</button>
+            <table><tbody id="contatos-lista"></tbody></table>
             <button id="fechar-contatos">Fechar</button>
           </div>
           <span class="interaction-select"><input id="acompanharProcesso-Nao" type="checkbox"><label>Não</label></span>
@@ -110,7 +112,9 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
           document.querySelector('#editar-contatos').addEventListener('click', () => { document.querySelector('#dialog-contatos').hidden = false; });
           document.querySelector('#fechar-contatos').addEventListener('click', () => { document.querySelector('#dialog-contatos').hidden = true; });
           document.querySelector('#adicionar-contato').addEventListener('click', () => {
-            window.__contatos.push({ tipo: document.querySelector('#selectTipoContato').value, valor: document.querySelector('#valor-contato').value });
+            const contato = { tipo: document.querySelector('#selectTipoContato').value, valor: document.querySelector('#valor-contato').value };
+            window.__contatos.push(contato);
+            document.querySelector('#contatos-lista').insertAdjacentHTML('beforeend', '<tr><td>' + contato.tipo + '</td><td>' + contato.valor + '</td></tr>');
             document.querySelector('#editar-contatos').textContent = 'Contatos cadastrados';
             document.querySelector('#selectTipoContato').value = '';
             document.querySelector('#valor-contato').value = '';
@@ -144,11 +148,13 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
           anexos: [
             { tipo: 'TERMO_REPRESENTACAO', nome: 'termo.pdf', mimeType: 'application/pdf', base64: 'JVBERi0xLjQK' },
             { tipo: 'DOCUMENTOS_PESSOAIS', nome: 'documentos.pdf', mimeType: 'application/pdf', base64: 'JVBERi0xLjQK' },
+            { tipo: 'DOCUMENTOS_PESSOAIS', nome: 'documentos-2.pdf', mimeType: 'application/pdf', base64: 'JVBERi0xLjQK' },
           ],
         };
       const resultado = await pagina.evaluate((entrada) =>
         (window as any).iniciarProcessamento(entrada), caso,
       );
+      expect(resultado, JSON.stringify(resultado)).toMatchObject({ status: 'revisao' });
 
       await pagina.waitForFunction(() => {
         const contatos = (window as any).__contatos;
@@ -160,7 +166,9 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
           document.querySelector<HTMLInputElement>('#campo-ca-obito')?.checked &&
           document.querySelector<HTMLInputElement>('#campo-ca-ciencia')?.checked &&
           arquivos[0]?.files?.[0]?.name === 'termo.pdf' &&
+          arquivos[4]?.files?.length === 2 &&
           arquivos[4]?.files?.[0]?.name === 'documentos.pdf' &&
+          arquivos[4]?.files?.[1]?.name === 'documentos-2.pdf' &&
           document.querySelector<HTMLElement>('.unidade')?.classList.contains('selected') &&
           document.querySelector<HTMLInputElement>('#orgaoPagadorMunicipio')?.value === 'CIDADE TESTE' &&
           document.querySelector<HTMLInputElement>('#orgao-1')?.checked &&
@@ -171,7 +179,8 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
         contatos: (window as any).__contatos,
         acompanha: document.querySelector<HTMLInputElement>('#acompanharProcesso-Sim')?.checked,
         procurador: document.querySelector<HTMLInputElement>('#ca-cpf-procurador')?.value,
-        arquivos: [...document.querySelectorAll<HTMLInputElement>('.containerAnexo input[type="file"]')].map((i) => i.files?.[0]?.name || null),
+        arquivos: [...document.querySelectorAll<HTMLInputElement>('.containerAnexo input[type="file"]')]
+          .map((i) => [...(i.files ?? [])].map((arquivo) => arquivo.name)),
         unidade: document.querySelector<HTMLElement>('.unidade.selected .nome')?.innerText,
         municipio: document.querySelector<HTMLInputElement>('#orgaoPagadorMunicipio')?.value,
         orgao: document.querySelector<HTMLInputElement>('#orgao-1')?.checked,
@@ -183,9 +192,9 @@ describe('extensão Gerid — dados, contatos e anexos', () => {
       ]);
       expect(estado.acompanha).toBe(true);
       expect(estado.procurador).toBe('04794750161');
-      expect(estado.arquivos[0]).toBe('termo.pdf');
-      expect(estado.arquivos[4]).toBe('documentos.pdf');
-      expect(estado.arquivos[10]).toBeNull();
+      expect(estado.arquivos[0]).toEqual(['termo.pdf']);
+      expect(estado.arquivos[4]).toEqual(['documentos.pdf', 'documentos-2.pdf']);
+      expect(estado.arquivos[10]).toEqual([]);
       expect(estado.unidade).toBe('AGÊNCIA REGIONAL UM');
       expect(estado.municipio).toBe('CIDADE TESTE');
       expect(estado.orgao).toBe(true);

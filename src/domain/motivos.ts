@@ -11,6 +11,8 @@ export const CodigoMotivo = {
   DOCUMENTO_FALTANDO: 'DOCUMENTO_FALTANDO',
   /** Um anexo excede o limite de tamanho aceito pelo Gerid. */
   ARQUIVO_GRANDE_DEMAIS: 'ARQUIVO_GRANDE_DEMAIS',
+  /** A soma dos anexos excede o limite total aceito pelo Gerid. */
+  ANEXOS_TOTAL_GRANDE_DEMAIS: 'ANEXOS_TOTAL_GRANDE_DEMAIS',
   /** Existe pasta no Drive sem linha correspondente na planilha. */
   PASTA_SEM_LINHA_PLANILHA: 'PASTA_SEM_LINHA_PLANILHA',
   /** Existe linha na planilha sem pasta correspondente no Drive. */

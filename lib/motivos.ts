@@ -23,6 +23,11 @@ export const infoMotivo: Record<Codigo, InfoMotivo> = {
     acao: 'Compactar/reduzir o PDF antes de reenviar.',
     tom: 'ambar',
   },
+  [CodigoMotivo.ANEXOS_TOTAL_GRANDE_DEMAIS]: {
+    rotulo: 'Conjunto de anexos grande demais',
+    acao: 'Reduzir ou dividir os arquivos até o total ficar abaixo de 50 MB.',
+    tom: 'ambar',
+  },
   [CodigoMotivo.PASTA_SEM_LINHA_PLANILHA]: {
     rotulo: 'Pasta sem linha na planilha',
     acao: 'Cadastrar o cliente na aba Clientes.',
