@@ -289,11 +289,18 @@ async function passo1SelecionarServico(page: Page): Promise<void> {
   // O rádio interno é apenas a implementação do componente React. O evento
   // que confirma a seleção fica no item com role=option; clicar no texto
   // interno exibe o serviço, mas não atualiza o valor controlado do campo.
-  const opcaoVisivel = visivel(
+  let opcaoVisivel = visivel(
     page.getByRole('option', {
       name: /^Benefício Assistencial à Pessoa com Deficiência Atendimento (?:à distância|a distância)$/i,
     }),
   ).first();
+  if (!await opcaoVisivel.isVisible().catch(() => false)) {
+    // Compatibilidade com versoes antigas do componente que nao expunham
+    // role=option no item visivel.
+    opcaoVisivel = visivel(
+      page.getByText(SERVICO_BPC_PCD.rotulo, { exact: true }),
+    ).first();
+  }
   await opcaoVisivel.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {
     throw new ErroGerid(
       FalhaGerid.CAMPO_NAO_ENCONTRADO,

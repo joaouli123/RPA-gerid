@@ -18,9 +18,12 @@ describe('extensão Gerid — combobox controlado de serviço', () => {
           <h2>Seleção de Serviços</h2>
           <input id="idSelecionarServico" role="combobox" aria-label="Selecione um Serviço">
           <button id="abrir-lista" aria-label="Exibir lista">Exibir lista</button>
-          <div id="idSelecionarServico-itens" hidden>
-            <label id="opcao-bpc" for="1655">Benefício Assistencial à Pessoa com Deficiência</label>
-            <input id="1655" type="radio" value="1655" hidden>
+          <div id="idSelecionarServico-itens" role="listbox" hidden>
+            <div id="opcao-bpc" role="option">
+              <label for="1655">Benefício Assistencial à Pessoa com Deficiência</label>
+              <span>Atendimento à distância</span>
+              <input id="1655" type="radio" value="1655" hidden>
+            </div>
           </div>
         </section>
         <section id="passo2" hidden>

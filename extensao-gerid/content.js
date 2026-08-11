@@ -716,11 +716,16 @@
     } else {
       await busca.click();
     }
-    const opcaoVisivel = visivel(
+    let opcaoVisivel = visivel(
       page.getByRole("option", {
         name: /^Benefício Assistencial à Pessoa com Deficiência Atendimento (?:à distância|a distância)$/i
       })
     ).first();
+    if (!await opcaoVisivel.isVisible().catch(() => false)) {
+      opcaoVisivel = visivel(
+        page.getByText(SERVICO_BPC_PCD.rotulo, { exact: true })
+      ).first();
+    }
     await opcaoVisivel.waitFor({ state: "visible", timeout: 1e4 }).catch(() => {
       throw new ErroGerid(
         FalhaGerid.CAMPO_NAO_ENCONTRADO,
@@ -1193,6 +1198,76 @@
         } catch (e) {
         }
       }
+      function textoNormalizado(valor) {
+        return (valor || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+      }
+      function selecionarOpcaoNativa(campo, localizar) {
+        const opcao = Array.from(campo.options).find(localizar);
+        if (!opcao) return false;
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+        if (setter) setter.call(campo, opcao.value);
+        else campo.value = opcao.value;
+        campo.dispatchEvent(new Event("input", { bubbles: true }));
+        campo.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      }
+      async function resolverBloqueiosConhecidosGerid() {
+        const limite = Date.now() + 1e4;
+        while (Date.now() < limite) {
+          const textoPagina = textoNormalizado(document.body?.innerText);
+          if (textoPagina.includes("login - pat") && textoPagina.includes("abrangencia")) {
+            const selects = Array.from(document.querySelectorAll("select")).filter((campo) => campo.offsetParent !== null);
+            const abrangencia = selects[0];
+            const papel = selects[1];
+            if (abrangencia && !abrangencia.value) {
+              selecionarOpcaoNativa(abrangencia, (opcao) => Boolean(opcao.value));
+              await new Promise((resolve) => setTimeout(resolve, 300));
+              continue;
+            }
+            if (papel && textoNormalizado(papel.selectedOptions[0]?.text) !== "entidade_conveniada_oab") {
+              const selecionou = selecionarOpcaoNativa(
+                papel,
+                (opcao) => textoNormalizado(opcao.text).includes("entidade_conveniada_oab")
+              );
+              if (!selecionou) {
+                await new Promise((resolve) => setTimeout(resolve, 200));
+                continue;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 300));
+            }
+            const autorizar = Array.from(document.querySelectorAll("button")).find((botao) => textoNormalizado(botao.innerText) === "autorizo");
+            if (autorizar && !autorizar.disabled) {
+              logToBackground("Autorizando abrangencia e papel no PAT...");
+              autorizar.click();
+              return { estado: "navegando", mensagem: "Autorizacao do PAT enviada." };
+            }
+          }
+          if (textoPagina.includes("certificado digital do tipo a3")) {
+            const ok = Array.from(document.querySelectorAll("button")).find((botao) => textoNormalizado(botao.innerText) === "ok");
+            if (ok && !ok.disabled) {
+              logToBackground("Confirmando o aviso de certificado A3...");
+              ok.click();
+              return { estado: "navegando", mensagem: "Aviso do certificado A3 confirmado." };
+            }
+          }
+          const confirmacaoFinal = Array.from(document.querySelectorAll("button")).some((botao) => textoNormalizado(botao.innerText) === "confirmar");
+          if (textoPagina.includes("atencao") && confirmacaoFinal) {
+            return {
+              estado: "revisao_manual",
+              mensagem: "Confirmacao final preservada para revisao humana."
+            };
+          }
+          if (/^\/(tarefas|requerimentos)(?:\/|$)/.test(window.location.pathname)) {
+            return { estado: "livre", mensagem: "Portal do GERID pronto." };
+          }
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        }
+        return {
+          estado: "aguardando",
+          mensagem: "O portal ainda aguarda uma etapa de autenticacao ou autorizacao."
+        };
+      }
+      window.resolverBloqueiosGerid = resolverBloqueiosConhecidosGerid;
       async function abrirNovoRequerimentoSeNecessario(page) {
         const seletorServico = page.locator(mapaGerid.passo1.campoBusca);
         const novoRequerimento = page.getByRole("button", { name: /^Novo Requerimento$/i });

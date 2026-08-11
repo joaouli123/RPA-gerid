@@ -24,8 +24,17 @@ function sendLog(message) {
 function estadoDaAba(tab) {
   const url = String(tab?.url || '');
   if (url.includes('://geridinss.dataprev.gov.br/')) return EstadoAutenticacao.NECESSARIA;
-  if (url.includes('://atendimento.inss.gov.br/')) return EstadoAutenticacao.AUTENTICADO;
+  if (url.includes('://atendimento.inss.gov.br/')) {
+    if (/^https?:\/\/atendimento\.inss\.gov\.br\/(tarefas|requerimentos)(?:[/?#]|$)/i.test(url)) {
+      return EstadoAutenticacao.AUTENTICADO;
+    }
+    return EstadoAutenticacao.NECESSARIA;
+  }
   return EstadoAutenticacao.SEM_ABA;
+}
+
+function abaDoPortalPat(tab) {
+  return String(tab?.url || '').includes('://atendimento.inss.gov.br/');
 }
 
 async function atualizarEstadoAutenticacao(estado, mensagem, tabId) {
@@ -199,6 +208,37 @@ async function prepararAbaGerid(tabId, reiniciarNoInicio = false) {
     await aguardarAbaPronta(aba.id);
   }
   return aba.id;
+}
+
+async function resolverBloqueiosPortal(tabId) {
+  for (let tentativa = 0; tentativa < 4; tentativa++) {
+    let aba;
+    try {
+      aba = await chrome.tabs.get(tabId);
+    } catch {
+      return;
+    }
+    if (!abaDoPortalPat(aba) || estadoDaAba(aba) === EstadoAutenticacao.AUTENTICADO) return;
+
+    try {
+      const verificacao = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => typeof window.resolverBloqueiosGerid === 'function',
+      });
+      if (!verificacao[0]?.result) {
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+      }
+      const resultados = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => window.resolverBloqueiosGerid?.(),
+      });
+      const resultado = resultados[0]?.result;
+      if (resultado?.mensagem) sendLog(resultado.mensagem);
+    } catch {
+      // O clique pode destruir o frame durante a navegacao; reavaliamos a aba.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
 }
 
 async function enviarHeartbeat(apiUrl, apiToken, idExecucao, estadoGerid, detalheGerid) {
@@ -447,6 +487,11 @@ async function processQueue(
       aba = await abrirAutenticacao();
     }
 
+    if (aba?.id && abaDoPortalPat(aba)) {
+      await resolverBloqueiosPortal(aba.id);
+      aba = await chrome.tabs.get(aba.id);
+    }
+
     await salvarExecucaoAtiva({
       idExecucao: data.idExecucao,
       geridTabId: aba?.id,
@@ -667,6 +712,24 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   if (!info.url && info.status !== 'complete') return;
   const estado = estadoDaAba({ ...tab, url: info.url || tab.url });
   if (estado === EstadoAutenticacao.NECESSARIA) {
+    if (abaDoPortalPat({ ...tab, url: info.url || tab.url }) && info.status === 'complete') {
+      void atualizarEstadoAutenticacao(
+        estado,
+        'Concluindo autorizacao de abrangencia e papel no PAT.',
+        tabId,
+      ).then(() => resolverBloqueiosPortal(tabId))
+        .then(async () => {
+          const atual = await chrome.tabs.get(tabId);
+          if (estadoDaAba(atual) !== EstadoAutenticacao.AUTENTICADO) return;
+          await atualizarEstadoAutenticacao(
+            EstadoAutenticacao.AUTENTICADO,
+            'Sessao do GERID pronta.',
+            tabId,
+          );
+          await retomarExecucaoPersistida();
+        });
+      return;
+    }
     void atualizarEstadoAutenticacao(
       estado,
       'Conclua o SafeID e informe o codigo de 6 digitos do GERID.',

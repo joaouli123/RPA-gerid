@@ -1,4 +1,4 @@
-GERID RPA AUTOMATOR - ATUALIZACAO 1.2.0
+GERID RPA AUTOMATOR - ATUALIZACAO 1.3.0
 
 O QUE ESTA VERSAO FAZ
 
@@ -6,6 +6,10 @@ O QUE ESTA VERSAO FAZ
 - abre a autenticacao quando nao existe sessao do GERID;
 - preserva a fila durante SafeID e codigo de 6 digitos;
 - retoma o preenchimento quando a sessao autenticada volta;
+- seleciona automaticamente abrangencia e papel no LOGIN - PAT;
+- confirma somente o aviso informativo do certificado A3;
+- reconhece modais de autenticacao antes de considerar a sessao pronta;
+- seleciona o servico BPC pelo item controlado do portal;
 - para na tela Confirmar para revisao humana;
 - depois do clique humano, detecta e registra o protocolo real;
 - continua o proximo caso automaticamente quando o modo teste esta desligado;
@@ -18,7 +22,7 @@ COMO INSTALAR OU ATUALIZAR
 3. Remova ou desative a versao antiga do Gerid RPA Automator.
 4. Clique em "Carregar sem compactacao".
 5. Selecione esta pasta extensao-gerid.
-6. Confirme que a versao exibida e 1.2.0.
+6. Confirme que a versao exibida e 1.3.0.
 7. Abra a extensao e expanda "Configuracao avancada".
 8. Informe a URL do Coolify e a chave RPA_EXTENSAO_TOKEN.
 9. Clique fora dos campos para salvar.
