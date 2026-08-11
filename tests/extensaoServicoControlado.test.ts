@@ -31,7 +31,7 @@ describe('extensão Gerid — combobox controlado de serviço', () => {
           <button id="consultar-cpf" aria-label="Botão de ação">Consultar</button>
           <input id="nomeRequerente" value="">
         </section>
-        <button id="btn-next">Avançar</button>
+        <button id="btn-next" disabled>Avançar</button>
         <script>
           const combo = document.querySelector('#idSelecionarServico');
           const radio = document.querySelector('input[id="1655"]');
@@ -43,6 +43,7 @@ describe('extensão Gerid — combobox controlado de serviço', () => {
             combo.value = 'Benefício Assistencial à Pessoa com Deficiência';
             combo.dispatchEvent(new Event('input', { bubbles: true }));
             combo.dispatchEvent(new Event('change', { bubbles: true }));
+            setTimeout(() => { document.querySelector('#btn-next').disabled = false; }, 300);
           });
           document.querySelector('#btn-next').addEventListener('click', () => {
             if (!document.querySelector('#passo1').hidden && combo.value === 'Benefício Assistencial à Pessoa com Deficiência') {

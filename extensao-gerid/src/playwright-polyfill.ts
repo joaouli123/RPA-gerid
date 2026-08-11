@@ -127,6 +127,11 @@ class MockLocator {
     return !!el && estaInteragivel(el);
   }
 
+  async isEnabled() {
+    const el = await this._getElement() as HTMLButtonElement | HTMLInputElement | null;
+    return !!el && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+  }
+
   async isChecked() {
     const el = await this._getElement() as HTMLInputElement | null;
     return !!el?.checked;

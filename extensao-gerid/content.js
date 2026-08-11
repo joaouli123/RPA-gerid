@@ -123,6 +123,10 @@
           const el = await this._getElement();
           return !!el && estaInteragivel(el);
         }
+        async isEnabled() {
+          const el = await this._getElement();
+          return !!el && !el.disabled && el.getAttribute("aria-disabled") !== "true";
+        }
         async isChecked() {
           const el = await this._getElement();
           return !!el?.checked;
@@ -601,8 +605,20 @@
     return loc;
   }
   async function avancar(page) {
-    await visivel(page.locator(NAVEGACAO.avancar)).first().click();
-    await page.waitForLoadState("networkidle").catch(() => void 0);
+    const botao = visivel(page.locator(NAVEGACAO.avancar)).first();
+    const limite = Date.now() + 1e4;
+    while (Date.now() < limite) {
+      if (await botao.isEnabled().catch(() => false)) {
+        await botao.click();
+        await page.waitForLoadState("networkidle").catch(() => void 0);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new ErroGerid(
+      FalhaGerid.ERRO_PREENCHIMENTO,
+      "O Gerid n\xE3o liberou o bot\xE3o Avan\xE7ar ap\xF3s validar os dados da etapa."
+    );
   }
   async function esperarTela(page, marca) {
     try {

@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const apiTokenInput = document.getElementById('apiToken');
   const modoTesteInput = document.getElementById('modoTeste');
   const logDiv = document.getElementById('log');
+  document.getElementById('versionLabel').innerText = `v${chrome.runtime.getManifest().version}`;
 
   function log(msg) {
     logDiv.innerText = msg + '\n' + logDiv.innerText;

@@ -99,8 +99,20 @@ function visivel(loc: Locator): Locator {
 
 /** Avança usando o id estável — nunca por texto, que existe várias vezes. */
 async function avancar(page: Page): Promise<void> {
-  await visivel(page.locator(NAVEGACAO.avancar)).first().click();
-  await page.waitForLoadState('networkidle').catch(() => undefined);
+  const botao = visivel(page.locator(NAVEGACAO.avancar)).first();
+  const limite = Date.now() + 10_000;
+  while (Date.now() < limite) {
+    if (await botao.isEnabled().catch(() => false)) {
+      await botao.click();
+      await page.waitForLoadState('networkidle').catch(() => undefined);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new ErroGerid(
+    FalhaGerid.ERRO_PREENCHIMENTO,
+    'O Gerid não liberou o botão Avançar após validar os dados da etapa.',
+  );
 }
 
 /** Confirma que estamos no passo certo antes de preencher. */
