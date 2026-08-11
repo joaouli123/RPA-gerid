@@ -869,6 +869,7 @@
     }
   }
   async function acionarControleReactNaPagina(tipo, id, valor) {
+    if (acionarControleReactLocal(tipo, id, valor)) return true;
     try {
       const resposta = await chrome.runtime.sendMessage({
         action: "gerid_react_control",
@@ -880,6 +881,45 @@
     } catch {
       return false;
     }
+  }
+  function acionarControleReactLocal(tipo, id, valor) {
+    const obterPropsReact = (elemento) => {
+      if (!elemento) return null;
+      const chave = Object.keys(elemento).find((nome) => nome.startsWith("__reactProps$"));
+      return chave ? elemento[chave] : null;
+    };
+    if (tipo === "combobox") {
+      const lista = document.getElementById(`${id}-itens`);
+      const alvo = normalizar(valor ?? "");
+      const item = Array.from(lista?.querySelectorAll(".br-item") ?? []).find((opcao) => normalizar(opcao.querySelector("label")?.textContent ?? "") === alvo);
+      const props2 = obterPropsReact(item ?? null);
+      if (!item || !props2) return false;
+      if (typeof props2.onMouseDown === "function") {
+        props2.onMouseDown({});
+        return true;
+      }
+      if (typeof props2.onKeyDown === "function") {
+        props2.onKeyDown({ key: "Enter", preventDefault() {
+        }, stopPropagation() {
+        } });
+        return true;
+      }
+      return false;
+    }
+    const controle = document.getElementById(id)?.closest(".interaction-select");
+    const props = obterPropsReact(controle ?? null);
+    if (!controle || !props) return false;
+    if (typeof props.onClick === "function") {
+      props.onClick({});
+      return true;
+    }
+    if (typeof props.onKeyDown === "function") {
+      props.onKeyDown({ key: "Enter", preventDefault() {
+      }, stopPropagation() {
+      } });
+      return true;
+    }
+    return false;
   }
   async function ativarOpcaoCombobox(opcao) {
     await opcao.click();
@@ -1578,10 +1618,27 @@
       init_classificarPreenchimento();
       init_detectarProtocolo();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.5.4-20260811.1";
+      var CONTENT_BUILD_ID = "1.5.5-20260811.1";
+      var EVENTO_LOG_GERID = "__gerid_rpa_log__";
+      var emContextoExtensao = typeof chrome !== "undefined" && Boolean(chrome.runtime?.id);
       window.__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
+      console.log(
+        `[GERID RPA BUILD] ${CONTENT_BUILD_ID} carregado no contexto ${emContextoExtensao ? "extensao" : "pagina"}`
+      );
+      if (emContextoExtensao) {
+        window.addEventListener(EVENTO_LOG_GERID, (evento) => {
+          const mensagem = evento.detail;
+          if (typeof mensagem !== "string") return;
+          chrome.runtime.sendMessage({ action: "content_log", message: mensagem }).catch(() => {
+          });
+        });
+      }
       function logToBackground(message) {
         console.log(message);
+        if (!emContextoExtensao) {
+          window.dispatchEvent(new CustomEvent(EVENTO_LOG_GERID, { detail: message }));
+          return;
+        }
         try {
           chrome.runtime.sendMessage({ action: "content_log", message }).catch(() => {
           });

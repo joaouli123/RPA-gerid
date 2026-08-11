@@ -97,6 +97,7 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
 
       await pagina.evaluate(() => {
         (window as any).__geridReactMessages = [];
+        (window as any).__geridReactDirectCalls = [];
         (window as any).chrome = {
           runtime: {
             sendMessage: async (mensagem: any) => {
@@ -114,6 +115,37 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
             },
           },
         };
+
+        for (const item of document.querySelectorAll<HTMLElement>('[id$="-itens"] .br-item')) {
+          Object.defineProperty(item, '__reactProps$teste', {
+            enumerable: true,
+            value: {
+              onMouseDown: () => {
+                const caixa = item.closest<HTMLElement>('[id$="-itens"]');
+                const label = item.querySelector<HTMLLabelElement>('label');
+                const combo = document.getElementById(
+                  caixa?.id.slice(0, -6) ?? '',
+                ) as HTMLInputElement | null;
+                const radio = document.getElementById(label?.htmlFor ?? '') as HTMLInputElement | null;
+                if (combo && label) combo.value = label.textContent?.trim() ?? '';
+                if (radio) radio.checked = true;
+                (window as any).__geridReactDirectCalls.push({ tipo: 'combobox', id: combo?.id });
+              },
+            },
+          });
+        }
+        for (const controle of document.querySelectorAll<HTMLElement>('.interaction-select')) {
+          Object.defineProperty(controle, '__reactProps$teste', {
+            enumerable: true,
+            value: {
+              onClick: () => {
+                const input = controle.querySelector<HTMLInputElement>('input');
+                if (input) input.checked = true;
+                (window as any).__geridReactDirectCalls.push({ tipo: 'marcar', id: input?.id });
+              },
+            },
+          });
+        }
       });
 
       // Reproduz o carrossel do GERID real: os controles possuem geometria e
@@ -152,10 +184,16 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
 
       await pagina.waitForFunction(() => !document.querySelector<HTMLElement>('#passo5')?.hidden);
       expect(await pagina.inputValue('#selectEstadoCivil0')).toBe('Solteiro');
-      expect(await pagina.evaluate(() => (window as any).__geridReactMessages)).toEqual(
+      expect(await pagina.evaluate(() => (window as any).__geridReactDirectCalls)).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ tipo: 'combobox', id: 'selectEstadoCivil0', valor: 'Solteiro' }),
+          expect.objectContaining({ tipo: 'combobox', id: 'selectEstadoCivil0' }),
           expect.objectContaining({ tipo: 'marcar', id: 'undefined-Nao' }),
+        ]),
+      );
+      expect(await pagina.evaluate(() => (window as any).__geridReactMessages)).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'selectEstadoCivil0' }),
+          expect.objectContaining({ id: 'undefined-Nao' }),
         ]),
       );
       await execucao;

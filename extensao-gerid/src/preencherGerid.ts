@@ -214,6 +214,8 @@ async function acionarControleReactNaPagina(
   id: string,
   valor?: string,
 ): Promise<boolean> {
+  if (acionarControleReactLocal(tipo, id, valor)) return true;
+
   try {
     const resposta = await chrome.runtime.sendMessage({
       action: 'gerid_react_control',
@@ -225,6 +227,51 @@ async function acionarControleReactNaPagina(
   } catch {
     return false;
   }
+}
+
+function acionarControleReactLocal(
+  tipo: 'combobox' | 'marcar',
+  id: string,
+  valor?: string,
+): boolean {
+  const obterPropsReact = (elemento: Element | null): Record<string, any> | null => {
+    if (!elemento) return null;
+    const chave = Object.keys(elemento).find((nome) => nome.startsWith('__reactProps$'));
+    return chave ? (elemento as any)[chave] : null;
+  };
+
+  if (tipo === 'combobox') {
+    const lista = document.getElementById(`${id}-itens`);
+    const alvo = normalizar(valor ?? '');
+    const item = Array.from(lista?.querySelectorAll<HTMLElement>('.br-item') ?? [])
+      .find((opcao) => normalizar(opcao.querySelector('label')?.textContent ?? '') === alvo);
+    const props = obterPropsReact(item ?? null);
+    if (!item || !props) return false;
+
+    if (typeof props.onMouseDown === 'function') {
+      props.onMouseDown({});
+      return true;
+    }
+    if (typeof props.onKeyDown === 'function') {
+      props.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {} });
+      return true;
+    }
+    return false;
+  }
+
+  const controle = document.getElementById(id)?.closest<HTMLElement>('.interaction-select');
+  const props = obterPropsReact(controle ?? null);
+  if (!controle || !props) return false;
+
+  if (typeof props.onClick === 'function') {
+    props.onClick({});
+    return true;
+  }
+  if (typeof props.onKeyDown === 'function') {
+    props.onKeyDown({ key: 'Enter', preventDefault() {}, stopPropagation() {} });
+    return true;
+  }
+  return false;
 }
 
 /** Ativa os itens do Select oficial, que confirma a escolha em onMouseDown. */

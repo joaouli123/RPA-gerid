@@ -11,11 +11,28 @@ import {
   resumirDiagnosticoGerid,
 } from './estadoGerid';
 
-const CONTENT_BUILD_ID = '1.5.4-20260811.1';
+const CONTENT_BUILD_ID = '1.5.5-20260811.1';
+const EVENTO_LOG_GERID = '__gerid_rpa_log__';
+const emContextoExtensao = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.id);
 (window as any).__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
+console.log(
+  `[GERID RPA BUILD] ${CONTENT_BUILD_ID} carregado no contexto ${emContextoExtensao ? 'extensao' : 'pagina'}`,
+);
+
+if (emContextoExtensao) {
+  window.addEventListener(EVENTO_LOG_GERID, (evento) => {
+    const mensagem = (evento as CustomEvent<string>).detail;
+    if (typeof mensagem !== 'string') return;
+    chrome.runtime.sendMessage({ action: 'content_log', message: mensagem }).catch(() => {});
+  });
+}
 
 function logToBackground(message: string) {
   console.log(message);
+  if (!emContextoExtensao) {
+    window.dispatchEvent(new CustomEvent(EVENTO_LOG_GERID, { detail: message }));
+    return;
+  }
   try {
     // Envia o log para o popup. Se der erro de contexto inválido, engole.
     chrome.runtime.sendMessage({ action: 'content_log', message }).catch(() => {});

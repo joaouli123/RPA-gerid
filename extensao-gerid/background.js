@@ -361,12 +361,25 @@ async function obterEstadoNaAba(tabId) {
 }
 
 async function garantirContentScript(tabId) {
-  const verificacao = await chrome.scripting.executeScript({
+  const verificacaoIsolada = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.4-20260811.1',
+    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.5-20260811.1',
   });
-  if (!verificacao[0]?.result) {
+  if (!verificacaoIsolada[0]?.result) {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+  }
+
+  const verificacaoPrincipal = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.5-20260811.1',
+  });
+  if (!verificacaoPrincipal[0]?.result) {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      files: ['content.js'],
+    });
   }
 }
 
@@ -445,147 +458,7 @@ async function acionarControleReact(tabId, tipo, id, valor) {
       return { ok: false, motivo: 'tipo_invalido' };
     },
   });
-  const resultadoPrincipal = resultados[0]?.result || { ok: false, motivo: 'sem_resultado' };
-  if (resultadoPrincipal.ok) return resultadoPrincipal;
-
-  try {
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    if (await validarControle(tabId, tipo, id, valor)) {
-      return { ok: true, motivo: 'react_tardio' };
-    }
-    const resultadoFisico = await acionarControleFisico(tabId, tipo, id, valor);
-    return resultadoFisico.ok
-      ? resultadoFisico
-      : { ...resultadoFisico, motivoPrincipal: resultadoPrincipal.motivo };
-  } catch (erro) {
-    return {
-      ok: false,
-      motivo: erro?.message || String(erro),
-      motivoPrincipal: resultadoPrincipal.motivo,
-    };
-  }
-}
-
-async function obterCentroControle(tabId, tipo, id, valor) {
-  const resultados = await chrome.scripting.executeScript({
-    target: { tabId },
-    args: [tipo, id, valor],
-    func: (tipoControle, idControle, valorDesejado) => {
-      const normalizar = (texto) => String(texto || '')
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .toLowerCase();
-      let elemento;
-      if (tipoControle === 'combobox') {
-        if (!valorDesejado) {
-          elemento = document.getElementById(idControle);
-        } else {
-          const lista = document.getElementById(`${idControle}-itens`);
-          const alvo = normalizar(valorDesejado);
-          elemento = Array.from(lista?.querySelectorAll('.br-item') || []).find((opcao) =>
-            normalizar(opcao.querySelector('label')?.textContent) === alvo,
-          );
-        }
-      } else {
-        elemento = document.getElementById(idControle)?.closest('.interaction-select');
-      }
-      if (!elemento) return null;
-      elemento.scrollIntoView({ block: 'center', inline: 'center' });
-      const retangulo = elemento.getBoundingClientRect();
-      if (retangulo.width <= 0 || retangulo.height <= 0) return null;
-      return {
-        x: retangulo.left + retangulo.width / 2,
-        y: retangulo.top + retangulo.height / 2,
-      };
-    },
-  });
-  return resultados[0]?.result || null;
-}
-
-async function clicarComDebugger(alvo, ponto) {
-  await chrome.debugger.sendCommand(alvo, 'Input.dispatchMouseEvent', {
-    type: 'mouseMoved',
-    x: ponto.x,
-    y: ponto.y,
-  });
-  await chrome.debugger.sendCommand(alvo, 'Input.dispatchMouseEvent', {
-    type: 'mousePressed',
-    x: ponto.x,
-    y: ponto.y,
-    button: 'left',
-    buttons: 1,
-    clickCount: 1,
-  });
-  await chrome.debugger.sendCommand(alvo, 'Input.dispatchMouseEvent', {
-    type: 'mouseReleased',
-    x: ponto.x,
-    y: ponto.y,
-    button: 'left',
-    buttons: 0,
-    clickCount: 1,
-  });
-}
-
-async function aguardarCentroControle(tabId, tipo, id, valor, timeoutMs = 1_500) {
-  const limite = Date.now() + timeoutMs;
-  do {
-    const ponto = await obterCentroControle(tabId, tipo, id, valor);
-    if (ponto) return ponto;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  } while (Date.now() < limite);
-  return null;
-}
-
-async function validarControle(tabId, tipo, id, valor) {
-  const resultados = await chrome.scripting.executeScript({
-    target: { tabId },
-    args: [tipo, id, valor],
-    func: (tipoControle, idControle, valorDesejado) => {
-      const controle = document.getElementById(idControle);
-      if (tipoControle === 'marcar') return controle?.checked === true;
-      const normalizar = (texto) => String(texto || '')
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .toLowerCase();
-      return normalizar(controle?.value) === normalizar(valorDesejado);
-    },
-  });
-  return resultados[0]?.result === true;
-}
-
-async function acionarControleFisico(tabId, tipo, id, valor) {
-  const alvo = { tabId };
-  let anexado = false;
-  try {
-    await chrome.debugger.attach(alvo, '1.3');
-    anexado = true;
-
-    if (tipo === 'combobox') {
-      const combo = await aguardarCentroControle(tabId, tipo, id);
-      if (!combo) return { ok: false, motivo: 'combobox_sem_coordenadas' };
-      await clicarComDebugger(alvo, combo);
-
-      const opcao = await aguardarCentroControle(tabId, tipo, id, valor);
-      if (!opcao) return { ok: false, motivo: 'opcao_sem_coordenadas' };
-      await clicarComDebugger(alvo, opcao);
-    } else {
-      const controle = await aguardarCentroControle(tabId, tipo, id);
-      if (!controle) return { ok: false, motivo: 'controle_sem_coordenadas' };
-      await clicarComDebugger(alvo, controle);
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    return {
-      ok: await validarControle(tabId, tipo, id, valor),
-      motivo: 'clique_fisico',
-    };
-  } finally {
-    if (anexado) await chrome.debugger.detach(alvo).catch(() => undefined);
-  }
+  return resultados[0]?.result || { ok: false, motivo: 'sem_resultado' };
 }
 
 async function reiniciarWizardNaAba(tabId) {
@@ -620,6 +493,7 @@ async function executarCasoNoGerid(tabId, casoComAnexos) {
 
       const resultados = await chrome.scripting.executeScript({
         target: { tabId: abaId },
+        world: 'MAIN',
         func: async (dadosCaso) => window.iniciarProcessamento(dadosCaso),
         args: [casoComAnexos],
       });
