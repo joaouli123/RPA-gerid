@@ -278,6 +278,7 @@ describe('extensão Gerid — service worker', () => {
     const heartbeats: any[] = [];
     const statusEnviados: any[] = [];
     const alarmesCriados: string[] = [];
+    const urlsAutenticacao: string[] = [];
     const abaCas = {
       id: 91,
       active: true,
@@ -313,7 +314,10 @@ describe('extensão Gerid — service worker', () => {
         query: async () => abas,
         get: async (id: number) => abas.find((aba) => aba.id === id),
         create: async () => abaCas,
-        update: async () => abaCas,
+        update: async (_id: number, opcoes: { url?: string }) => {
+          if (opcoes.url) urlsAutenticacao.push(opcoes.url);
+          return abaCas;
+        },
         reload: async () => undefined,
         onUpdated: {
           addListener: (fn: (id: number, info: any, tab: any) => void) => listenersAbas.push(fn),
@@ -381,6 +385,7 @@ describe('extensão Gerid — service worker', () => {
     expect(storage.execucaoAtivaGerid?.idExecucao).toBe('execucao-auth');
     expect(heartbeats.at(-1)?.estadoGerid).toBe('autenticacao_necessaria');
     expect(alarmesCriados).toContain('aguardarAutenticacaoGerid');
+    expect(urlsAutenticacao).toContain('https://atendimento.inss.gov.br/requerimentos');
     expect(statusEnviados).toHaveLength(0);
 
     const abaPat = {

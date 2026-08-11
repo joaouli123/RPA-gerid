@@ -204,18 +204,25 @@ async function lerJsonResposta(resposta, mensagemPadrao) {
 
 async function abrirAutenticacao() {
   let aba;
+  let autenticado = false;
   try {
     aba = await localizarAbaGerid();
-    await chrome.tabs.update(aba.id, { active: true });
+    autenticado = estadoDaAba(aba) === EstadoAutenticacao.AUTENTICADO;
+    if (autenticado) {
+      await chrome.tabs.update(aba.id, { active: true });
+    } else {
+      // Entrar pelo PAT inclui o callback do CAS. Abrir o CAS diretamente
+      // termina na pagina de sucesso sem retornar ao aplicativo.
+      await chrome.tabs.update(aba.id, { url: URL_REQUERIMENTOS_GERID, active: true });
+    }
   } catch {
-    aba = await chrome.tabs.create({ url: URL_LOGIN_GERID, active: true });
+    aba = await chrome.tabs.create({ url: URL_REQUERIMENTOS_GERID, active: true });
   }
-  const autenticado = estadoDaAba(aba) === EstadoAutenticacao.AUTENTICADO;
   await atualizarEstadoAutenticacao(
     autenticado ? EstadoAutenticacao.AUTENTICADO : EstadoAutenticacao.NECESSARIA,
     autenticado
       ? 'Sessao do GERID pronta.'
-      : 'Conclua o SafeID e informe o codigo de 6 digitos do GERID.',
+      : 'Abrindo o Portal de Atendimento para concluir a autenticacao.',
     aba?.id,
   );
   return aba;
@@ -356,7 +363,7 @@ async function obterEstadoNaAba(tabId) {
 async function garantirContentScript(tabId) {
   const verificacao = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.1-20260811.8',
+    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.1-20260811.9',
   });
   if (!verificacao[0]?.result) {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
@@ -589,6 +596,9 @@ async function processQueue(
 
     if (!aba?.id || estadoDaAba(aba) !== EstadoAutenticacao.AUTENTICADO) {
       manterExecucaoPendente = true;
+      if (aba?.id && !abaDoPortalPat(aba)) {
+        await abrirAutenticacao();
+      }
       await enviarHeartbeat(
         apiUrl,
         apiToken,
