@@ -7,7 +7,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusLabel = document.getElementById('statusLabel');
   const countLabel = document.getElementById('countLabel');
   const apiUrlInput = document.getElementById('apiUrl');
-  const apiTokenInput = document.getElementById('apiToken');
   const modoTesteInput = document.getElementById('modoTeste');
   const logDiv = document.getElementById('log');
   const consentBox = document.getElementById('consentBox');
@@ -36,7 +35,6 @@ document.addEventListener('DOMContentLoaded', () => {
       apiUrlInput.value = API_URL_PADRAO;
       chrome.storage.local.set({ apiUrl: API_URL_PADRAO });
     }
-    if (result.apiToken) apiTokenInput.value = result.apiToken;
     if (Array.isArray(result.logsGerid) && result.logsGerid.length > 0) {
       logDiv.innerText = result.logsGerid
         .slice(0, 20)
@@ -69,14 +67,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function salvarConfiguracao() {
-    chrome.storage.local.set({ apiUrl: apiUrlInput.value, apiToken: apiTokenInput.value, modoTeste: modoTesteInput.checked });
+    chrome.storage.local.set({ apiUrl: apiUrlInput.value, modoTeste: modoTesteInput.checked });
   }
 
   apiUrlInput.addEventListener('change', () => {
-    salvarConfiguracao();
-    checkQueue();
-  });
-  apiTokenInput.addEventListener('change', () => {
     salvarConfiguracao();
     checkQueue();
   });
@@ -93,10 +87,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const controlador = new AbortController();
     const temporizador = setTimeout(() => controlador.abort(), 20_000);
     try {
-      if (!apiTokenInput.value.trim()) throw new Error('Informe a chave da extensão configurada no Coolify.');
+      const salvoToken = await chrome.storage.local.get(['apiToken']);
+      const apiToken = salvoToken.apiToken?.trim();
+      if (!apiToken) {
+        statusLabel.innerText = 'Conecte-se ao painel';
+        countLabel.innerText = '-';
+        btnStart.disabled = true;
+        log('Abra ou recarregue o painel para autorizar automaticamente.');
+        return;
+      }
       log('Buscando fila em ' + url);
       const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${apiTokenInput.value.trim()}` },
+        headers: { Authorization: `Bearer ${apiToken}` },
         signal: controlador.signal,
       });
       const data = await res.json().catch(() => null);
@@ -141,13 +143,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  btnStart.addEventListener('click', () => {
+  btnStart.addEventListener('click', async () => {
     salvarConfiguracao();
+    const salvoToken = await chrome.storage.local.get(['apiToken']);
+    const apiToken = salvoToken.apiToken?.trim();
+    if (!apiToken) {
+      await checkQueue();
+      return;
+    }
     btnStart.disabled = true;
     chrome.runtime.sendMessage({
       action: 'start',
       apiUrl: apiUrlInput.value,
-      apiToken: apiTokenInput.value.trim(),
+      apiToken,
       modoTeste: modoTesteInput.checked,
     });
   });
@@ -164,6 +172,8 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (request.action === 'auth_state') {
       renderAuth(request);
     } else if (request.action === 'finished') {
+      checkQueue();
+    } else if (request.action === 'api_auth_ready') {
       checkQueue();
     }
   });

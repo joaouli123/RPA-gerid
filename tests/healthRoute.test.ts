@@ -24,4 +24,10 @@ describe('GET /api/health', () => {
     expect(resposta.status).toBe(200);
     expect(resposta.headers.get('x-middleware-next')).toBe('1');
   });
+
+  it('protege a entrega automatica da autorizacao da extensao com a sessao do painel', async () => {
+    const resposta = await middleware(new NextRequest('https://rpa.test/api/ext/bootstrap'));
+    expect(resposta.status).toBe(401);
+    await expect(resposta.json()).resolves.toEqual({ erro: 'nao_autenticado' });
+  });
 });

@@ -17,9 +17,9 @@ PRINCIPAIS GARANTIAS
 INSTALACAO PELA CHROME WEB STORE
 
 1. Instale a extensao pela ficha privada ou nao listada fornecida pela organizacao.
-2. Na primeira instalacao, abra Configuracao avancada e informe a chave uma vez.
-3. A configuracao fica no armazenamento local do Chrome.
-4. Atualizacoes futuras sao instaladas automaticamente e preservam a chave.
+2. Entre normalmente no painel da organizacao.
+3. A autorizacao da extensao e sincronizada automaticamente pela sessao do painel.
+4. Atualizacoes futuras sao instaladas automaticamente e preservam a configuracao.
 
 PRIMEIRA VALIDACAO
 
@@ -43,3 +43,4 @@ SEGURANCA
 - O SafeID e o MFA continuam sendo confirmados pelo titular.
 - A extensao nao confirma o requerimento no lugar do operador.
 - O pacote publicado nao contem senhas, chaves nem dados de clientes.
+- A chave nao e exibida nem digitada pelo operador.

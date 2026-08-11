@@ -17,7 +17,11 @@ describe('manifesto publicado da extensao', () => {
       'https://atendimento.inss.gov.br/*',
       'https://geridinss.dataprev.gov.br/*',
     ]);
-    expect(manifesto.content_scripts[0].matches).toEqual([
+    expect(manifesto.content_scripts[0]).toMatchObject({
+      matches: ['https://vmkcogtpgc1dgd5ae6gjfz1n.179.198.98.63.sslip.io/*'],
+      js: ['bootstrap.js'],
+    });
+    expect(manifesto.content_scripts[1].matches).toEqual([
       'https://atendimento.inss.gov.br/*',
     ]);
   });

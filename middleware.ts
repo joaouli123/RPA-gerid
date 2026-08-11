@@ -74,7 +74,9 @@ export async function middleware(req: NextRequest) {
   cabecalhos.set('x-nonce', nonce);
   const seguir = () => NextResponse.next({ request: { headers: cabecalhos } });
 
-  const publica = ROTAS_PUBLICAS.has(pathname) || pathname.startsWith('/api/ext/');
+  const rotaExtensaoPublica =
+    pathname.startsWith('/api/ext/') && pathname !== '/api/ext/bootstrap';
+  const publica = ROTAS_PUBLICAS.has(pathname) || rotaExtensaoPublica;
   const sessao = await lerSessao(req.cookies.get(COOKIE_SESSAO)?.value).catch(() => null);
 
   // Já logado tentando abrir /login -> manda para o painel.

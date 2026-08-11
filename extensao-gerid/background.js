@@ -1,5 +1,6 @@
 const URL_REQUERIMENTOS_GERID = 'https://atendimento.inss.gov.br/requerimentos';
 const URL_LOGIN_GERID = 'https://geridinss.dataprev.gov.br/';
+const URL_PAINEL_RPA = 'https://vmkcogtpgc1dgd5ae6gjfz1n.179.198.98.63.sslip.io';
 const CHAVE_EXECUCAO_ATIVA = 'execucaoAtivaGerid';
 const CHAVE_ESTADO_AUTENTICACAO = 'estadoAutenticacaoGerid';
 const CHAVE_ULTIMO_AVISO_AUTENTICACAO = 'ultimoAvisoAutenticacaoGerid';
@@ -18,6 +19,17 @@ const EstadoAutenticacao = {
 
 let isRunning = false;
 let filaLogs = Promise.resolve();
+
+async function sincronizarAutorizacaoDoPainel() {
+  const abas = await chrome.tabs.query({ url: `${URL_PAINEL_RPA}/*` }).catch(() => []);
+  await Promise.all(abas.map((aba) => {
+    if (!aba.id) return Promise.resolve();
+    return chrome.scripting.executeScript({
+      target: { tabId: aba.id },
+      files: ['bootstrap.js'],
+    }).catch(() => undefined);
+  }));
+}
 
 function sendLog(message) {
   console.log(message);
@@ -747,9 +759,11 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  void sincronizarAutorizacaoDoPainel();
   void retomarExecucaoPersistida();
 });
 chrome.runtime.onInstalled?.addListener(() => {
+  void sincronizarAutorizacaoDoPainel();
   void retomarExecucaoPersistida();
 });
 chrome.alarms?.onAlarm.addListener((alarme) => {

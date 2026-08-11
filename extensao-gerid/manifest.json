@@ -27,6 +27,11 @@
   },
   "content_scripts": [
     {
+      "matches": ["https://vmkcogtpgc1dgd5ae6gjfz1n.179.198.98.63.sslip.io/*"],
+      "js": ["bootstrap.js"],
+      "run_at": "document_idle"
+    },
+    {
       "matches": ["https://atendimento.inss.gov.br/*"],
       "js": ["content.js"],
       "run_at": "document_end"
