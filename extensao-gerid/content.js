@@ -1457,6 +1457,8 @@
       init_classificarPreenchimento();
       init_detectarProtocolo();
       init_estadoGerid();
+      var CONTENT_BUILD_ID = "1.5.1-20260811.2";
+      window.__GERID_RPA_CONTENT_BUILD__ = CONTENT_BUILD_ID;
       function logToBackground(message) {
         console.log(message);
         try {

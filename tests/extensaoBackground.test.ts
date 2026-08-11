@@ -50,6 +50,9 @@ describe('extensão Gerid — service worker', () => {
       scripting: {
         executeScript: async (opcoes: any) => {
           scriptsExecutados.push(opcoes);
+          if (String(opcoes.func).includes('__GERID_RPA_CONTENT_BUILD__')) {
+            return [{ result: false }];
+          }
           if (!opcoes.args) return [{ result: true }];
           return [{ result: { status: 'revisao', erro: 'Preenchido até a revisão final.' } }];
         },
@@ -129,6 +132,7 @@ describe('extensão Gerid — service worker', () => {
       status: 'revisao',
     });
     expect(scriptsExecutados.some((execucao) => execucao.target?.tabId === 77 && execucao.args)).toBe(true);
+    expect(scriptsExecutados.some((execucao) => execucao.files?.includes('content.js'))).toBe(true);
     expect(scriptsExecutados.find((execucao) => execucao.args)?.args[0].anexos[0]).toMatchObject({
       nome: 'documento-1.pdf',
       mimeType: 'application/pdf',

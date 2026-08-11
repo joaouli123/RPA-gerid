@@ -270,13 +270,7 @@ async function resolverBloqueiosPortal(tabId) {
     if (!abaDoPortalPat(aba) || estadoDaAba(aba) === EstadoAutenticacao.AUTENTICADO) return;
 
     try {
-      const verificacao = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => typeof window.resolverBloqueiosGerid === 'function',
-      });
-      if (!verificacao[0]?.result) {
-        await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
-      }
+      await garantirContentScript(tabId);
       const resultados = await chrome.scripting.executeScript({
         target: { tabId },
         func: () => window.resolverBloqueiosGerid?.(),
@@ -340,18 +334,22 @@ function erroDeNavegacao(erro) {
 }
 
 async function obterEstadoNaAba(tabId) {
-  const verificacao = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: () => typeof window.obterEstadoGerid === 'function',
-  });
-  if (!verificacao[0]?.result) {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
-  }
+  await garantirContentScript(tabId);
   const resultado = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => window.obterEstadoGerid?.() || { etapa: 'desconhecido', modal: null },
   });
   return resultado[0]?.result || { etapa: 'desconhecido', modal: null };
+}
+
+async function garantirContentScript(tabId) {
+  const verificacao = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.5.1-20260811.2',
+  });
+  if (!verificacao[0]?.result) {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+  }
 }
 
 async function reiniciarWizardNaAba(tabId) {
@@ -382,16 +380,7 @@ async function executarCasoNoGerid(tabId, casoComAnexos) {
         if (!reiniciouWizard) abaId = await prepararAbaGerid(abaId, true);
       }
 
-      const verificacao = await chrome.scripting.executeScript({
-        target: { tabId: abaId },
-        func: () => typeof window.iniciarProcessamento === 'function',
-      });
-      if (!verificacao[0]?.result) {
-        await chrome.scripting.executeScript({
-          target: { tabId: abaId },
-          files: ['content.js'],
-        });
-      }
+      await garantirContentScript(abaId);
 
       const resultados = await chrome.scripting.executeScript({
         target: { tabId: abaId },
