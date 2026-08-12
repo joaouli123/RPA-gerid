@@ -138,12 +138,29 @@ ponte.registrada ??= false;
 ponte.desvinculado ??= false;
 ponte.geracao ??= 0;
 
-/** A pasta da sessão já guarda credencial? É o que separa "pareado" de "novo". */
+/**
+ * A pasta da sessão guarda uma credencial que REALMENTE pareou?
+ *
+ * Não basta o arquivo existir. O Baileys grava `creds.json` durante o
+ * handshake, antes de alguém apontar a câmera — então um pareamento que começou
+ * e não terminou deixa o arquivo lá, com `registered: false`. Como só se olhava
+ * a existência, o servidor se declarava pareado, a tela mostrava "vinculado •
+ * reconectando" e nunca mais pedia QR. Trava calada, e com volume persistente
+ * nenhum deploy limpa: o arquivo ruim fica.
+ *
+ * `registered` é o campo que o próprio Baileys usa para dizer que o aparelho
+ * está do outro lado.
+ */
 async function sessaoJaPareada(): Promise<boolean> {
-  return fs.access(path.join(pastaSessao(), 'creds.json')).then(
-    () => true,
-    () => false,
-  );
+  try {
+    const bruto = await fs.readFile(path.join(pastaSessao(), 'creds.json'), 'utf8');
+    return (JSON.parse(bruto) as { registered?: boolean }).registered === true;
+  } catch {
+    // Sem arquivo, ilegível ou meio gravado: tratar como "nunca pareou" é o
+    // lado seguro — no pior caso mostra um QR a mais, em vez de esconder o QR
+    // de quem precisa dele.
+    return false;
+  }
 }
 
 /** Marca a próxima tentativa, com espera crescente. Uma de cada vez. */
