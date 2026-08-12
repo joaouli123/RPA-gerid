@@ -1193,7 +1193,7 @@ async function gerarComprovanteNaTelaDetalhe(tabId, protocolo) {
       const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
       const g = window;
       if (!g.__geridCapturaPdf) {
-        g.__geridCapturaPdf = { blob: null, dataUrl: '' };
+        g.__geridCapturaPdf = { blob: null, dataUrl: '', pedidoPara: '' };
         const criarUrl = URL.createObjectURL.bind(URL);
         URL.createObjectURL = function (obj) {
           try { if (obj instanceof Blob) g.__geridCapturaPdf.blob = obj; } catch (e) {}
@@ -1220,9 +1220,6 @@ async function gerarComprovanteNaTelaDetalhe(tabId, protocolo) {
           return cliqueOriginal.call(this);
         };
       }
-      g.__geridCapturaPdf.blob = null;
-      g.__geridCapturaPdf.dataUrl = '';
-
       // Confere que a tela aberta e a do protocolo pedido ANTES de clicar: se o
       // GERID tiver trocado de requerimento, o PDF baixado seria de outro caso.
       const naTela = document.querySelector('#tarefas-container');
@@ -1231,14 +1228,36 @@ async function gerarComprovanteNaTelaDetalhe(tabId, protocolo) {
         return { erro: `A tela de detalhe aberta nao e a do protocolo ${protocoloAlvo}.` };
       }
 
+      // Um clique = um arquivo no disco do operador. O GERID nao substitui o
+      // anterior: o Chrome vai empilhando "comprovante (5).pdf", "(6)", "(7)".
+      // Se esta funcao rodar duas vezes para o MESMO protocolo (retomada da
+      // fila, alarme, reload da aba), o resultado sao copias do mesmo PDF na
+      // pasta de downloads. Entao o clique acontece uma vez por protocolo.
+      const jaPedido = g.__geridCapturaPdf.pedidoPara === protocoloAlvo;
+
       const botao = document.querySelector('#btn-dt-gerar-comprovante');
       if (!botao) return { erro: 'Nao achei o botao "Gerar Comprovante" na tela de detalhe.' };
-      botao.click();
+      if (!jaPedido) {
+        // O que ficou capturado era de OUTRO protocolo. Zerar so aqui, junto do
+        // clique novo: apagar antes de um clique que nao vai acontecer jogaria
+        // fora o PDF certo que ja estava na mao.
+        g.__geridCapturaPdf.blob = null;
+        g.__geridCapturaPdf.dataUrl = '';
+        g.__geridCapturaPdf.pedidoPara = protocoloAlvo;
+        botao.click();
+      }
 
-      const fim = Date.now() + 25000;
+      // O PDF sai no ato do clique. A espera e curta de proposito: o operador
+      // esta esperando o proximo caso, e comprovante que nao veio se resolve
+      // depois pela lista de tarefas — o requerimento ja esta protocolado.
+      const fim = Date.now() + (jaPedido ? 3000 : 25000);
       for (;;) {
         if (g.__geridCapturaPdf.blob || g.__geridCapturaPdf.dataUrl) break;
-        if (Date.now() >= fim) return { erro: 'Pedi o comprovante, mas nao consegui capturar o arquivo.' };
+        if (Date.now() >= fim) {
+          return jaPedido
+            ? { erro: `Ja pedi o comprovante do protocolo ${protocoloAlvo} nesta tela e nao capturei o arquivo. Nao cliquei de novo para nao baixar copia repetida.` }
+            : { erro: 'Pedi o comprovante, mas nao consegui capturar o arquivo.' };
+        }
         await dormir(200);
       }
 
