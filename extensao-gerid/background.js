@@ -4,6 +4,7 @@ const URL_PAINEL_RPA = 'https://vmkcogtpgc1dgd5ae6gjfz1n.179.198.98.63.sslip.io'
 const CHAVE_EXECUCAO_ATIVA = 'execucaoAtivaGerid';
 const CHAVE_ESTADO_AUTENTICACAO = 'estadoAutenticacaoGerid';
 const CHAVE_ULTIMO_AVISO_AUTENTICACAO = 'ultimoAvisoAutenticacaoGerid';
+const CHAVE_ULTIMO_CERTIFICADO = 'ultimoPedidoCertificadoGerid';
 const CHAVE_LOGS = 'logsGerid';
 const ALARME_RETOMADA = 'retomarExecucaoGerid';
 const ALARME_AUTENTICACAO = 'aguardarAutenticacaoGerid';
@@ -80,6 +81,65 @@ async function avisarAutenticacaoNecessaria() {
     message: 'Conclua o certificado SafeID e o codigo do autenticador. A fila sera retomada sozinha.',
     priority: 2,
   });
+}
+
+/**
+ * Aperta "Entrar com Certificado Digital" na tela de login do CAS.
+ *
+ * Esse botao nao autentica ninguem: ele so faz o SafeID mandar a notificacao
+ * para o celular do titular, que autoriza (ou nao) no aparelho dele. Ou seja,
+ * o robo adianta o clique burocratico e o segundo fator continua inteiro, na
+ * mao da pessoa. Sem isto a fila fica parada esperando alguem lembrar de
+ * clicar, mesmo com o operador na frente do computador.
+ *
+ * O que este codigo NUNCA faz: tocar em #username ou #password. Senha e
+ * digitada pelo titular, ponto. Nao ha ramo aqui que preencha credencial.
+ */
+async function pedirAutorizacaoNoCelular(tabId) {
+  if (!tabId) return;
+  const salvo = await chrome.storage.local.get([CHAVE_ULTIMO_CERTIFICADO]);
+  // A notificacao do SafeID vale ~3 min. Clicar de novo antes disso derruba a
+  // solicitacao que ja esta no celular do titular e enche o aparelho de push.
+  if (Date.now() - Number(salvo[CHAVE_ULTIMO_CERTIFICADO] || 0) < 3 * 60 * 1000) return;
+
+  let resultado = '';
+  try {
+    const saida = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        // Pagina de erro do proprio Chrome (ERR_CONNECTION_TIMED_OUT e afins).
+        // Ela fica na MESMA url do GERID, entao sem olhar o conteudo o robo
+        // conclui "precisa autenticar" quando na verdade o Dataprev e que nao
+        // respondeu — e manda o operador procurar SafeID que nunca vai chegar.
+        if (document.querySelector('#main-frame-error')) return 'site_fora';
+        const botao = document.querySelector('#botaoCertificadoDigital');
+        if (!botao || botao.disabled || !botao.offsetParent) return 'sem_botao';
+        // Ja existe uma solicitacao no celular esperando resposta: clicar de
+        // novo cancelaria a que a pessoa talvez esteja abrindo agora. O trecho
+        // procurado para de proposito antes de "solicitacao" — assim nao
+        // depende de acento e dispensa normalizar a pagina inteira.
+        const texto = String(document.body?.innerText || '').toLowerCase();
+        if (texto.includes('autorize a solicit')) return 'ja_aguardando';
+        botao.click();
+        return 'disparado';
+      },
+    });
+    resultado = saida?.[0]?.result || '';
+  } catch {
+    return;
+  }
+
+  if (resultado === 'disparado') {
+    await chrome.storage.local.set({ [CHAVE_ULTIMO_CERTIFICADO]: Date.now() });
+    sendLog('Pedi o certificado digital: autorize no SafeID do seu celular. A fila retoma sozinha.');
+  } else if (resultado === 'ja_aguardando') {
+    sendLog('Ja existe uma solicitacao do SafeID no seu celular. Autorize por la.');
+  } else if (resultado === 'site_fora') {
+    sendLog(
+      'O GERID (Dataprev) nao respondeu — o site esta fora do ar ou instavel. '
+      + 'Nao e login nem sessao: nao adianta autenticar. A fila tenta de novo sozinha.',
+    );
+  }
 }
 
 function agendarRetomadaAutenticacao() {
@@ -303,7 +363,7 @@ async function resolverBloqueiosPortal(tabId) {
 }
 
 async function enviarHeartbeat(apiUrl, apiToken, idExecucao, estadoGerid, detalheGerid) {
-  if (!idExecucao) return;
+  if (!idExecucao) return null;
   const resposta = await buscarComTimeout(apiUrl.replace(/\/$/, '') + '/api/ext/heartbeat', {
     method: 'POST',
     headers: headersAutorizacao(apiToken, true),
@@ -311,6 +371,14 @@ async function enviarHeartbeat(apiUrl, apiToken, idExecucao, estadoGerid, detalh
   });
   if (!resposta.ok && resposta.status !== 409) {
     throw new Error(`Nao foi possivel manter a execucao ativa (HTTP ${resposta.status}).`);
+  }
+  // O corpo carrega a pausa pedida no painel. Um heartbeat sem corpo legivel
+  // (409, resposta vazia) devolve null e o chamador simplesmente segue — nunca
+  // interpretar "nao sei" como "pausado".
+  try {
+    return typeof resposta.json === 'function' ? await resposta.json() : null;
+  } catch {
+    return null;
   }
 }
 
@@ -533,6 +601,23 @@ async function acionarControleReact(tabId, tipo, id, valor) {
   return ultimoResultado;
 }
 
+/**
+ * O requerimento aberto na tela é deste caso? Devolve 'sim' | 'nao' | 'indefinido'.
+ * Só 'sim' autoriza retomar — continuar o requerimento de outra pessoa
+ * protocolaria dado de um cliente no nome de outro.
+ */
+async function requerimentoEhDoCaso(tabId, caso) {
+  const resultado = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (cpf, nome) => window.requerimentoAbertoEhDoCaso?.(cpf, nome) || 'indefinido',
+    args: [String(caso?.cpf || ''), String(caso?.nome || '')],
+  }).catch(() => null);
+  return resultado?.[0]?.result || 'indefinido';
+}
+
+/** Etapas do meio do wizard: já tem dado dentro, ainda dá para continuar. */
+const ETAPAS_RETOMAVEIS = ['passo_2', 'passo_3', 'passo_4', 'passo_5', 'passo_6', 'passo_7', 'passo_8', 'passo_9'];
+
 async function reiniciarWizardNaAba(tabId) {
   const resultado = await chrome.scripting.executeScript({
     target: { tabId },
@@ -556,9 +641,24 @@ async function executarCasoNoGerid(tabId, casoComAnexos) {
       }
 
       if (etapaInicial && !['lista_requerimentos', 'passo_1'].includes(etapaInicial)) {
-        sendLog(`O GERID estava em ${etapaInicial}. Voltando ao início seguro antes de preencher o caso.`);
-        const reiniciouWizard = await reiniciarWizardNaAba(abaId).catch(() => false);
-        if (!reiniciouWizard) abaId = await prepararAbaGerid(abaId, true);
+        // Antes de jogar fora o que já está preenchido, pergunte de quem é.
+        // Voltar ao passo 1 com o requerimento do PRÓPRIO caso aberto era o que
+        // fazia o robô "recomeçar do zero" — e travar na segunda tentativa,
+        // porque o GERID recusa dado repetido.
+        const dono = ETAPAS_RETOMAVEIS.includes(etapaInicial)
+          ? await requerimentoEhDoCaso(abaId, casoComAnexos)
+          : 'nao';
+
+        if (dono === 'sim') {
+          sendLog(`O requerimento de ${casoComAnexos.nome} já estava aberto em ${etapaInicial}. Retomando de onde parou.`);
+        } else {
+          const porque = dono === 'indefinido'
+            ? 'não consegui confirmar de quem é o requerimento aberto'
+            : 'o requerimento aberto é de outra pessoa';
+          sendLog(`O GERID estava em ${etapaInicial} e ${porque}. Voltando ao início seguro antes de preencher o caso.`);
+          const reiniciouWizard = await reiniciarWizardNaAba(abaId).catch(() => false);
+          if (!reiniciouWizard) abaId = await prepararAbaGerid(abaId, true);
+        }
       }
 
       await garantirContentScript(abaId);
@@ -593,6 +693,374 @@ async function executarCasoNoGerid(tabId, casoComAnexos) {
   return { status: 'erro', erro: 'Não foi possível retomar o caso no Gerid.' };
 }
 
+// ---------------------------------------------------------------------------
+// Lista oficial de tarefas — a unica prova de que o requerimento entrou
+// ---------------------------------------------------------------------------
+//
+// O robo ja chegou a protocolar SEM saber: o modal "Seu requerimento ainda nao
+// foi finalizado..." cobriu a tela do comprovante, o numero nunca apareceu, o
+// caso foi marcado como falha e a rodada seguinte tentou refazer — a que o
+// GERID respondeu "O pedido 1555659503 ainda esta em aberto".
+//
+// Perguntar a lista (/tarefas) resolve os dois lados: confirma o protocolo que
+// existe de verdade e evita um segundo requerimento no nome da mesma pessoa.
+// E de la que sai o comprovante em PDF ("Acoes > Gerar Comprovante").
+
+const URL_TAREFAS = 'https://atendimento.inss.gov.br/tarefas';
+
+/** dd/MM/aaaa no fuso do operador — e assim que a coluna "Protocolado em" vem. */
+function dataDeHojeBR() {
+  const agora = new Date();
+  const dois = (n) => String(n).padStart(2, '0');
+  return `${dois(agora.getDate())}/${dois(agora.getMonth() + 1)}/${agora.getFullYear()}`;
+}
+
+/**
+ * Abre /tarefas numa aba PROPRIA, em segundo plano.
+ *
+ * Reaproveitar a aba do wizard destruiria o requerimento preenchido — inclusive
+ * um que ainda esteja aguardando revisao humana.
+ */
+async function abrirAbaTarefas() {
+  // Sem as APIs de aba nao ha como consultar a lista sem destruir o wizard.
+  if (typeof chrome?.tabs?.create !== 'function' || typeof chrome?.scripting?.executeScript !== 'function') {
+    throw new Error('Este navegador nao expos chrome.tabs/chrome.scripting para a extensao.');
+  }
+  const aba = await chrome.tabs.create({ url: URL_TAREFAS, active: false });
+  const limite = Date.now() + 45000;
+  while (Date.now() < limite) {
+    await new Promise((r) => setTimeout(r, 400));
+    const atual = await chrome.tabs.get(aba.id).catch(() => null);
+    if (!atual) throw new Error('A aba da lista de tarefas foi fechada antes de carregar.');
+    if (atual.status === 'complete') {
+      // A tabela vem por XHR depois do "complete"; o script de busca espera por ela.
+      await new Promise((r) => setTimeout(r, 1200));
+      return aba.id;
+    }
+  }
+  throw new Error('A lista de tarefas do GERID nao carregou a tempo.');
+}
+
+/** Filtra a lista por CPF e devolve as linhas encontradas. */
+async function buscarLinhasNaLista(tabId, cpf) {
+  const saida = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [String(cpf || '').replace(/\D/g, '')],
+    func: async (cpfDigitos) => {
+      const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+      const dig = (v) => (v || '').replace(/\D/g, '');
+      const norm = (v) => (v || '').replace(/\s+/g, ' ').trim();
+      const esperar = async (achar, ms) => {
+        const fim = Date.now() + ms;
+        for (;;) {
+          let achado = null;
+          try { achado = achar(); } catch (e) { achado = null; }
+          if (achado) return achado;
+          if (Date.now() >= fim) return null;
+          await dormir(250);
+        }
+      };
+
+      const campo = await esperar(
+        () => document.querySelector('#filtro-entidade-conveniada-cpf'),
+        25000,
+      );
+      if (!campo) return { erro: 'Nao encontrei o filtro de CPF na lista de tarefas.' };
+
+      // O input e controlado pelo React: mexer no .value direto nao dispara o
+      // onChange, e o clique em Buscar sairia com o filtro vazio.
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype, 'value',
+      )?.set;
+      if (setter) setter.call(campo, cpfDigitos); else campo.value = cpfDigitos;
+      campo.dispatchEvent(new Event('input', { bubbles: true }));
+      campo.dispatchEvent(new Event('change', { bubbles: true }));
+      await dormir(400);
+
+      // Ha DOIS botoes "Buscar" na tela (Requerimentos e Cumprimento de
+      // Exigencia). O escopo #requerimento e o que separa um do outro.
+      const buscar = Array.from(document.querySelectorAll('#requerimento button'))
+        .find((b) => norm(b.textContent).toLowerCase() === 'buscar');
+      if (!buscar) return { erro: 'Nao encontrei o botao Buscar na lista de tarefas.' };
+
+      const lerLinhas = () => Array.from(
+        document.querySelectorAll('#tableConsultarTarefasEC tbody tr'),
+      )
+        .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => norm(td.innerText)))
+        // A linha "Nenhum registro encontrado" e um td unico com colspan.
+        .filter((c) => c.length >= 8)
+        .map((c) => ({
+          protocolo: dig(c[0]), servico: c[1], nome: c[2], cpf: dig(c[3]),
+          protocoladoEm: c[4], unidade: c[5], situacao: c[6], atualizadoEm: c[7],
+        }));
+
+      const antes = lerLinhas().map((l) => l.protocolo).join(',');
+      buscar.click();
+
+      // A busca vai ao servidor. So aceita quando a tabela inteira for do CPF
+      // pedido: enquanto vier linha de outra pessoa, o resultado ainda e o antigo.
+      const filtradas = await esperar(() => {
+        const linhas = lerLinhas();
+        if (!linhas.length) return null;
+        if (!linhas.every((l) => l.cpf === cpfDigitos)) return null;
+        return linhas;
+      }, 25000);
+      if (filtradas) return { linhas: filtradas };
+
+      // O filtro pode nao ter pegado. Em vez de desistir, aproveita o que esta
+      // na tela — a linha certa continua sendo a que tem este CPF.
+      const naTela = lerLinhas().filter((l) => l.cpf === cpfDigitos);
+      if (naTela.length) {
+        return { linhas: naTela, aviso: 'O filtro de CPF nao pegou; li a linha direto da tabela.' };
+      }
+      return {
+        linhas: [],
+        aviso: antes === lerLinhas().map((l) => l.protocolo).join(',')
+          ? 'A lista nao mudou depois do Buscar; pode nao ter filtrado.'
+          : 'A lista do GERID nao trouxe nenhuma linha para este CPF.',
+      };
+    },
+  });
+  return saida[0]?.result || { erro: 'A lista de tarefas nao respondeu.' };
+}
+
+/**
+ * Pede "Gerar Comprovante" na linha do protocolo e captura o PDF.
+ *
+ * O GERID monta o arquivo NO NAVEGADOR e manda baixar. Sem interceptar, o PDF
+ * so existiria solto na pasta Downloads, que a extensao nao consegue ler — e o
+ * comprovante nunca chegaria a pasta do cliente. Por isso os tres ganchos:
+ * `fetch` (resposta application/pdf), `URL.createObjectURL` (blob -> <a download>)
+ * e `<a href="data:...">`. O GERID so precisa usar UM deles.
+ */
+async function gerarComprovanteNaLista(tabId, protocolo) {
+  const saida = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [String(protocolo || '').replace(/\D/g, '')],
+    func: async (protocoloAlvo) => {
+      const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+      const norm = (v) => (v || '').replace(/\s+/g, ' ').trim();
+      const esperar = async (achar, ms) => {
+        const fim = Date.now() + ms;
+        for (;;) {
+          let achado = null;
+          try { achado = achar(); } catch (e) { achado = null; }
+          if (achado) return achado;
+          if (Date.now() >= fim) return null;
+          await dormir(200);
+        }
+      };
+
+      const g = window;
+      if (!g.__geridCapturaPdf) {
+        g.__geridCapturaPdf = { blob: null, dataUrl: '' };
+        const criarUrl = URL.createObjectURL.bind(URL);
+        URL.createObjectURL = function (obj) {
+          try { if (obj instanceof Blob) g.__geridCapturaPdf.blob = obj; } catch (e) {}
+          return criarUrl(obj);
+        };
+        const fetchOriginal = g.fetch;
+        g.fetch = async function (...args) {
+          const resposta = await fetchOriginal.apply(this, args);
+          try {
+            const tipo = resposta.headers.get('content-type') || '';
+            if (/pdf|octet-stream/i.test(tipo)) {
+              g.__geridCapturaPdf.blob = await resposta.clone().blob();
+            }
+          } catch (e) {}
+          return resposta;
+        };
+        const cliqueOriginal = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function () {
+          try {
+            if (typeof this.href === 'string' && this.href.startsWith('data:')) {
+              g.__geridCapturaPdf.dataUrl = this.href;
+            }
+          } catch (e) {}
+          return cliqueOriginal.call(this);
+        };
+      }
+      g.__geridCapturaPdf.blob = null;
+      g.__geridCapturaPdf.dataUrl = '';
+
+      const linha = Array.from(
+        document.querySelectorAll('#tableConsultarTarefasEC tbody tr'),
+      ).find((tr) => {
+        const primeira = tr.querySelector('td');
+        return primeira && norm(primeira.innerText).replace(/\D/g, '') === protocoloAlvo;
+      });
+      if (!linha) return { erro: `Nao achei a linha do protocolo ${protocoloAlvo} na lista.` };
+
+      const acoes = linha.querySelector('button[aria-label="Ações"], button[aria-label="Acoes"]');
+      if (!acoes) return { erro: 'Nao achei o botao de acoes da linha.' };
+      acoes.click();
+      await dormir(300);
+
+      // Procura o item DENTRO da propria linha: buscar no documento inteiro
+      // pegaria o menu de outra linha que tenha ficado aberto.
+      const gerar = await esperar(
+        () => Array.from(linha.querySelectorAll('button'))
+          .find((b) => norm(b.textContent).toLowerCase() === 'gerar comprovante'),
+        6000,
+      );
+      if (!gerar) return { erro: 'O menu da linha nao mostrou "Gerar Comprovante".' };
+      gerar.click();
+
+      const captura = await esperar(
+        () => (g.__geridCapturaPdf.blob || g.__geridCapturaPdf.dataUrl) ? g.__geridCapturaPdf : null,
+        25000,
+      );
+      if (!captura) return { erro: 'Pedi o comprovante, mas nao consegui capturar o arquivo.' };
+
+      if (captura.dataUrl) {
+        const base64 = captura.dataUrl.split(',')[1] || '';
+        return base64
+          ? { pdfBase64: base64, bytes: Math.round(base64.length * 0.75) }
+          : { erro: 'O link do comprovante veio vazio.' };
+      }
+
+      const base64 = await new Promise((resolve) => {
+        const leitor = new FileReader();
+        leitor.onload = () => resolve(String(leitor.result).split(',')[1] || '');
+        leitor.onerror = () => resolve('');
+        leitor.readAsDataURL(captura.blob);
+      });
+      return base64
+        ? { pdfBase64: base64, bytes: captura.blob.size }
+        : { erro: 'Nao consegui ler o arquivo do comprovante.' };
+    },
+  });
+  return saida[0]?.result || { erro: 'A tela do comprovante nao respondeu.' };
+}
+
+/**
+ * Confere na lista do GERID o que realmente aconteceu com este caso e, quando
+ * ha protocolo, traz o comprovante em PDF.
+ *
+ * MUTA `resultado` de proposito: e ele que segue para `/api/ext/status`.
+ *
+ * Regra de seguranca para PROMOVER um caso a sucesso sem que o robo tenha lido
+ * o numero na tela: a linha precisa ser de HOJE. Um requerimento antigo da mesma
+ * pessoa (BPC negado ano passado, por exemplo) esta na lista tambem, e usa-lo
+ * marcaria como protocolado um caso que nunca foi enviado.
+ */
+/**
+ * O numero que o PROPRIO GERID citou ao recusar o servico.
+ *
+ * "Nao e possivel continuar com este servico: O pedido 1555659503 ainda esta em
+ * aberto." Ler esse numero e o oposto de inventar dado — e o portal dizendo qual
+ * requerimento ja existe para este CPF. Sem isso o robo trataria como ERRO um
+ * caso que na verdade JA FOI protocolado, e tentaria de novo na proxima rodada.
+ */
+function protocoloCitadoNoBloqueio(texto) {
+  const limpo = String(texto || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ');
+  return /pedido\s+(\d{6,})[^.]{0,40}?em aberto/i.exec(limpo)?.[1] || '';
+}
+
+/**
+ * Caso que o GERID diz JA TER — vira sucesso com o numero dele, nunca erro.
+ *
+ * O motivo original nao e apagado: fica no historico ao lado da explicacao, para
+ * o operador entender por que o robo parou de tentar este CPF.
+ */
+function promoverAJaProtocolado(resultado, protocolo, detalhe) {
+  resultado.status = 'sucesso';
+  resultado.protocolo = protocolo;
+  resultado.erro = [
+    resultado.erro,
+    `Na verdade JA ESTAVA protocolado: ${protocolo} (${detalhe}). ` +
+    'Nao refiz o requerimento.',
+  ].filter(Boolean).join(' | ');
+}
+
+async function conferirNaListaDeTarefas(caso, resultado) {
+  const lidoNaTela = String(resultado.protocolo || '').replace(/\D/g, '');
+  // O bloqueio "pedido X em aberto" pode chegar aqui como ERRO: se o alerta
+  // sumiu antes do robo reler a tela, o numero sobrou so no texto da falha.
+  const citadoNoBloqueio = lidoNaTela ? '' : protocoloCitadoNoBloqueio(resultado.erro);
+  const jaTem = lidoNaTela || citadoNoBloqueio;
+  let tabId = null;
+  try {
+    tabId = await abrirAbaTarefas();
+    const busca = await buscarLinhasNaLista(tabId, caso.cpf);
+    if (busca.erro) {
+      sendLog(`Nao consegui conferir na lista do GERID: ${busca.erro}`);
+      return;
+    }
+    if (busca.aviso) sendLog(`Lista de tarefas: ${busca.aviso}`);
+
+    const linhas = busca.linhas || [];
+    const hoje = dataDeHojeBR();
+    const escolhida = jaTem
+      ? linhas.find((l) => l.protocolo === jaTem)
+      : linhas.find((l) => l.protocoladoEm === hoje);
+
+    if (!escolhida) {
+      if (citadoNoBloqueio) {
+        // Quem nomeou este numero foi o proprio GERID, ao recusar o servico
+        // para ESTE CPF. Nao achar a linha na lista costuma ser filtro de
+        // periodo (protocolo de outro dia), nao ausencia do requerimento.
+        // Deixar como erro faria o robo tentar de novo amanha — e cada
+        // tentativa e um requerimento a mais no nome de uma pessoa real.
+        promoverAJaProtocolado(resultado, citadoNoBloqueio,
+          'nao localizei a linha na lista (possivel filtro de periodo), entao o comprovante ficou faltando');
+        sendLog(
+          `${caso.nome} JA ESTAVA protocolado (${citadoNoBloqueio}) — o GERID recusou refazer. ` +
+          'Nao achei a linha na lista para gerar o comprovante; baixe pela tela de Tarefas.',
+        );
+      } else if (jaTem) {
+        sendLog(`O protocolo ${jaTem} nao apareceu na lista; sigo com o numero lido na tela.`);
+      } else {
+        sendLog(
+          `A lista do GERID nao mostra requerimento de hoje para ${caso.nome}` +
+          `${linhas.length ? ` (${linhas.length} anterior(es) no periodo)` : ''}. Nada foi protocolado.`,
+        );
+      }
+      return;
+    }
+
+    if (!lidoNaTela) {
+      promoverAJaProtocolado(
+        resultado,
+        escolhida.protocolo,
+        `${escolhida.servico}, ${escolhida.situacao}, protocolado em ${escolhida.protocoladoEm}`,
+      );
+      sendLog(`${caso.nome}: a lista do GERID confirma o protocolo ${escolhida.protocolo}.`);
+    }
+
+    const pdf = await gerarComprovanteNaLista(tabId, escolhida.protocolo);
+    if (pdf.pdfBase64) {
+      resultado.pdfBase64 = pdf.pdfBase64;
+      resultado.pdfNome = `comprovante ${escolhida.protocolo}.pdf`;
+      sendLog(`Comprovante do protocolo ${escolhida.protocolo} capturado (${pdf.bytes} bytes).`);
+    } else {
+      // Falhar aqui NAO invalida o protocolo: o requerimento entrou do mesmo
+      // jeito, so o arquivo ficou faltando. Por isso vira aviso, nao erro.
+      sendLog(`Nao consegui baixar o comprovante: ${pdf.erro || 'motivo desconhecido'}`);
+      resultado.erro = [resultado.erro, `Comprovante nao capturado: ${pdf.erro || 'motivo desconhecido'}.`]
+        .filter(Boolean).join(' | ');
+    }
+  } catch (erro) {
+    sendLog(`Falha ao consultar a lista de tarefas: ${erro?.message || erro}`);
+  } finally {
+    // Fechar a aba e limpeza, nao resultado. Se o usuario ja fechou na mao (ou o
+    // navegador nem expoe `remove`), estourar aqui derrubaria o caso INTEIRO —
+    // inclusive um caso que acabou de ser protocolado com sucesso.
+    if (tabId !== null && tabId !== undefined) {
+      try {
+        await chrome.tabs.remove(tabId);
+      } catch (falhaAoFechar) {
+        sendLog(`Nao consegui fechar a aba da lista de tarefas: ${falhaAoFechar?.message || falhaAoFechar}`);
+      }
+    }
+  }
+}
+
 async function enviarResultado(apiUrl, apiToken, idExecucao, caso, resultado) {
   sendLog(`Enviando resultado do ${caso.nome}: ${resultado.status}` + (resultado.erro ? ` - ${resultado.erro}` : ''));
   const resposta = await buscarComTimeout(apiUrl.replace(/\/$/, '') + '/api/ext/status', {
@@ -608,10 +1076,36 @@ async function enviarResultado(apiUrl, apiToken, idExecucao, caso, resultado) {
       pdfNome: resultado.pdfNome,
     }),
   });
-  await lerJsonResposta(resposta, 'Nao foi possivel registrar o resultado.');
+  const registrado = await lerJsonResposta(resposta, 'Nao foi possivel registrar o resultado.');
+
+  // Conferencia explicita do comprovante. O operador pediu para SABER se o
+  // arquivo chegou aos dois destinos, e nao adianta a extensao dizer "capturei":
+  // quem sabe se o PDF virou arquivo e o servidor. Falta aqui nao invalida o
+  // protocolo — o requerimento entrou de qualquer jeito; vira aviso.
+  if (resultado.pdfBase64) {
+    const conferido = registrado?.comprovante;
+    if (!conferido) {
+      sendLog('Enviei o comprovante, mas o painel nao confirmou onde salvou. Confira na tela de Execucao.');
+    } else if (conferido.painel && conferido.drive) {
+      sendLog(`Comprovante de ${caso.nome} confirmado no painel E no Drive do cliente.`);
+    } else if (conferido.painel || conferido.drive) {
+      // Meio caminho nao e "deu certo". O pedido e o arquivo nos DOIS lugares, e
+      // o destino que faltou e sempre o Drive na pratica (a service account nao
+      // tem cota para criar arquivo). Dizer "confirmado" aqui faria o operador
+      // fechar o caso sem o comprovante na pasta do cliente.
+      const entrou = conferido.painel ? 'painel' : 'Drive do cliente';
+      const faltou = conferido.painel ? 'Drive do cliente' : 'painel';
+      sendLog(
+        `ATENCAO: o comprovante de ${caso.nome} entrou no ${entrou} mas NAO no ${faltou}. ` +
+        `${conferido.aviso || ''}`.trim(),
+      );
+    } else {
+      sendLog(`ATENCAO: o comprovante de ${caso.nome} NAO foi salvo. ${conferido.aviso || ''}`.trim());
+    }
+  }
 }
 
-async function detectarProtocoloNaAba(tabId) {
+async function detectarProtocoloNaAba(tabId, cpf, nome) {
   const verificacao = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => typeof window.detectarProtocoloGerid === 'function',
@@ -623,7 +1117,42 @@ async function detectarProtocoloNaAba(tabId) {
     target: { tabId },
     func: () => window.detectarProtocoloGerid?.() || null,
   });
-  return resultado[0]?.result || null;
+  const protocolo = resultado[0]?.result || null;
+  if (!protocolo) return null;
+
+  // De quem e o comprovante que esta na tela? Um numero lido do comprovante de
+  // OUTRA pessoa entraria na planilha como se fosse deste caso. "nao" e um
+  // reconhecimento negativo (ha outro CPF na tela) e barra; "indefinido" so
+  // significa que a tela nao mostra dono, e ai o numero e aceito com registro.
+  const dono = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (cpfAlvo, nomeAlvo) => window.requerimentoAbertoEhDoCaso?.(cpfAlvo, nomeAlvo) || 'indefinido',
+    args: [String(cpf || ''), String(nome || '')],
+  }).then((r) => r[0]?.result).catch(() => 'indefinido');
+
+  if (dono === 'nao') {
+    sendLog(
+      `Ignorei um numero de protocolo na tela: o comprovante aberto NAO e de ${nome || 'cliente atual'}.`,
+    );
+    return null;
+  }
+  if (dono !== 'sim') {
+    sendLog(`Protocolo capturado numa tela que nao identifica o titular — confira o comprovante de ${nome || 'cliente atual'}.`);
+  }
+  return protocolo;
+}
+
+/** Em que etapa do wizard a aba esta. `null` quando nao da para saber. */
+async function etapaDaAba(tabId) {
+  try {
+    const resultado = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => window.obterEstadoGerid?.()?.etapa || null,
+    });
+    return resultado[0]?.result || null;
+  } catch {
+    return null;
+  }
 }
 
 /** Registra o protocolo depois que o operador confirma e continua a fila. */
@@ -658,8 +1187,28 @@ async function verificarConfirmacaoPendente(tabIdPreferido) {
   }
 
   try {
-    const protocolo = await detectarProtocoloNaAba(aba.id);
+    const protocolo = await detectarProtocoloNaAba(aba.id, ativa.cpfAtual, ativa.nomeAtual);
     if (!protocolo) {
+      // A tela que estava esperando confirmacao SUMIU: o wizard voltou para a
+      // primeira etapa ou para a lista. Continuar esperando ali e esperar para
+      // sempre — foi o que travou a extensao em "Aguardando confirmacao" sem
+      // nunca iniciar outra run. Solta o cadeado e devolve a decisao ao humano.
+      //
+      // Nao retoma a fila sozinho de proposito: daqui nao da para saber se o
+      // requerimento chegou a ser protocolado antes de a tela ser trocada, e
+      // refazer no escuro protocolaria o mesmo pedido duas vezes.
+      const etapa = await etapaDaAba(aba.id);
+      if (etapa === 'passo_1' || etapa === 'lista_requerimentos') {
+        await limparExecucaoAtiva();
+        sendLog(
+          `A tela do requerimento de ${ativa.nomeAtual || 'cliente atual'} nao esta mais aberta ` +
+          `(GERID em ${etapa}), entao parei de esperar a confirmacao. ` +
+          'CONFIRA no GERID se esse requerimento ja foi protocolado ANTES de rodar a fila de novo.',
+        );
+        chrome.runtime.sendMessage({ action: 'finished' }).catch(() => {});
+        return true;
+      }
+
       await enviarHeartbeat(
         dados.apiUrl,
         dados.apiToken,
@@ -726,10 +1275,27 @@ async function processQueue(
     if (!apiToken) throw new Error('A chave da extensão não foi informada.');
     sendLog('Iniciando processamento...');
     let data = await buscarFila(apiUrl, apiToken);
+
+    // Pausa pedida no painel: nem abre o GERID. A execucao continua viva e os
+    // casos continuam pendentes, entao `manterExecucaoPendente` segue falso de
+    // proposito — nao ha caso em andamento para preservar.
+    //
+    // A checagem vem ANTES de `prepararFila`: com a fila pausada o servidor
+    // devolve `casos: []`, o que parecia "fila vazia" e fazia um clique em
+    // Iniciar mandar preparar fila nova — furando justamente a pausa.
+    if (data.pausada) {
+      sendLog('Fila PAUSADA no painel. Clique em Retomar fila no painel para continuar.');
+      return;
+    }
+
     if ((!data.idExecucao || data.casos.length === 0) && iniciarSeVazia) {
       sendLog('Preparando a fila no servidor...');
       await prepararFila(apiUrl, apiToken);
       data = await buscarFila(apiUrl, apiToken);
+      if (data.pausada) {
+        sendLog('Fila PAUSADA no painel. Clique em Retomar fila no painel para continuar.');
+        return;
+      }
     }
 
     const casos = modoTeste ? data.casos.slice(0, 1) : data.casos;
@@ -776,6 +1342,7 @@ async function processQueue(
         aba?.id,
       );
       await avisarAutenticacaoNecessaria();
+      await pedirAutorizacaoNoCelular(aba?.id);
       agendarRetomadaAutenticacao();
       sendLog('Aguardando autenticacao. A fila sera retomada automaticamente.');
       return;
@@ -792,6 +1359,34 @@ async function processQueue(
       : `Fila carregada: ${casos.length} casos pendentes.`);
 
     for (const caso of casos) {
+      // Este heartbeat e tambem o ponto onde a extensao descobre a pausa. Ele
+      // acontece ANTES de qualquer coisa do proximo caso: a pausa so vale
+      // ENTRE casos, porque parar no meio deixaria um requerimento pela metade
+      // na tela — ou, pior, pararia logo depois do Confirmar, sem ler o
+      // protocolo, que foi exatamente o que aconteceu com a Camila.
+      const sinal = await enviarHeartbeat(
+        apiUrl,
+        apiToken,
+        data.idExecucao,
+        'processando',
+        `Proximo caso: ${caso.nome}.`,
+      );
+      if (sinal?.pausada) {
+        manterExecucaoPendente = true;
+        await salvarExecucaoAtiva({
+          idExecucao: data.idExecucao,
+          geridTabId: aba.id,
+          modoTeste,
+          tentativasRetomada,
+          iniciadoEm: new Date().toISOString(),
+        });
+        sendLog(
+          `Fila PAUSADA no painel. ${caso.nome} nao foi iniciado e continua na fila. ` +
+          'Clique em Retomar fila no painel e depois em Iniciar aqui.',
+        );
+        break;
+      }
+
       await salvarExecucaoAtiva({
         idExecucao: data.idExecucao,
         geridTabId: aba.id,
@@ -802,18 +1397,17 @@ async function processQueue(
         iniciadoEm: new Date().toISOString(),
       });
       sendLog(`Processando: ${caso.nome}`);
-      await enviarHeartbeat(
-        apiUrl,
-        apiToken,
-        data.idExecucao,
-        'processando',
-        `Processando ${caso.nome}.`,
-      );
       const casoComAnexos = {
         ...caso,
         anexos: await baixarAnexos(apiUrl, apiToken, data.idExecucao, caso.anexos),
       };
       const resultado = await executarCasoNoGerid(aba.id, casoComAnexos);
+
+      // Sessao morta: a lista tambem nao carregaria. Nos outros casos sempre
+      // pergunta ao GERID — inclusive no sucesso, porque e de la que vem o PDF.
+      if (resultado.status !== 'autenticacao') {
+        await conferirNaListaDeTarefas(caso, resultado);
+      }
 
       if (resultado.status === 'autenticacao') {
         manterExecucaoPendente = true;
@@ -835,6 +1429,7 @@ async function processQueue(
         );
         await atualizarEstadoAutenticacao(EstadoAutenticacao.NECESSARIA, resultado.erro, aba.id);
         await avisarAutenticacaoNecessaria();
+        await pedirAutorizacaoNoCelular(aba.id);
         agendarRetomadaAutenticacao();
         sendLog('Sessao expirada. Conclua a autenticacao; a fila sera retomada sozinha.');
         break;
@@ -880,6 +1475,13 @@ async function processQueue(
       }
 
       await enviarResultado(apiUrl, apiToken, data.idExecucao, caso, resultado);
+
+      // O robô concluiu sozinho (passo 10) e o GERID devolveu o número. Não há
+      // o que esperar de humano: segue para o próximo caso da fila.
+      if (resultado.status === 'sucesso') {
+        sendLog(`${caso.nome}: PROTOCOLADO — ${resultado.protocolo}`);
+        continue;
+      }
 
       // Revisão é uma parada intencional: preserva a tela preenchida para o
       // operador e nunca abre outro requerimento por cima dela.
