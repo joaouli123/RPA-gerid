@@ -3,6 +3,7 @@ import type { ClienteRevisao, ClienteValidado, ResultadoLeitura } from '@/src/do
 import type {
   Execucao,
   ExecucaoAtual,
+  ProtocoloDoCliente,
   ProtocoloRegistrado,
   RegistroAcaoRevisao,
 } from '@/lib/types';
@@ -16,6 +17,7 @@ import {
   getExecucoes as getExecucoesStore,
   getLidoEm,
   getResultado as getResultadoStore,
+  protocoloDoCpf as protocoloDoCpfStore,
   protocolosPorCpf as protocolosPorCpfStore,
   usandoDadosReais,
 } from '@/lib/server/store';
@@ -45,6 +47,18 @@ export type DetalheCliente =
  */
 export async function getProtocolosPorCpf(): Promise<Map<string, ProtocoloRegistrado>> {
   return protocolosPorCpfStore();
+}
+
+/**
+ * O protocolo e o comprovante DESTE cliente, para a tela dele.
+ *
+ * A Execução mostra o comprovante do lote que está rodando; passado o dia, o
+ * lote sai da tela e o PDF vira caça ao tesouro no histórico. Quem liga
+ * perguntando "saiu o meu?" é atendido pelo CPF, então é na ficha do cliente
+ * que o arquivo precisa estar.
+ */
+export async function getProtocoloDoCliente(cpf: string): Promise<ProtocoloDoCliente | null> {
+  return protocoloDoCpfStore(cpf);
 }
 
 export async function getResultado(): Promise<ResultadoLeitura> {

@@ -31,6 +31,7 @@ import type {
   Execucao,
   ExecucaoAtual,
   OverridesConfig,
+  ProtocoloDoCliente,
   ProtocoloRegistrado,
   RegistroAcaoRevisao,
 } from '@/lib/types';
@@ -735,7 +736,11 @@ export async function lerComprovanteDoCaso(
     estado.execucaoAtual?.id === idExecucao
       ? estado.execucaoAtual
       : estado.execucoes.find((e) => e.id === idExecucao);
-  const caso = execucao?.casos.find((c) => c.cpf === cpf);
+  // Compara por dígitos: o nome do arquivo já é só dígito, e o CPF chega ora da
+  // planilha (cru, com zero à esquerda), ora com máscara vinda da tela. Casar
+  // texto puro aqui devolveria 404 num comprovante que está guardado.
+  const alvo = apenasDigitos(cpf);
+  const caso = execucao?.casos.find((c) => apenasDigitos(c.cpf) === alvo);
   if (!caso?.comprovante) return null;
 
   try {
@@ -790,11 +795,15 @@ export async function protocolosPorCpf(): Promise<Map<string, ProtocoloRegistrad
   const estado = await carregarEstado();
   const mapa = new Map<string, ProtocoloRegistrado>();
 
-  const lotes: Array<{ dataISO: string; casos: CasoExecucao[] }> = [
-    ...estado.execucoes.map((e) => ({ dataISO: e.dataISO, casos: e.casos })),
+  const lotes: Array<{ id: string; dataISO: string; casos: CasoExecucao[] }> = [
+    ...estado.execucoes.map((e) => ({ id: e.id, dataISO: e.dataISO, casos: e.casos })),
   ];
   if (estado.execucaoAtual) {
-    lotes.push({ dataISO: estado.execucaoAtual.iniciadoEm, casos: estado.execucaoAtual.casos });
+    lotes.push({
+      id: estado.execucaoAtual.id,
+      dataISO: estado.execucaoAtual.iniciadoEm,
+      casos: estado.execucaoAtual.casos,
+    });
   }
 
   // 1ª passada: qual é o protocolo que VALE para cada CPF (o mais antigo).
@@ -823,9 +832,35 @@ export async function protocolosPorCpf(): Promise<Map<string, ProtocoloRegistrad
       if (!registro || registro.comprovante) continue;
       if (String(caso.protocolo ?? '').trim() !== registro.protocolo) continue;
       registro.comprovante = caso.comprovante;
+      registro.idExecucaoDoComprovante = lote.id;
     }
   }
   return mapa;
+}
+
+/**
+ * O protocolo de UM cliente, do jeito que a tela dele precisa: com o id da
+ * execução para montar o link e com a conferência de que o PDF continua no
+ * disco.
+ *
+ * A tela do cliente é onde o operador vai olhar quando alguém liga perguntando
+ * "saiu?" — procurar em qual execução a pessoa caiu, três meses depois, é
+ * trabalho que o painel tem que poupar.
+ */
+export async function protocoloDoCpf(cpf: string): Promise<ProtocoloDoCliente | null> {
+  const registro = (await protocolosPorCpf()).get(apenasDigitos(cpf));
+  if (!registro) return null;
+
+  const id = registro.idExecucaoDoComprovante;
+  const arquivoDisponivel =
+    !!registro.comprovante &&
+    !!id &&
+    (await fs.access(arquivoDoComprovante(id, registro.cpf)).then(
+      () => true,
+      () => false,
+    ));
+
+  return { ...registro, arquivoDisponivel };
 }
 
 /**

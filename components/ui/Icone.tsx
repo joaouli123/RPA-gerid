@@ -17,7 +17,8 @@ export type NomeIcone =
   | 'documento'
   | 'grupo'
   | 'recarregar'
-  | 'pausa';
+  | 'pausa'
+  | 'baixar';
 
 const PATHS: Record<NomeIcone, ReactNode> = {
   painel: (
@@ -91,6 +92,13 @@ const PATHS: Record<NomeIcone, ReactNode> = {
     <>
       <path d="M20.5 12a8.5 8.5 0 1 1-2.5-6" />
       <path d="M20.5 3.5V9H15" />
+    </>
+  ),
+  baixar: (
+    <>
+      <path d="M12 3.5v11" />
+      <path d="M7.5 10.5 12 15l4.5-4.5" />
+      <path d="M4.5 19.5h15" />
     </>
   ),
 };

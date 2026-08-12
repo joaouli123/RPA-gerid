@@ -53,6 +53,25 @@ export interface ProtocoloRegistrado {
   em: string;
   /** Ausente quando o protocolo saiu mas o PDF não foi capturado. */
   comprovante?: ComprovanteCaso;
+  /**
+   * Execução em que o PDF ficou guardado — NEM SEMPRE a que gerou o protocolo,
+   * porque o comprovante costuma chegar numa rodada posterior, no modo
+   * só-comprovante. É o que a tela do cliente precisa para montar o link de
+   * download; sem ele o operador teria que adivinhar em qual execução procurar.
+   */
+  idExecucaoDoComprovante?: string;
+}
+
+/**
+ * O mesmo registro, acrescido da conferência de que o arquivo AINDA está no
+ * disco do painel.
+ *
+ * Existe porque `.data/comprovantes/` é disco comum: um deploy sem volume
+ * persistente apaga os PDFs e deixa só a anotação para trás. Oferecer um botão
+ * "Baixar" que responde 404 é pior do que dizer na cara que o arquivo se perdeu.
+ */
+export interface ProtocoloDoCliente extends ProtocoloRegistrado {
+  arquivoDisponivel: boolean;
 }
 
 export type StatusExecucao = 'ociosa' | 'rodando' | 'concluida' | 'erro';
