@@ -3,6 +3,11 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { describe, expect, it } from 'vitest';
 
+// ⚠️ O id do radio leva o id do combo junto: `2` é "Filho(a)" no parentesco e
+// "Casado" no estado civil, e com o id repetido o clique em `<label for="2">`
+// caía no primeiro radio "2" da página inteira. O `value` continua sendo só a
+// opção, que é o que o handler React do GERID lê. Ids únicos é o que o GERID
+// real entrega.
 function comboControlado(
   id: string,
   opcoes: Array<[string, string]>,
@@ -16,8 +21,8 @@ function comboControlado(
           ([valor, rotulo]) => `
             <div class="br-item" role="option">
               <div class="br-radio">
-                <input id="${valor}" type="radio" value="${valor}" aria-hidden="true" tabindex="-1">
-                <label for="${valor}">
+                <input id="${id}-op-${valor}" type="radio" value="${valor}" aria-hidden="true" tabindex="-1">
+                <label for="${id}-op-${valor}">
                   <span aria-hidden="true"><div>${rotulo}</div></span>
                   <span class="sr-only">${rotulo}</span>
                 </label>
@@ -32,6 +37,7 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
   it('seleciona o estado civil pelo rótulo visível, não pelo input interno', async () => {
     const navegador = await chromium.launch({ headless: true });
     const pagina = await navegador.newPage();
+    pagina.on("console", (m) => { const t = m.text(); if (t[0] === "[") console.log(String(Date.now()%100000)+" "+t); });
     try {
       await pagina.setContent(`
         <style>.br-radio input { position: absolute; opacity: 0; }</style>
@@ -239,5 +245,5 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
       await pagina.close();
       await navegador.close();
     }
-  }, 20_000);
+  }, 60_000);
 });

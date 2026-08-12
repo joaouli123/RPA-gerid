@@ -75,6 +75,8 @@ export interface MapaGerid {
 
   passo7: {
     tipoContato: string;
+    /** Nasce `disabled`; o GERID só libera depois que o tipo é selecionado de verdade. */
+    valorContato: string;
     acompanharProcessoSim: string;
     /** Os anexos não têm id único: todos são `input[type=file]#single-file`. */
     inputArquivo: string;

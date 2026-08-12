@@ -490,14 +490,40 @@
   function textoSeguro(valor) {
     return valor.replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[email]").replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, "[cpf]").replace(/\b\d{10,13}\b/g, "[numero]").replace(/\s+/g, " ").trim().slice(0, 180);
   }
+  function temControleDeRemocao(caixa) {
+    if (!caixa) return false;
+    return Array.from(caixa.querySelectorAll('button, a, [role="button"]')).some((controle) => {
+      const texto = normalizar2([
+        controle.getAttribute("aria-label"),
+        controle.getAttribute("title"),
+        controle.textContent
+      ].join(" "));
+      return texto.includes("excluir") || texto.includes("remover");
+    });
+  }
   function capturarDiagnosticoGerid(documento = document) {
     const estado = detectarEstadoGerid(documento);
+    const respondidoNoPar = (campo) => {
+      const par = /^(.+)-(sim|n[aã]o)$/i.exec(campo.id || "");
+      if (!par) return false;
+      return Array.from(documento.querySelectorAll(`[id^="${CSS.escape(par[1])}-"]`)).some((irmao) => irmao.checked);
+    };
+    const ehObrigatorio = (campo) => {
+      if (campo.required || campo.getAttribute("aria-required") === "true") return true;
+      const rotulos = [
+        campo.id ? documento.querySelector(`label[for="${CSS.escape(campo.id)}"]`)?.textContent : "",
+        campo.getAttribute("aria-label"),
+        campo.closest("label")?.textContent
+      ];
+      return rotulos.some((rotulo) => (rotulo || "").trim().startsWith("*"));
+    };
     const campos = Array.from(
       documento.querySelectorAll("input, textarea, select")
-    ).filter(estaVisivel).slice(0, 60).map((campo) => ({
+    ).filter((campo) => estaVisivel(campo) && campo.type !== "file").slice(0, 60).map((campo) => ({
       id: campo.id || campo.getAttribute("name") || "(sem id)",
       tipo: campo instanceof HTMLInputElement ? campo.type || "text" : campo.tagName.toLowerCase(),
-      preenchido: campo instanceof HTMLInputElement && ["checkbox", "radio"].includes(campo.type) ? campo.checked : Boolean(campo.value)
+      preenchido: campo instanceof HTMLInputElement && ["checkbox", "radio"].includes(campo.type) ? campo.checked || respondidoNoPar(campo) : Boolean(campo.value),
+      obrigatorio: ehObrigatorio(campo)
     }));
     const alertas = Array.from(
       documento.querySelectorAll('[role="alert"], .br-message, .feedback')
@@ -511,7 +537,12 @@
       rotulo: textoSeguro(
         input.closest(".containerAnexo")?.querySelector("strong")?.innerText || input.closest(".containerAnexo")?.innerText || ""
       ),
-      arquivo: Boolean(input.files?.length)
+      // ⚠️ `input.files` não diz se o anexo está lá. Quando o GERID assume o
+      // arquivo ele ESVAZIA o input e passa a mostrar o nome com um botão de
+      // excluir. Ler só o input reportava "11/11 sem arquivo" numa tela onde os
+      // anexos tinham entrado — e isso já mandou a investigação para o lado
+      // errado uma vez.
+      arquivo: Boolean(input.files?.length) || temControleDeRemocao(input.closest(".containerAnexo"))
     }));
     return {
       ...estado,
@@ -538,8 +569,10 @@
   }
   function resumirDiagnosticoGerid(diagnostico) {
     const alertas = diagnostico.alertas.length ? ` Alertas: ${diagnostico.alertas.join(" | ")}.` : "";
-    const pendentes = diagnostico.campos.filter((campo) => !campo.preenchido).map((campo) => campo.id).slice(0, 12);
-    return `Estado ${diagnostico.etapa}${diagnostico.modal ? `, modal ${diagnostico.modal}` : ""}.` + (pendentes.length ? ` Campos pendentes: ${pendentes.join(", ")}.` : "") + alertas;
+    const vazios = diagnostico.campos.filter((campo) => !campo.preenchido);
+    const pendentes = vazios.filter((campo) => campo.obrigatorio).map((campo) => campo.id).slice(0, 12);
+    const anexosVazios = diagnostico.anexos.filter((anexo) => !anexo.arquivo).length;
+    return `Estado ${diagnostico.etapa}${diagnostico.modal ? `, modal ${diagnostico.modal}` : ""}.` + (pendentes.length ? ` Campos obrigat\xF3rios pendentes: ${pendentes.join(", ")}.` : "") + (anexosVazios ? ` Caixas de anexo sem arquivo: ${anexosVazios}/${diagnostico.anexos.length}.` : "") + alertas;
   }
   var init_estadoGerid = __esm({
     "src/estadoGerid.ts"() {
@@ -616,12 +649,13 @@
     const ext = /\.[a-z0-9]+$/i.exec(nomeArquivo)?.[0]?.toLowerCase();
     return ext ? EXTENSOES_ACEITAS.includes(ext) : false;
   }
-  var SERVICO_BPC_PCD, RESPOSTAS_FIXAS, PERGUNTAS_PASSO7, RESPOSTA_BOLSA_FAMILIA, FORMA_CONVIVIO, ESTADO_CIVIL_PADRAO, ESTADOS_CIVIS_GERID, ESTADO_CIVIL_SEMPRE_PADRAO, GRUPOS_PARENTESCO_GERID, MAPA_PARENTESCO, SLOTS_GERID, EXTENSOES_ACEITAS, SLOT_GERID_POR_TIPO;
+  var PROTOCOLAR_AUTOMATICAMENTE, SERVICO_BPC_PCD, RESPOSTAS_FIXAS, PERGUNTAS_PASSO7, RESPOSTA_BOLSA_FAMILIA, FORMA_CONVIVIO, ESTADO_CIVIL_PADRAO, ESTADOS_CIVIS_GERID, ESTADO_CIVIL_SEMPRE_PADRAO, GRUPOS_PARENTESCO_GERID, MAPA_PARENTESCO, SLOTS_GERID, EXTENSOES_ACEITAS, SLOT_GERID_POR_TIPO;
   var init_regrasPreenchimento = __esm({
     "src/regrasPreenchimento.ts"() {
       "use strict";
       init_grupoFamiliar();
       init_texto();
+      PROTOCOLAR_AUTOMATICAMENTE = true;
       SERVICO_BPC_PCD = {
         id: "1655",
         rotulo: "Benef\xEDcio Assistencial \xE0 Pessoa com Defici\xEAncia"
@@ -760,6 +794,28 @@
     }
   });
 
+  // src/detectarProtocolo.ts
+  function detectarProtocoloEmTexto(texto) {
+    const normalizado = String(texto || "").replace(/\s+/g, " ").trim();
+    const padroes = [
+      /(?:n[uú]mero\s+d[oe]\s+)?protocolo\s*(?:gerado)?\s*[:#-]?\s*([0-9][0-9.\/-]{7,30})/i,
+      /(?:n[uú]mero\s+d[oe]\s+)?requerimento\s*[:#-]\s*([0-9][0-9.\/-]{7,30})/i,
+      /(?:n[uú]mero\s+d[oe]\s+)?pedido\s*[:#-]\s*([0-9][0-9.\/-]{7,30})/i
+    ];
+    for (const padrao of padroes) {
+      const encontrado = normalizado.match(padrao)?.[1];
+      if (!encontrado) continue;
+      const digitos = encontrado.replace(/\D/g, "");
+      if (digitos.length >= 8 && digitos.length <= 25) return encontrado.replace(/[.,;:]+$/, "");
+    }
+    return null;
+  }
+  var init_detectarProtocolo = __esm({
+    "src/detectarProtocolo.ts"() {
+      "use strict";
+    }
+  });
+
   // src/preencherGerid.ts
   async function executarEtapa(etapa, executar, relatarTempo) {
     const inicio = performance.now();
@@ -771,34 +827,249 @@
   }
   async function preencherRequerimento(page, caso, opcoes, relatarTempo = () => void 0) {
     const avisos = [];
-    await executarEtapa("1 - servico", () => passo1SelecionarServico(page), relatarTempo);
-    await executarEtapa("2 - requerente", () => passo2InformarRequerente(page, caso), relatarTempo);
-    await executarEtapa("3 - CadUnico", () => passo3AutorizacaoCadUnico(page), relatarTempo);
-    await executarEtapa("4 - grupo familiar", () => passo4GrupoFamiliar(page, caso, avisos), relatarTempo);
-    await executarEtapa("5/6 - declaracoes", () => passo5e6Perguntas(page, avisos), relatarTempo);
-    if (!await executarEtapa(
-      "7 - dados e anexos",
-      () => passo7DadosRequerente(page, caso, opcoes, avisos),
-      relatarTempo
-    )) {
-      return { pronto: false, telaAtual: "Dados do Requerente", avisos };
+    const etapas = [
+      {
+        id: "1 - servico",
+        marca: "passo_1",
+        tela: "Selecionar Servi\xE7o",
+        executar: () => passo1SelecionarServico(page)
+      },
+      {
+        id: "2 - requerente",
+        marca: "passo_2",
+        tela: "Informar Requerente",
+        executar: () => passo2InformarRequerente(page, caso)
+      },
+      {
+        id: "3 - CadUnico",
+        marca: "passo_3",
+        tela: "Autoriza\xE7\xE3o Cad\xDAnico",
+        executar: () => passo3AutorizacaoCadUnico(page)
+      },
+      {
+        id: "4 - grupo familiar",
+        marca: "passo_4",
+        tela: "Grupo Familiar",
+        executar: () => passo4GrupoFamiliar(page, caso, avisos)
+      },
+      // Uma função só responde às duas telas de perguntas (gastos e SUAS).
+      {
+        id: "5/6 - declaracoes",
+        marca: "passo_5",
+        ate: "passo_6",
+        tela: "Declara\xE7\xF5es",
+        executar: () => passo5e6Perguntas(page, avisos)
+      },
+      {
+        id: "7 - dados e anexos",
+        marca: "passo_7",
+        tela: "Dados do Requerente",
+        executar: () => passo7DadosRequerente(page, caso, opcoes, avisos)
+      },
+      // As etapas 8 e 9 usam os componentes reais do GERID: cards `.unidade` e
+      // municipio + radio de orgao pagador. Se o portal mudar esses contratos, o
+      // robo para na etapa afetada em vez de avancar com um campo vazio.
+      {
+        id: "8 - unidade",
+        marca: "passo_8",
+        tela: "Selecionar Unidade",
+        executar: () => passo8SelecionarUnidade(page, caso, avisos)
+      },
+      {
+        id: "9 - orgao pagador",
+        marca: "passo_9",
+        tela: "\xD3rg\xE3o Pagador",
+        executar: () => passo9OrgaoPagador(page, caso, avisos)
+      }
+    ];
+    for (const etapa of etapas) {
+      const onde = posicaoEtapa(detectarEstadoGerid().etapa);
+      if (onde > posicaoEtapa(etapa.ate ?? etapa.marca)) {
+        avisos.push(`Etapa "${etapa.tela}" j\xE1 estava preenchida no GERID \u2014 retomei sem refazer.`);
+        relatarTempo(`${etapa.id} (retomado)`, 0);
+        continue;
+      }
+      const resultado = await executarEtapa(etapa.id, etapa.executar, relatarTempo);
+      const jaAberto = pedidoJaEmAberto();
+      if (jaAberto) {
+        avisos.push(
+          `O GERID recusou refazer: ja existe o pedido ${jaAberto} em aberto para este CPF. Nao protocolei de novo - este e o numero do requerimento que ja esta la.`
+        );
+        return { pronto: true, telaAtual: "Comprovante", avisos, protocolo: jaAberto };
+      }
+      if (resultado === false) {
+        return { pronto: false, telaAtual: etapa.tela, avisos };
+      }
     }
-    if (!await executarEtapa(
-      "8 - unidade",
-      () => passo8SelecionarUnidade(page, caso, avisos),
-      relatarTempo
-    )) {
-      return { pronto: false, telaAtual: "Selecionar Unidade", avisos };
+    if (detectarEstadoGerid().etapa !== "comprovante") {
+      await esperarTela(page, /Confirmar|Declaro que li/i);
     }
-    if (!await executarEtapa(
-      "9 - orgao pagador",
-      () => passo9OrgaoPagador(page, caso, avisos),
+    const concluido = await executarEtapa(
+      "10 - confirmar e protocolar",
+      () => passo10ConfirmarEProtocolar(page, avisos),
       relatarTempo
-    )) {
-      return { pronto: false, telaAtual: "\xD3rg\xE3o Pagador", avisos };
+    );
+    return {
+      pronto: true,
+      telaAtual: concluido.protocolo ? "Comprovante" : "Confirmar",
+      avisos,
+      ...concluido.protocolo ? { protocolo: concluido.protocolo } : {},
+      ...concluido.comprovante ? { comprovante: concluido.comprovante } : {}
+    };
+  }
+  function extrairPedidoEmAberto(bruto) {
+    const texto = String(bruto || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return /pedido\s+(\d{6,})[^.]{0,40}?em aberto/i.exec(texto)?.[1] || "";
+  }
+  function vigiarPedidoEmAberto() {
+    pedidoAbertoLembrado = "";
+    observadorPedidoAberto?.disconnect();
+    observadorPedidoAberto = null;
+    if (typeof MutationObserver !== "function" || !document.body) return;
+    observadorPedidoAberto = new MutationObserver((mutacoes) => {
+      if (pedidoAbertoLembrado) return;
+      for (const mutacao of mutacoes) {
+        for (const no of Array.from(mutacao.addedNodes)) {
+          const achado = extrairPedidoEmAberto(no.textContent || "");
+          if (achado) {
+            pedidoAbertoLembrado = achado;
+            return;
+          }
+        }
+      }
+    });
+    observadorPedidoAberto.observe(document.body, { childList: true, subtree: true });
+  }
+  function pedidoJaEmAberto() {
+    const agora = extrairPedidoEmAberto(document.body?.innerText || "");
+    if (agora) pedidoAbertoLembrado = agora;
+    return pedidoAbertoLembrado;
+  }
+  function avisoInformativo(texto) {
+    return `${MARCA_INFORMATIVO}${texto}`;
+  }
+  function avisosQueImpedemProtocolo(avisos) {
+    return avisos.filter(
+      (aviso) => !aviso.startsWith(MARCA_INFORMATIVO) && AVISO_PENDENTE.test(aviso)
+    );
+  }
+  async function passo10ConfirmarEProtocolar(page, avisos) {
+    const nada = { protocolo: "", comprovante: "" };
+    const recusar = (motivo2) => {
+      console.log(`[P10] NAO PROTOCOLEI: ${motivo2}`);
+      avisos.push(motivo2);
+      return nada;
+    };
+    if (detectarEstadoGerid().etapa === "comprovante") {
+      const jaFeito = lerComprovante();
+      if (jaFeito.protocolo) {
+        console.log("[P10] comprovante ja estava na tela; nao confirmei de novo");
+        return jaFeito;
+      }
+      return recusar("A tela do comprovante est\xE1 aberta, mas n\xE3o consegui ler o n\xFAmero do protocolo nela.");
     }
-    await esperarTela(page, /Confirmar|Declaro que li/i);
-    return { pronto: true, telaAtual: "Confirmar", avisos };
+    if (!PROTOCOLAR_AUTOMATICAMENTE) {
+      return recusar("Preenchimento conclu\xEDdo. O protocolo autom\xE1tico est\xE1 desligado \u2014 confira a tela e conclua.");
+    }
+    console.log(`[P10] avisos acumulados ate aqui (${avisos.length}):`, JSON.stringify(avisos, null, 1));
+    const pendencias = avisosQueImpedemProtocolo(avisos);
+    if (pendencias.length) {
+      return recusar(
+        `N\xC3O protocolei: ficou ${pendencias.length} pend\xEAncia(s) para resolver antes \u2014 ${pendencias.join(" | ")}`
+      );
+    }
+    const reclamacoes = capturarDiagnosticoGerid().alertas.filter((alerta) => /obrigat|deve ser preenchid|necess[aá]ri|inv[aá]lid|erro|anexad|corrij|pendent/i.test(alerta));
+    if (reclamacoes.length) {
+      return recusar(`N\xC3O protocolei: o GERID est\xE1 reclamando na tela de confer\xEAncia \u2014 ${reclamacoes.join(" | ")}`);
+    }
+    const declaracao = visivel(page.locator(mapaGerid.passo10.declaracaoConfirmar)).first();
+    await declaracao.waitFor({ state: "visible" }).catch(() => void 0);
+    await garantirMarcado(declaracao).catch(() => void 0);
+    if (!await declaracao.isChecked().catch(() => false)) {
+      return recusar(
+        'N\xE3o consegui marcar "Declaro que li e concordo com as informa\xE7\xF5es acima". Marque na tela e conclua.'
+      );
+    }
+    console.log("[P10] declaracao marcada");
+    const protocoloAntes = lerComprovante().protocolo;
+    const avancarBotao = visivel(page.locator(NAVEGACAO.avancar)).first();
+    const ateHabilitar = Date.now() + 1e4;
+    while (Date.now() < ateHabilitar && !await avancarBotao.isEnabled().catch(() => false)) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    await avancarBotao.click();
+    console.log("[P10] avancar clicado; esperando o modal de confirmacao");
+    const modais = await confirmarModaisDoEnvio(page);
+    if (!modais.confirmou) {
+      return recusar("Cliquei em Avan\xE7ar mas nenhum modal de confirma\xE7\xE3o apareceu. Confirme na tela.");
+    }
+    console.log("[P10] confirmado no modal");
+    const limite = Date.now() + 6e4;
+    while (Date.now() < limite) {
+      const agora = lerComprovante();
+      if (agora.protocolo && agora.protocolo !== protocoloAntes) return agora;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (modais.agendamento) {
+      return recusar(
+        'O GERID exigiu o agendamento antes de finalizar: "' + modais.agendamento + '". Confirmei o aviso, mas o n\xFAmero do protocolo n\xE3o saiu \u2014 o agendamento precisa ser feito na tela.'
+      );
+    }
+    return recusar(
+      "Confirmei o envio, mas o GERID n\xE3o mostrou o n\xFAmero do protocolo em 60s. N\xC3O refa\xE7a o requerimento sem antes conferir na lista se ele j\xE1 foi protocolado."
+    );
+  }
+  async function confirmarModaisDoEnvio(page) {
+    const limite = Date.now() + 2e4;
+    let confirmou = false;
+    let agendamento = "";
+    while (Date.now() < limite) {
+      const achado = await page.evaluate(() => {
+        const norm = (valor) => (valor || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const naTela = (el) => {
+          if (!(el instanceof HTMLElement) || !el.isConnected) return false;
+          const estilo = window.getComputedStyle(el);
+          return estilo.display !== "none" && estilo.visibility !== "hidden" && el.getClientRects().length > 0;
+        };
+        let algumDialogo = false;
+        for (const dialogo of Array.from(document.querySelectorAll('[role="dialog"]'))) {
+          if (!naTela(dialogo)) continue;
+          algumDialogo = true;
+          const texto = dialogo.innerText || dialogo.textContent || "";
+          const t = norm(texto);
+          const botoes = Array.from(dialogo.querySelectorAll("button")).filter(naTela);
+          const confirmar = botoes.find((botao) => norm(botao.innerText) === "confirmar");
+          if (!confirmar) continue;
+          if (t.includes("atencao") && botoes.some((b) => norm(b.innerText) === "cancelar")) {
+            confirmar.click();
+            return { tipo: "atencao", texto: texto.trim().slice(0, 400), algumDialogo };
+          }
+          if (t.includes("requerimento ainda nao foi finalizado")) {
+            confirmar.click();
+            return { tipo: "agendamento", texto: texto.trim().slice(0, 400), algumDialogo };
+          }
+        }
+        return { tipo: "", texto: "", algumDialogo };
+      });
+      if (achado.tipo === "atencao") confirmou = true;
+      if (achado.tipo === "agendamento") {
+        confirmou = true;
+        agendamento = achado.texto;
+      }
+      if (achado.tipo) console.log("[P10] modal confirmado:", achado.tipo);
+      if (confirmou && !achado.tipo && !achado.algumDialogo) break;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    return { confirmou, agendamento };
+  }
+  function lerComprovante() {
+    const texto = (document.body?.innerText || "").replace(/\u00a0/g, " ");
+    return {
+      protocolo: detectarProtocoloEmTexto(texto) || "",
+      // Recorta a partir do título "Comprovante" para não arquivar o menu do
+      // portal junto; sem o título, guarda a tela toda em vez de perder o dado.
+      comprovante: (texto.split(/^\s*Comprovante\s*$/m)[1] || texto).trim().slice(0, 8e3)
+    };
   }
   function visivel(loc) {
     return loc;
@@ -863,6 +1134,25 @@
       while (Date.now() < limite) {
         if (await loc.isChecked().catch(() => false)) return;
         await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    if (id && !await loc.isChecked().catch(() => false)) {
+      const tag = document.getElementById(id)?.closest(".interaction-select");
+      if (tag) {
+        for (const tipo of ["mousedown", "mouseup", "click"]) {
+          tag.dispatchEvent(new MouseEvent(tipo, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            button: 0,
+            view: window
+          }));
+        }
+        const limite = Date.now() + 1e3;
+        while (Date.now() < limite) {
+          if (await loc.isChecked().catch(() => false)) return;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
       }
     }
     if (!await loc.isChecked().catch(() => false)) {
@@ -1006,50 +1296,76 @@
   async function ativarOpcaoCombobox(opcao) {
     await opcao.click();
   }
+  function diagCombobox(id, alvo, motivo2) {
+    const el = document.getElementById(id);
+    const lista = document.getElementById(`${id}-itens`);
+    const estilo = el ? window.getComputedStyle(el) : null;
+    console.log(
+      `[P4][combo] ${id} alvo="${alvo}" motivo=${motivo2} existe=${Boolean(el)} rects=${el?.getClientRects().length ?? -1} display=${estilo?.display} visibility=${estilo?.visibility} value="${el?.value ?? ""}" itens=${lista ? lista.querySelectorAll(".br-item").length : "sem-lista"}`
+    );
+  }
   async function escolherNoCombobox(page, idCombobox, rotuloDesejado, aceitarTextoAdicional = false) {
     const idNoSeletor = idCombobox.match(/\[id="([^"]+)"\]/)?.[1];
     const id = idNoSeletor ?? idCombobox.replace(/^#/, "");
     const combo = page.locator(`[id="${id}"]`);
-    if (!await combo.isVisible().catch(() => false)) return false;
+    if (!await combo.isVisible().catch(() => false)) {
+      diagCombobox(id, rotuloDesejado, "combo_nao_visivel");
+      return false;
+    }
     const alvo = normalizar(rotuloDesejado);
-    for (let tentativa = 0; tentativa < 2; tentativa++) {
-      if (await acionarControleReactNaPagina("combobox", id, rotuloDesejado)) {
-        if (await aguardarValorCombobox(combo, alvo, 1500)) return true;
-      }
-      if (tentativa === 0) {
-        await combo.click().catch(() => void 0);
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-    }
     const rotulos = page.locator(`[id="${id}-itens"] label`);
-    let total = await rotulos.count().catch(() => 0);
-    if (total === 0) {
-      await combo.click().catch(() => void 0);
-      const limite = Date.now() + 2e3;
-      while (total === 0 && Date.now() < limite) {
-        await new Promise((resolve) => setTimeout(resolve, 25));
-        total = await rotulos.count().catch(() => 0);
+    const limiteBusca = Date.now() + 12e3;
+    let total = 0;
+    let totalAnterior = -1;
+    let estavel = 0;
+    let ultimoClique = 0;
+    for (; ; ) {
+      total = await rotulos.count().catch(() => 0);
+      const legiveis = await page.evaluate(
+        (seletor) => Array.from(document.querySelectorAll(seletor)).filter((elemento) => (elemento.innerText || "").trim().length > 0).length,
+        `[id="${id}-itens"] label`
+      ).catch(() => 0);
+      if ((legiveis === 0 || total <= 1) && Date.now() - ultimoClique > 2e3) {
+        ultimoClique = Date.now();
+        await combo.click().catch(() => void 0);
       }
-    }
-    for (let i = 0; i < total; i++) {
-      const rotulo = rotulos.nth(i);
-      const texto = await rotulo.innerText().catch(() => "");
-      const textoNormalizado = normalizar(texto);
-      if (textoNormalizado === alvo || aceitarTextoAdicional && textoNormalizado.includes(alvo)) {
-        if (await acionarControleReactNaPagina("combobox", id, rotuloDesejado)) {
-          if (await aguardarValorCombobox(combo, alvo, 1e3)) return true;
+      for (let i = 0; i < total; i++) {
+        const rotulo = rotulos.nth(i);
+        const texto = await rotulo.innerText().catch(() => "");
+        const candidatos = [texto, ...texto.split("\n")].map((parte) => normalizar(parte)).filter(Boolean);
+        const casou = candidatos.some((candidato) => candidato === alvo || aceitarTextoAdicional && candidato.includes(alvo));
+        if (casou) {
+          await ativarOpcaoCombobox(rotulo).catch(() => void 0);
+          if (await aguardarValorCombobox(combo, alvo, 1e3)) {
+            diagCombobox(id, rotuloDesejado, "ok_clique_no_item");
+            return true;
+          }
+          const rid = await rotulo.getAttribute("for");
+          if (rid) {
+            const radio = page.locator(`[id="${id}-itens"] input[id="${cssEscape(rid)}"]`).first();
+            await radio.check({ force: true }).catch(() => void 0);
+            if (await aguardarValorCombobox(combo, alvo, 1e3)) {
+              diagCombobox(id, rotuloDesejado, "ok_radio");
+              return true;
+            }
+          }
+          if (await acionarControleReactNaPagina("combobox", id, rotuloDesejado)) {
+            if (await aguardarValorCombobox(combo, alvo, 1500)) {
+              diagCombobox(id, rotuloDesejado, "ok_react_ultimo_recurso");
+              return true;
+            }
+          }
+          diagCombobox(id, rotuloDesejado, `opcao_achada_mas_valor_nao_grudou (for=${rid})`);
+          return false;
         }
-        await ativarOpcaoCombobox(rotulo).catch(() => void 0);
-        if (await aguardarValorCombobox(combo, alvo, 150)) return true;
-        const rid = await rotulo.getAttribute("for");
-        if (rid) {
-          const radio = page.locator(`[id="${id}-itens"] input[id="${cssEscape(rid)}"]`).first();
-          await radio.check({ force: true }).catch(() => void 0);
-          if (await aguardarValorCombobox(combo, alvo, 2e3)) return true;
-        }
-        return false;
       }
+      if (total > 1 && legiveis > 0 && total === totalAnterior && ++estavel >= 3) break;
+      if (total !== totalAnterior) estavel = 0;
+      totalAnterior = total;
+      if (Date.now() >= limiteBusca) break;
+      await new Promise((resolve) => setTimeout(resolve, 150));
     }
+    diagCombobox(id, rotuloDesejado, `nenhum_rotulo_casou (total=${total})`);
     return false;
   }
   async function aguardarValorCombobox(combo, valorEsperado, timeoutMs) {
@@ -1063,44 +1379,187 @@
   function cssEscape(valor) {
     return valor.replace(/["\\]/g, "\\$&");
   }
-  async function comboPorPergunta(page, trechoPergunta) {
-    return page.evaluate((trecho) => {
-      const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      const alvo = norm(trecho);
-      const combos = Array.from(
-        document.querySelectorAll('[id^="ca-"]:not([id$="-itens"])')
-      );
-      for (const c of combos) {
-        let p = c.parentElement;
-        for (let h = 0; p && h < 6; h++, p = p.parentElement) {
-          const texto = norm(p.innerText || "");
-          if (texto.length > 10 && texto.length < 400 && texto.includes(alvo)) return c.id;
-        }
-      }
-      return null;
-    }, trechoPergunta);
+  async function campoPorPergunta(page, trechoPergunta, querCombobox, esperaMs = 2500) {
+    const limite = Date.now() + esperaMs;
+    for (; ; ) {
+      const achado = await buscarCampoPorPergunta(page, trechoPergunta, querCombobox);
+      if (achado || Date.now() >= limite) return achado;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
   }
-  async function inputPorPergunta(page, trechoPergunta) {
-    return page.evaluate((trecho) => {
-      const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  async function buscarCampoPorPergunta(page, trechoPergunta, querCombobox) {
+    return page.evaluate(({ trecho, combobox }) => {
+      const norm = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const ler = (el) => norm(el.innerText || el.textContent || "");
       const alvo = norm(trecho);
-      const inputs = Array.from(
-        document.querySelectorAll(
-          'input:not([role="combobox"]):not([type="file"]):not([type="checkbox"]):not([type="radio"])'
-        )
-      );
-      for (const input of inputs) {
+      if (!alvo) return null;
+      const naoTexto = ["file", "checkbox", "radio", "hidden", "submit", "button"];
+      const serve = (input) => combobox ? input.getAttribute("role") === "combobox" : input.getAttribute("role") !== "combobox" && !naoTexto.includes(input.type);
+      for (const bloco of Array.from(document.querySelectorAll('[id^="div-ca-"]'))) {
+        const rotulos = Array.from(bloco.querySelectorAll("label"));
+        const casado = rotulos.find((rotulo) => ler(rotulo).includes(alvo));
+        if (!casado) continue;
+        const porFor = casado.getAttribute("for");
+        const apontado = porFor ? document.getElementById(porFor) : null;
+        if (apontado instanceof HTMLInputElement && serve(apontado)) return apontado.id;
+        const input = Array.from(bloco.querySelectorAll("input")).find(serve);
+        if (input?.id) return input.id;
+      }
+      for (const input of Array.from(document.querySelectorAll("input"))) {
+        if (!input.id || !serve(input)) continue;
         let p = input.parentElement;
-        for (let h = 0; p && h < 5; h++, p = p.parentElement) {
-          const texto = norm(p.innerText || "");
-          if (texto.length > 3 && texto.length < 250 && texto.includes(alvo)) return input.id;
+        for (let h = 0; p && h < 6; h++, p = p.parentElement) {
+          const texto = ler(p);
+          if (texto.length > 3 && texto.length < 400 && texto.includes(alvo)) return input.id;
         }
       }
       return null;
-    }, trechoPergunta);
+    }, { trecho: trechoPergunta, combobox: querCombobox });
+  }
+  async function esperarPerguntasEstaveis(page, esperaMs = 1e4) {
+    const contar = () => page.evaluate(() => document.querySelectorAll('[id^="div-ca-"] input[role="combobox"]').length);
+    const limite = Date.now() + esperaMs;
+    let anterior = -1;
+    let estavel = 0;
+    let total = 0;
+    for (; ; ) {
+      total = await contar().catch(() => 0);
+      if (total > 0 && total === anterior && ++estavel >= 3) break;
+      if (total !== anterior) estavel = 0;
+      anterior = total;
+      if (Date.now() >= limite) break;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    console.log(`[P7] perguntas estaveis: ${total} combo(s)`);
+    return total;
+  }
+  async function campoCpfProcurador(page, esperaMs = 8e3) {
+    const procurar = async () => {
+      for (const rotulo of ["CPF do Procurador", "CPF Procurador", "CPF do(a) Procurador"]) {
+        const id = await inputPorPergunta(page, rotulo);
+        if (id) return id;
+      }
+      const generico = await page.evaluate(() => {
+        const norm = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const ler = (el) => norm(el.innerText || el.textContent || "");
+        const naoTexto = ["file", "checkbox", "radio", "hidden", "submit", "button"];
+        const outroDono = ["requerente", "interessado", "titular", "representante legal"];
+        for (const input of Array.from(document.querySelectorAll("input"))) {
+          if (!input.id || input.disabled || input.getAttribute("role") === "combobox") continue;
+          if (naoTexto.includes(input.type)) continue;
+          const proprio = norm([
+            document.querySelector(`label[for="${CSS.escape(input.id)}"]`)?.textContent || "",
+            input.getAttribute("aria-label") || "",
+            input.getAttribute("placeholder") || "",
+            input.name || ""
+          ].join(" "));
+          if (!proprio.includes("cpf")) continue;
+          if (outroDono.some((dono) => proprio.includes(dono))) continue;
+          let bloco = input.parentElement;
+          for (let altura = 0; bloco && altura < 6; altura++, bloco = bloco.parentElement) {
+            if (ler(bloco).includes("procurador")) return input.id;
+          }
+        }
+        return null;
+      });
+      if (generico) return generico;
+      return page.evaluate(() => {
+        const norm = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const ler = (el) => el ? norm(el.innerText || el.textContent || "") : "";
+        const naoTexto = ["file", "checkbox", "radio", "hidden", "submit", "button"];
+        const identidade = (input) => norm([
+          document.querySelector(`label[for="${CSS.escape(input.id)}"]`)?.textContent || "",
+          input.getAttribute("aria-label") || "",
+          input.getAttribute("placeholder") || "",
+          input.name || ""
+        ].join(" "));
+        for (const bloco of Array.from(document.querySelectorAll('[id^="div-ca-"]'))) {
+          if (!ler(bloco.querySelector("label")).includes("procurador")) continue;
+          const candidatos = Array.from(bloco.querySelectorAll("input")).filter((input) => input.id && !input.disabled && !input.readOnly && input.getAttribute("role") !== "combobox" && !naoTexto.includes(input.type) && input.getClientRects().length > 0);
+          const porNome = candidatos.find((input) => identidade(input).includes("cpf"));
+          if (porNome) return porNome.id;
+          if (candidatos.length === 1 && ler(bloco).includes("cpf")) return candidatos[0].id;
+        }
+        return null;
+      });
+    };
+    const limite = Date.now() + esperaMs;
+    for (; ; ) {
+      const id = await procurar();
+      if (id) return id;
+      if (Date.now() >= limite) return null;
+      await new Promise((resolva) => setTimeout(resolva, 250));
+    }
+  }
+  async function pistasDoProcurador(page) {
+    return page.evaluate(() => {
+      const norm = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const ler = (el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+      const pistas = /* @__PURE__ */ new Set();
+      for (const bloco of Array.from(document.querySelectorAll('[id^="div-ca-"]'))) {
+        const rotulo = bloco.querySelector("label");
+        if (!rotulo || !norm(ler(rotulo)).includes("deseja cadastrar procurador")) continue;
+        const campos = Array.from(bloco.querySelectorAll("input"));
+        const combo = campos.find((c) => c.getAttribute("role") === "combobox");
+        pistas.add(`resposta atual: "${combo?.value || "(vazio)"}"`);
+        pistas.add(`campos no bloco da pergunta: ${campos.length}`);
+        for (const campo of campos) {
+          if (campo === combo) continue;
+          const marca = campo.id ? document.querySelector(`label[for="${CSS.escape(campo.id)}"]`) : null;
+          const rotulo2 = marca ? ler(marca) : campo.getAttribute("aria-label") || campo.getAttribute("placeholder") || "";
+          pistas.add(
+            `campo ${campo.type || "text"}${campo.getClientRects().length ? "" : " OCULTO"}${campo.maxLength > 0 ? ` max=${campo.maxLength}` : ""} "${rotulo2.slice(0, 40)}" ${campo.value ? "preenchido" : "vazio"}`
+          );
+        }
+        for (const rotulo2 of Array.from(bloco.querySelectorAll("label")).slice(1)) {
+          pistas.add(`rotulo interno: "${ler(rotulo2).slice(0, 60)}"`);
+        }
+        console.log("[P7] bloco do procurador:", bloco.outerHTML.slice(0, 4e3));
+      }
+      for (const bloco of Array.from(document.querySelectorAll('[id^="div-ca-"]'))) {
+        const naoTexto = ["file", "checkbox", "radio", "hidden", "submit", "button"];
+        const vazio = Array.from(bloco.querySelectorAll("input")).some((campo) => campo.getAttribute("role") !== "combobox" && !naoTexto.includes(campo.type) && !campo.value);
+        if (!vazio) continue;
+        pistas.add(`vazio em: "${ler(bloco.querySelector("label") || bloco).slice(0, 50)}"`);
+      }
+      for (const el of Array.from(document.querySelectorAll("body *"))) {
+        if (el.children.length > 2 || el.getClientRects().length === 0) continue;
+        const texto = ler(el);
+        if (!texto || texto.length > 90 || !norm(texto).includes("procurador")) continue;
+        pistas.add(`${el.tagName.toLowerCase()}: "${texto.slice(0, 70)}"`);
+      }
+      const acoes = 'button, a[role="button"], .br-button, [aria-label]';
+      for (const el of Array.from(document.querySelectorAll(acoes))) {
+        if (el.getClientRects().length === 0) continue;
+        const nome = (ler(el) || el.getAttribute("aria-label") || "").trim();
+        if (!nome || nome.length > 60) continue;
+        if (/adicionar|incluir|novo|buscar|pesquisar|vincular|interessad/i.test(nome)) {
+          pistas.add(`acao: "${nome.slice(0, 50)}"`);
+        }
+      }
+      return Array.from(pistas).slice(0, 14);
+    });
+  }
+  async function fecharAvisosSobrepostos(page) {
+    return page.evaluate(() => {
+      const norm = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const fechados = [];
+      for (const modal of Array.from(document.querySelectorAll('[role="dialog"]'))) {
+        if (modal.getClientRects().length === 0) continue;
+        const texto = norm(modal.innerText || modal.textContent || "");
+        if (texto.includes("tipo de contato") || texto.includes("contatos")) continue;
+        const conhecido = texto.includes("deseja visualizar esta tarefa") || texto.includes("cpf do requerente");
+        if (!conhecido) continue;
+        const fechar = Array.from(modal.querySelectorAll("button")).find((botao) => norm(botao.innerText || botao.textContent || "") === "fechar");
+        if (!fechar) continue;
+        fechar.click();
+        fechados.push(texto.slice(0, 120));
+      }
+      return fechados;
+    });
   }
   async function responderPergunta(page, trechoPergunta, resposta, avisos, opcional = false) {
-    const id = await comboPorPergunta(page, trechoPergunta);
+    const id = await comboPorPergunta(page, trechoPergunta, opcional ? 400 : 2500);
     if (!id) {
       if (!opcional) {
         avisos.push(`N\xE3o encontrei a pergunta "${trechoPergunta}" \u2014 responda manualmente.`);
@@ -1164,18 +1623,15 @@
       );
     }
     await avancar(page, "passo_2");
-    await verificarBloqueioDePedidoAberto(page);
+    verificarBloqueioDePedidoAberto();
   }
-  async function verificarBloqueioDePedidoAberto(page) {
-    const alerta = page.locator('[role="alert"]');
-    if (!await alerta.isVisible().catch(() => false)) return;
-    const mensagem = await alerta.innerText().catch(() => "");
-    if (/n..o e poss.vel continuar|pedido\s+\d+\s+.*em aberto/i.test(mensagem)) {
-      throw new ErroGerid(
-        FalhaGerid.ERRO_PREENCHIMENTO,
-        `O GERID bloqueou este requerente por existir pedido em aberto. ${mensagem}`
-      );
-    }
+  function verificarBloqueioDePedidoAberto() {
+    const numero = pedidoJaEmAberto();
+    if (!numero) return;
+    throw new ErroGerid(
+      FalhaGerid.ERRO_PREENCHIMENTO,
+      `O GERID bloqueou este requerente: o pedido ${numero} ainda esta em aberto. Nao refiz o requerimento.`
+    );
   }
   async function passo3AutorizacaoCadUnico(page) {
     const check = visivel(page.locator(mapaGerid.passo3.autorizacaoCadUnico)).first();
@@ -1200,24 +1656,14 @@
     const titularPlanilha = porCpf.get(cpfRequerente) ?? caso.grupoFamiliar.integrantes.find(
       (i) => ["titular", "requerente"].includes(normalizar(i.parentesco ?? ""))
     );
-    const linhas = await page.evaluate(() => {
-      const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
-      const out = [];
-      for (let i = 0; i < 40; i++) {
-        const ec = document.getElementById(`selectEstadoCivil${i}`);
-        if (!ec) break;
-        const tr = ec.closest("tr");
-        const primeiraCelula = tr?.querySelector("td");
-        const digitos = norm(primeiraCelula?.innerText || "").replace(/\D/g, "");
-        const cpf = digitos.length === 10 ? digitos.padStart(11, "0") : digitos;
-        const ehRequerente = !document.getElementById(`selectParentesco${i}`);
-        out.push({ indice: i, cpf, ehRequerente });
-      }
-      return out;
-    });
+    const linhas = await lerLinhasGrupoFamiliar(page);
+    console.log(
+      `[P4] linhas detectadas=${linhas.length} ${JSON.stringify(linhas)} | integrantes na planilha=${caso.grupoFamiliar.integrantes.length}`
+    );
     if (linhas.length === 0) {
       avisos.push("O GERID n\xE3o listou nenhum integrante do grupo familiar \u2014 confira o Cad\xDAnico.");
     }
+    const falhas = [];
     const vistos = /* @__PURE__ */ new Set();
     for (const linha of linhas) {
       const ehRequerente = linha.ehRequerente;
@@ -1262,42 +1708,125 @@
         avisos.push(`CPF ${linha.cpf}: parentesco "${parentescoPlanilha}" ${decisao}. Confira antes de concluir.`);
       }
     }
+    await aguardarGrupoFamiliarEstavel(page, caso.grupoFamiliar.integrantes.length);
+    const linhasFinais = await lerLinhasGrupoFamiliar(page);
+    if (linhasFinais.length !== linhas.length) {
+      avisos.push(
+        `O GERID mudou a tabela do grupo familiar durante o preenchimento (${linhas.length} -> ${linhasFinais.length} linhas). Confira antes de concluir.`
+      );
+    }
+    const valorNaTela = (id) => document.getElementById(id)?.value.trim() ?? null;
+    for (const linha of linhasFinais) {
+      const integrante = (linha.cpf ? porCpf.get(linha.cpf) : void 0) ?? (linha.ehRequerente ? titularPlanilha : void 0);
+      if (valorNaTela(`selectEstadoCivil${linha.indice}`) === "") {
+        const alvo = estadoCivilGerid(integrante?.estadoCivil);
+        if (!await escolherNoCombobox(page, mapaGerid.passo4.estadoCivil(linha.indice), alvo)) {
+          falhas.push(`selectEstadoCivil${linha.indice} ("${alvo}")`);
+        }
+      }
+      if (valorNaTela(`selectParentesco${linha.indice}`) === "") {
+        const alvo = mapearParentesco(integrante?.parentesco ?? "").grupo ?? "";
+        if (!await escolherNoCombobox(page, mapaGerid.passo4.parentesco(linha.indice), alvo)) {
+          falhas.push(`selectParentesco${linha.indice} ("${alvo}")`);
+        }
+      }
+    }
+    console.log(
+      `[P4] confer\xEAncia final: ${linhasFinais.length} linha(s) ${JSON.stringify(linhasFinais)}`
+    );
     for (const cpf of porCpf.keys()) {
       if (!vistos.has(cpf)) {
         avisos.push(`CPF ${cpf} est\xE1 na planilha mas o GERID n\xE3o listou \u2014 diverg\xEAncia com o Cad\xDAnico.`);
       }
     }
-    const nao = visivel(page.locator(mapaGerid.passo4.incluirExcluirNao)).first();
-    if (await existeInputNoDom(nao)) {
-      await garantirMarcado(nao);
-    } else {
-      const alt = visivel(page.getByLabel(/^N.o$/i)).last();
-      if (await existeInputNoDom(alt)) await garantirMarcado(alt);
-      else avisos.push('N\xE3o achei a op\xE7\xE3o "N\xE3o" de incluir/excluir integrante \u2014 marque manualmente.');
+    const limiteNao = Date.now() + 1e4;
+    while (Date.now() < limiteNao && !document.getElementById("undefined-Nao")) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const estaMarcado = () => Boolean(
+      document.getElementById("undefined-Nao")?.checked
+    );
+    let naoMarcado = estaMarcado();
+    for (let tentativa = 0; tentativa < 3 && !naoMarcado; tentativa++) {
+      const nao = visivel(page.locator(mapaGerid.passo4.incluirExcluirNao)).first();
+      if (await existeInputNoDom(nao)) {
+        await garantirMarcado(nao);
+      } else {
+        const alt = visivel(page.getByLabel(/^N.o$/i)).last();
+        if (await existeInputNoDom(alt)) {
+          await garantirMarcado(alt);
+        } else {
+          avisos.push('N\xE3o achei a op\xE7\xE3o "N\xE3o" de incluir/excluir integrante \u2014 marque manualmente.');
+          break;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      naoMarcado = estaMarcado();
+      console.log(`[P4] incluir/excluir "N\xE3o" tentativa=${tentativa} marcado=${naoMarcado}`);
+    }
+    console.log(`[P4] incluir/excluir "N\xE3o" marcado=${naoMarcado} | falhas=${JSON.stringify(falhas)}`);
+    if (!naoMarcado) falhas.push('undefined-Nao (incluir/excluir = "N\xE3o")');
+    if (falhas.length > 0) {
+      throw new ErroGerid(
+        FalhaGerid.ERRO_PREENCHIMENTO,
+        `N\xE3o consegui preencher no Grupo Familiar: ${falhas.join(", ")}. Os valores existem na tela, ent\xE3o \xE9 falha de acionamento \u2014 veja as linhas [P4] no console.`
+      );
     }
     await avancar(page, "passo_4");
   }
+  function lerLinhasGrupoFamiliar(page) {
+    return page.evaluate(() => {
+      const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+      const out = [];
+      for (let i = 0; i < 40; i++) {
+        const ec = document.getElementById(`selectEstadoCivil${i}`);
+        if (!ec) break;
+        const tr = ec.closest("tr");
+        const primeiraCelula = tr?.querySelector("td");
+        const digitos = norm(primeiraCelula?.innerText || "").replace(/\D/g, "");
+        const cpf = digitos.length === 10 ? digitos.padStart(11, "0") : digitos;
+        const ehRequerente = !document.getElementById(`selectParentesco${i}`);
+        out.push({ indice: i, cpf, ehRequerente });
+      }
+      return out;
+    });
+  }
+  function assinaturaGrupoFamiliar(page) {
+    return page.evaluate(() => {
+      const combos = Array.from(
+        document.querySelectorAll('input[id^="selectEstadoCivil"]')
+      ).filter((combo) => /^selectEstadoCivil\d+$/.test(combo.id));
+      return combos.map((combo) => {
+        const linha = combo.closest("tr");
+        const cpf = linha?.querySelector("td")?.innerText.replace(/\D/g, "") ?? "";
+        const indice = combo.id.replace("selectEstadoCivil", "");
+        const temParentesco = Boolean(document.getElementById(`selectParentesco${indice}`));
+        return `${combo.id}:${cpf}:${temParentesco ? "p" : "-"}`;
+      }).join("|");
+    });
+  }
   async function aguardarGrupoFamiliarEstavel(page, totalEsperado) {
-    const limite = Date.now() + 5e3;
+    const limite = Date.now() + 2e4;
     let assinaturaAnterior = "";
-    let estavelDesde = 0;
+    let estavelDesde = Date.now();
     while (Date.now() < limite) {
-      const atual = await page.evaluate(() => {
-        const controles = Array.from(document.querySelectorAll('[id^="selectEstadoCivil"]'));
-        return controles.map((controle) => {
-          const linha = controle.closest("tr");
-          const cpf = linha?.querySelector("td")?.innerText.replace(/\D/g, "") ?? "";
-          return `${controle.id}:${cpf}`;
-        }).join("|");
-      });
+      const atual = await assinaturaGrupoFamiliar(page);
       const totalAtual = atual ? atual.split("|").length : 0;
       if (atual !== assinaturaAnterior) {
         assinaturaAnterior = atual;
         estavelDesde = Date.now();
       }
-      if (totalAtual >= Math.max(1, totalEsperado) && Date.now() - estavelDesde >= 250) return;
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      const parado = Date.now() - estavelDesde;
+      const completa = totalAtual >= Math.max(1, totalEsperado);
+      if (totalAtual > 0 && parado >= (completa ? 700 : 3e3)) {
+        console.log(`[P4] tabela est\xE1vel: ${totalAtual} linha(s) | ${atual}`);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
+    console.log(
+      `[P4] tabela N\xC3O estabilizou em 20s. \xDAltima leitura: ${assinaturaAnterior || "(vazia)"}`
+    );
   }
   async function passo5e6Perguntas(page, avisos) {
     await marcarNaoSimples(page, avisos, "Comprometimento de Renda");
@@ -1320,6 +1849,9 @@
   }
   async function passo7DadosRequerente(page, caso, opcoes, avisos) {
     await esperarTela(page, /Dados Adicionais|Interessados/i);
+    for (const fechado of await fecharAvisosSobrepostos(page)) {
+      console.log(`[P7] aviso sobreposto fechado: ${fechado}`);
+    }
     const telefone = caso.cliente.telefone?.trim() || opcoes.telefonePadrao;
     const celularConfirmado = await adicionarContato(page, "Celular", telefone, avisos);
     const emailConfirmado = await adicionarContato(page, "E-mail", opcoes.emailEscritorio, avisos);
@@ -1330,6 +1862,8 @@
       avisos.push('N\xE3o achei a op\xE7\xE3o "Sim" para acompanhar o processo \u2014 marque manualmente.');
       return false;
     }
+    await fecharAvisosSobrepostos(page);
+    await esperarPerguntasEstaveis(page);
     await responderPergunta(page, PERGUNTAS_PASSO7.estrangeiro, RESPOSTAS_FIXAS.estrangeiro, avisos);
     await responderPergunta(
       page,
@@ -1381,40 +1915,61 @@
       );
       return false;
     }
-    const cpfProcId = await inputPorPergunta(page, "CPF do Procurador");
-    if (cpfProcId) {
-      const cpfProcurador = visivel(page.locator(`[id="${cssEscape(cpfProcId)}"]`)).first();
-      await cpfProcurador.fill(apenasDigitos(opcoes.procuradorCpf));
-      if (apenasDigitos(await cpfProcurador.inputValue().catch(() => "")) !== apenasDigitos(opcoes.procuradorCpf)) {
-        avisos.push("O GERID n\xE3o confirmou o CPF do procurador \u2014 preencha manualmente.");
-        return false;
+    let cpfProcId = await campoCpfProcurador(page);
+    if (!cpfProcId) {
+      const idPergunta = await comboPorPergunta(page, "Deseja cadastrar Procurador");
+      const antes = idPergunta ? await visivel(page.locator(`[id="${cssEscape(idPergunta)}"]`)).first().inputValue().catch(() => "") : "";
+      if (antes.trim()) {
+        console.log("[P7] campo do CPF nao montado; repetindo a resposta", JSON.stringify(antes));
+        await escolherNoCombobox(page, idPergunta, antes.trim()).catch(() => false);
+        const depois = await visivel(page.locator(`[id="${cssEscape(idPergunta)}"]`)).first().inputValue().catch(() => "");
+        if (!depois.trim()) {
+          avisos.push(`A pergunta "Deseja cadastrar Procurador para este pedido?" ficou em branco \u2014 responda "${antes.trim()}" na tela.`);
+        }
+        cpfProcId = await campoCpfProcurador(page, 4e3);
       }
-    } else {
-      avisos.push('Campo "CPF do Procurador" n\xE3o encontrado \u2014 preencha manualmente.');
-      return false;
+    }
+    let cpfProcuradorPendente = "";
+    const preencherCpfProcurador = async (id) => {
+      const campo = visivel(page.locator(`[id="${cssEscape(id)}"]`)).first();
+      await campo.fill(apenasDigitos(opcoes.procuradorCpf));
+      return apenasDigitos(await campo.inputValue().catch(() => "")) === apenasDigitos(opcoes.procuradorCpf) ? "" : "o GERID n\xE3o aceitou o CPF do procurador que digitei";
+    };
+    if (cpfProcId) {
+      cpfProcuradorPendente = await preencherCpfProcurador(cpfProcId);
+      console.log("[P7] CPF do procurador preenchido em", cpfProcId);
     }
     const ciencias = visivel(page.locator('input[type="checkbox"][id^="campo-"]'));
     const totalCiencias = await contarAnexados(ciencias).catch(() => 0);
     for (let i = 0; i < totalCiencias; i++) {
       await garantirMarcado(ciencias.nth(i));
     }
+    const anexosConfirmados = await anexarDocumentos(page, opcoes, avisos);
+    const anexosObrigatoriosAusentes = SLOTS_GERID.filter((slot) => slot.obrigatorio && !anexosConfirmados.has(slot.rotulo)).map((slot) => slot.rotulo);
+    if (!cpfProcId) {
+      cpfProcId = await campoCpfProcurador(page, 15e3);
+      if (cpfProcId) {
+        cpfProcuradorPendente = await preencherCpfProcurador(cpfProcId);
+        console.log("[P7] CPF do procurador so apareceu depois dos anexos:", cpfProcId);
+      } else {
+        const pistas = await pistasDoProcurador(page).catch(() => []);
+        console.log("[P7] campo do CPF do procurador nao encontrado. Na tela:", pistas);
+        cpfProcuradorPendente = 'n\xE3o achei o campo "CPF do Procurador" na tela' + (pistas.length ? ` (o que h\xE1 nela: ${pistas.slice(0, 10).join(" \xB7 ")})` : "");
+      }
+    }
+    const bloqueios = [];
+    if (cpfProcuradorPendente) bloqueios.push(cpfProcuradorPendente);
     const perguntasPendentes = listarPerguntasObrigatoriasPendentes();
     if (perguntasPendentes.length) {
-      avisos.push(
-        `O GERID deixou ${perguntasPendentes.length} pergunta(s) obrigat\xF3ria(s) sem resposta: ` + perguntasPendentes.join(" | ")
-      );
-      return false;
-    }
-    await anexarDocumentos(page, opcoes, avisos);
-    const slotsObrigatorios = SLOTS_GERID.filter((slot) => slot.obrigatorio);
-    const anexosObrigatoriosAusentes = [];
-    for (const slot of slotsObrigatorios) {
-      const input = page.locator(mapaGerid.passo7.inputArquivo).nth(slot.indice);
-      const quantidade = await input.evaluate((elemento) => elemento.files?.length ?? 0).catch(() => 0);
-      if (quantidade === 0) anexosObrigatoriosAusentes.push(slot.rotulo);
+      bloqueios.push(`${perguntasPendentes.length} pergunta(s) obrigat\xF3ria(s): ${perguntasPendentes.join(" | ")}`);
     }
     if (anexosObrigatoriosAusentes.length) {
-      avisos.push(`Anexos obrigat\xF3rios n\xE3o confirmados: ${anexosObrigatoriosAusentes.join(" | ")}`);
+      bloqueios.push(`anexo(s) obrigat\xF3rio(s): ${anexosObrigatoriosAusentes.join(" | ")}`);
+    }
+    if (bloqueios.length) {
+      avisos.push(
+        `Preenchi e anexei o resto do passo 7. Falta ${bloqueios.join(" e ")} \u2014 complete na tela e clique em Avan\xE7ar.`
+      );
       return false;
     }
     await avancar(page, "passo_7");
@@ -1450,7 +2005,33 @@
       operacao = `preencher o valor de ${tipo}`;
       const campoValor = visivel(page.locator(mapaGerid.passo7.valorContato)).first();
       await campoValor.waitFor({ state: "visible", timeout: 3e3 });
-      await campoValor.fill(valor);
+      const seletorValor = mapaGerid.passo7.valorContato;
+      const limiteHabilitar = Date.now() + 4e3;
+      let habilitado = false;
+      while (!habilitado && Date.now() < limiteHabilitar) {
+        habilitado = await page.evaluate((sel) => {
+          const el = document.querySelector(sel);
+          return Boolean(el) && !el.disabled && !el.readOnly;
+        }, seletorValor);
+        if (!habilitado) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      if (!habilitado) {
+        throw new Error(
+          `o campo Valor continuou bloqueado \u2014 o GERID n\xE3o registrou o tipo "${tipo}" no combobox (o texto apareceu, mas a sele\xE7\xE3o n\xE3o).`
+        );
+      }
+      let escreveu = false;
+      for (let tentativa = 0; tentativa < 4 && !escreveu; tentativa++) {
+        await campoValor.fill(valor);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        escreveu = (await campoValor.inputValue().catch(() => "")).trim() !== "";
+        console.log(`[P7] valor ${tipo} tentativa=${tentativa} sobreviveu=${escreveu}`);
+      }
+      if (!escreveu) {
+        throw new Error(
+          `o valor n\xE3o ficou no campo \u2014 o React do GERID apagou "${valor}" logo depois de escrito.`
+        );
+      }
       operacao = `adicionar o contato ${tipo}`;
       const limiteBotao = Date.now() + 2e3;
       let adicionou = false;
@@ -1466,7 +2047,12 @@
         confirmou = await contatoExisteNoDialogo(page, tipo, valor);
         if (!confirmou) await new Promise((resolve) => setTimeout(resolve, 25));
       }
-      if (!confirmou) throw new Error(`O GERID n\xE3o exibiu o contato ${tipo} depois de adicionar.`);
+      if (!confirmou) {
+        const reclamacao = await mensagensDoDialogoContatos(page);
+        throw new Error(
+          `O GERID n\xE3o exibiu o contato ${tipo} depois de adicionar.` + (reclamacao ? ` Ele reclamou: "${reclamacao}".` : "")
+        );
+      }
       operacao = "fechar a janela de contatos";
       if (!await clicarBotaoContatos(page, "Fechar")) {
         throw new Error("bot\xE3o Fechar n\xE3o encontrado dentro da janela");
@@ -1496,27 +2082,150 @@
       return true;
     }, { textoBotao: rotulo });
   }
+  async function mensagensDoDialogoContatos(page) {
+    return page.evaluate(() => {
+      const seletores = [
+        ".feedback",
+        ".br-message",
+        '[role="alert"]',
+        ".invalid-feedback",
+        ".text-danger",
+        ".is-invalid ~ .feedback",
+        ".error, .erro"
+      ].join(", ");
+      const visivel2 = (el) => el.getClientRects().length > 0;
+      const limpar = (el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+      const pareceReclamacao = (texto) => {
+        const t = texto.toLowerCase();
+        if (!t || t.length > 300) return false;
+        if (/mb\b|kb\b|megabyte|extens|formato aceito|comprobat/.test(t)) return false;
+        return /obrigat|inval|inv[aá]lid|deve ser|n[aã]o foi poss|n[aã]o p[oô]de|erro|falh|preench|j[aá] (existe|cadastrad)|duplicad|permitid/.test(t);
+      };
+      const modais = Array.from(
+        document.querySelectorAll('#contatos, .br-modal, [role="dialog"]')
+      ).filter(visivel2);
+      const colher = (raizes) => {
+        const vistos = /* @__PURE__ */ new Set();
+        for (const raiz of raizes) {
+          for (const el of Array.from(raiz.querySelectorAll(seletores))) {
+            if (!visivel2(el)) continue;
+            const texto = limpar(el);
+            if (pareceReclamacao(texto)) vistos.add(texto);
+          }
+        }
+        return Array.from(vistos).slice(0, 3).join(" | ");
+      };
+      return colher(modais) || colher([document.body]);
+    });
+  }
   async function contatoExisteNoDialogo(page, tipo, valor) {
     return page.evaluate(({ tipoEsperado, valorEsperado }) => {
-      const normalizarTexto = (entrada) => entrada.replace(/\s+/g, " ").trim().toLowerCase();
-      const soDigitos = (entrada) => entrada.replace(/\D/g, "");
-      const contatos = document.querySelector("#contatos");
-      if (!contatos) return false;
-      return Array.from(contatos.querySelectorAll("tbody tr")).some((linha) => {
-        const texto = normalizarTexto(linha.innerText);
-        const tipoOk = texto.includes(normalizarTexto(tipoEsperado));
-        const valorOk = tipoEsperado.toLowerCase().includes("mail") ? texto.includes(normalizarTexto(valorEsperado)) : soDigitos(texto).includes(soDigitos(valorEsperado));
-        return tipoOk && valorOk;
-      });
+      const soAlfanumerico = (entrada) => (entrada || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const soDigitos = (entrada) => (entrada || "").replace(/\D/g, "");
+      const familias = [
+        ["celular", "telefonecelular", "movel", "telefonemovel"],
+        ["email", "correioeletronico", "eletronico"],
+        ["telefonecomercial", "comercial", "telefonetrabalho"],
+        ["telefoneresidencial", "residencial", "fixo", "telefone"]
+      ];
+      const familiaDe = (chave) => familias.find((f) => f.includes(chave));
+      const tipoChave = soAlfanumerico(tipoEsperado);
+      const apelidos = familiaDe(tipoChave) ?? [tipoChave];
+      const ehEmail = valorEsperado.includes("@") || tipoChave.includes("mail");
+      const digitosEsperados = soDigitos(valorEsperado);
+      const fim = digitosEsperados.slice(-8);
+      const emailEsperado = soAlfanumerico(valorEsperado);
+      const bate = (bruto) => {
+        const chave = soAlfanumerico(bruto);
+        const tipoOk = apelidos.some((apelido) => chave.includes(apelido));
+        if (!tipoOk) return false;
+        if (ehEmail) return chave.includes(emailEsperado);
+        const digitos = soDigitos(bruto);
+        return Boolean(fim) && digitos.includes(fim);
+      };
+      const raizes = [
+        document.querySelector("#contatos"),
+        ...Array.from(document.querySelectorAll('.br-modal, [role="dialog"]')),
+        document.body
+      ].filter((el) => Boolean(el));
+      for (const raiz of raizes) {
+        const linhas = Array.from(raiz.querySelectorAll("tbody tr, tr, li"));
+        if (linhas.some((linha) => bate(linha.innerText || linha.textContent || ""))) return true;
+      }
+      return false;
     }, { tipoEsperado: tipo, valorEsperado: valor });
   }
+  async function entregarAnexo(alvo, pacote) {
+    const compactar = (texto) => (texto || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+    const nomes = pacote.map((arquivo) => arquivo.nome).filter(Boolean);
+    const lerCaixa = async () => await alvo.evaluate((elemento) => {
+      const caixa = elemento.closest(".containerAnexo");
+      if (!caixa) return { texto: "", remocao: false };
+      const remocao = Array.from(caixa.querySelectorAll('button, a, [role="button"]')).some((controle) => {
+        if (!controle.getClientRects().length) return false;
+        const rotulo = [
+          controle.getAttribute("aria-label"),
+          controle.getAttribute("title"),
+          controle.textContent
+        ].join(" ").toLowerCase();
+        return rotulo.includes("excluir") || rotulo.includes("remover");
+      });
+      return { texto: caixa.textContent || "", remocao };
+    }).catch(() => ({ texto: "", remocao: false }));
+    const inicial = await lerCaixa();
+    const antes = compactar(inicial.texto);
+    if (inicial.remocao) return { registrado: true, via: "ja-estava", detalhe: "" };
+    const assinaturas = nomes.map((nome) => compactar(nome).toLowerCase().slice(0, 12)).filter(Boolean);
+    const uteis = assinaturas.filter((assinatura) => !antes.toLowerCase().includes(assinatura));
+    const soONovo = (agora) => (agora.startsWith(antes) ? agora.slice(antes.length) : agora).trim();
+    const conferir = async () => {
+      const limite = Date.now() + 2500;
+      let novidade = "";
+      while (Date.now() < limite) {
+        const agora = await lerCaixa();
+        novidade = soONovo(compactar(agora.texto));
+        const confere = agora.remocao || (uteis.length ? uteis.every((assinatura) => novidade.toLowerCase().includes(assinatura)) : Boolean(novidade));
+        if (confere) return { mudou: true, confere: true, novidade };
+        await new Promise((resolva) => setTimeout(resolva, 150));
+      }
+      return { mudou: Boolean(novidade), confere: false, novidade };
+    };
+    await alvo.setInputFiles(pacote);
+    let veredito = await conferir();
+    if (veredito.confere) return { registrado: true, via: "change", detalhe: "" };
+    if (!veredito.mudou) {
+      await alvo.evaluate((elemento) => {
+        const input = elemento;
+        const transferencia = new DataTransfer();
+        for (const arquivo of Array.from(input.files ?? [])) transferencia.items.add(arquivo);
+        const area = input.closest(".br-upload") ?? input.closest(".containerAnexo") ?? input.parentElement;
+        if (!area) return;
+        for (const tipo of ["dragenter", "dragover", "drop"]) {
+          area.dispatchEvent(new DragEvent(tipo, { bubbles: true, cancelable: true, dataTransfer: transferencia }));
+        }
+      }).catch(() => void 0);
+      veredito = await conferir();
+      if (veredito.confere) return { registrado: true, via: "drop", detalhe: "" };
+    }
+    const forma = await alvo.evaluate((elemento) => {
+      const input = elemento;
+      const caixa = input.closest(".containerAnexo");
+      return `${input.files?.length ?? 0}/${caixa ? caixa.querySelectorAll('input[type="file"]').length : 0}`;
+    }).catch(() => "?/?");
+    return {
+      registrado: false,
+      via: veredito.mudou ? "mudou-sem-confirmar" : "nenhum",
+      detalhe: `files/inputs=${forma}; caixa diz: "${veredito.novidade.replace(/\d{3,}/g, "###").slice(0, 160)}"`
+    };
+  }
   async function anexarDocumentos(page, opcoes, avisos) {
+    const confirmados = /* @__PURE__ */ new Set();
     const inputs = page.locator(mapaGerid.passo7.inputArquivo);
     const total = await inputs.count().catch(() => 0);
     if (total !== mapaGerid.passo7.totalSlots) {
-      avisos.push(
+      avisos.push(avisoInformativo(
         `Esperava ${mapaGerid.passo7.totalSlots} caixas de anexo e encontrei ${total} \u2014 o GERID pode ter mudado. Confira os anexos antes de concluir.`
-      );
+      ));
     }
     const porSlot = /* @__PURE__ */ new Map();
     for (const arq of opcoes.arquivos) {
@@ -1553,18 +2262,21 @@
         if (conteudos.some((conteudo) => typeof conteudo === "string")) {
           throw new Error("Conte\xFAdo do anexo n\xE3o foi recebido pela extens\xE3o.");
         }
-        await alvo.setInputFiles(conteudos);
-        const nomesRecebidos = await alvo.evaluate(
-          (input) => Array.from(input.files ?? []).map((arquivo) => arquivo.name)
-        );
-        const nomesEsperados = arquivos.map((arquivo) => arquivo.nome).filter(Boolean);
-        if (nomesRecebidos.length !== arquivos.length || nomesEsperados.some((nome) => !nomesRecebidos.includes(nome))) {
-          throw new Error("O GERID n\xE3o preservou todos os arquivos selecionados.");
+        const pacote = conteudos;
+        const entrega = await entregarAnexo(alvo, pacote);
+        console.log(`[P7] anexo "${slot}": ${entrega.registrado ? `ok via ${entrega.via}` : `NAO registrou \u2014 ${entrega.detalhe}`}`);
+        if (entrega.registrado) {
+          confirmados.add(slot);
+        } else {
+          avisos.push(
+            `O GERID n\xE3o registrou ${arquivos.length} arquivo(s) em "${slot}" \u2014 anexe manualmente. (${entrega.detalhe})`
+          );
         }
       } catch {
         avisos.push(`Falha ao anexar ${arquivos.length} arquivo(s) em "${slot}" \u2014 anexe manualmente.`);
       }
     }
+    return confirmados;
   }
   async function passo8SelecionarUnidade(page, caso, avisos) {
     await esperarTela(page, /Consultar por CEP|Selecionar Unidade/i);
@@ -1680,6 +2392,7 @@
     }
     return true;
   }
+  var ORDEM_ETAPAS, posicaoEtapa, AVISO_PENDENTE, pedidoAbertoLembrado, observadorPedidoAberto, MARCA_INFORMATIVO, comboPorPergunta, inputPorPergunta;
   var init_preencherGerid = __esm({
     "src/preencherGerid.ts"() {
       "use strict";
@@ -1689,12 +2402,46 @@
       init_mapaGerid();
       init_estadoGerid();
       init_regrasPreenchimento();
+      init_detectarProtocolo();
+      ORDEM_ETAPAS = [
+        "passo_1",
+        "passo_2",
+        "passo_3",
+        "passo_4",
+        "passo_5",
+        "passo_6",
+        "passo_7",
+        "passo_8",
+        "passo_9",
+        "passo_10",
+        // `comprovante` fecha a lista para que uma tela JÁ protocolada conte como
+        // "depois de tudo". Fora da lista ela valia -1, e -1 não é "passou de"
+        // nenhuma etapa: o robô recomeçaria do passo 1 em cima de um requerimento
+        // que já tinha número de protocolo.
+        "comprovante"
+      ];
+      posicaoEtapa = (etapa) => ORDEM_ETAPAS.indexOf(etapa);
+      AVISO_PENDENTE = /\b(falta|faltou|faltando|n[aã]o consegui|n[aã]o achei|n[aã]o encontrei|complete|preencha|responda|confira|revis|em branco|pendente|manual)/i;
+      pedidoAbertoLembrado = "";
+      observadorPedidoAberto = null;
+      MARCA_INFORMATIVO = "\u2139\uFE0F ";
+      comboPorPergunta = (page, trechoPergunta, esperaMs) => campoPorPergunta(page, trechoPergunta, true, esperaMs);
+      inputPorPergunta = (page, trechoPergunta) => campoPorPergunta(page, trechoPergunta, false);
     }
   });
 
   // src/classificarPreenchimento.ts
   function classificarPreenchimento(resultado) {
     const avisos = resultado.avisos.filter(Boolean).join(" | ");
+    const protocolo = (resultado.protocolo || "").trim();
+    if (protocolo) {
+      return {
+        status: "sucesso",
+        erro: avisos,
+        protocolo,
+        ...resultado.comprovante ? { comprovante: resultado.comprovante } : {}
+      };
+    }
     if (!resultado.pronto || resultado.telaAtual !== "Confirmar") {
       return {
         status: "erro",
@@ -1712,28 +2459,6 @@
     }
   });
 
-  // src/detectarProtocolo.ts
-  function detectarProtocoloEmTexto(texto) {
-    const normalizado = String(texto || "").replace(/\s+/g, " ").trim();
-    const padroes = [
-      /(?:n[uú]mero\s+d[oe]\s+)?protocolo\s*(?:gerado)?\s*[:#-]?\s*([0-9][0-9.\/-]{7,30})/i,
-      /(?:n[uú]mero\s+d[oe]\s+)?requerimento\s*[:#-]\s*([0-9][0-9.\/-]{7,30})/i,
-      /(?:n[uú]mero\s+d[oe]\s+)?pedido\s*[:#-]\s*([0-9][0-9.\/-]{7,30})/i
-    ];
-    for (const padrao of padroes) {
-      const encontrado = normalizado.match(padrao)?.[1];
-      if (!encontrado) continue;
-      const digitos = encontrado.replace(/\D/g, "");
-      if (digitos.length >= 8 && digitos.length <= 25) return encontrado.replace(/[.,;:]+$/, "");
-    }
-    return null;
-  }
-  var init_detectarProtocolo = __esm({
-    "src/detectarProtocolo.ts"() {
-      "use strict";
-    }
-  });
-
   // src/index.ts
   var require_index = __commonJS({
     "src/index.ts"() {
@@ -1744,7 +2469,7 @@
       init_classificarPreenchimento();
       init_detectarProtocolo();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.6.0-20260811.1";
+      var CONTENT_BUILD_ID = "1.6.0-20260812.27";
       var EVENTO_LOG_GERID = "__gerid_rpa_log__";
       var CANAL_CONTROLE_GERID = "__gerid_rpa_control__";
       var emContextoExtensao = typeof chrome !== "undefined" && Boolean(chrome.runtime?.id);
@@ -1855,11 +2580,10 @@
               return { estado: "navegando", mensagem: "Aviso do certificado A3 confirmado." };
             }
           }
-          const confirmacaoFinal = Array.from(document.querySelectorAll("button")).some((botao) => textoNormalizado(botao.innerText) === "confirmar");
-          if (textoPagina.includes("atencao") && confirmacaoFinal) {
+          if (detectarEstadoGerid().modal === "confirmacao_final") {
             return {
               estado: "revisao_manual",
-              mensagem: "Confirmacao final preservada para revisao humana."
+              mensagem: "Ja havia uma confirmacao final aberta na tela. Resolva no Gerid antes de rodar o robo."
             };
           }
           if (/^\/(tarefas|requerimentos)(?:\/|$)/.test(window.location.pathname)) {
@@ -1876,6 +2600,17 @@
       window.obterEstadoGerid = () => detectarEstadoGerid();
       window.diagnosticarGerid = () => capturarDiagnosticoGerid();
       window.obterPendenciasGerid = () => listarPerguntasObrigatoriasPendentes();
+      window.requerimentoAbertoEhDoCaso = (cpf, nome) => {
+        const bruto = document.body?.innerText || "";
+        const texto = textoNormalizado(bruto);
+        const digitosDaTela = bruto.replace(/\D/g, "");
+        const cpfAlvo = String(cpf || "").replace(/\D/g, "");
+        if (cpfAlvo.length === 11 && digitosDaTela.includes(cpfAlvo)) return "sim";
+        const nomeAlvo = textoNormalizado(String(nome || ""));
+        if (nomeAlvo.length >= 6 && texto.includes(nomeAlvo)) return "sim";
+        const temAlgumCpf = /\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/.test(bruto);
+        return temAlgumCpf ? "nao" : "indefinido";
+      };
       window.reiniciarRequerimentoGerid = async () => {
         if (detectarEstadoGerid().etapa === "passo_1") return true;
         const botaoPrimeiroPasso = Array.from(document.querySelectorAll("button")).find((botao) => {
@@ -1892,6 +2627,11 @@
         return false;
       };
       async function abrirNovoRequerimentoSeNecessario(page) {
+        const etapaAgora = detectarEstadoGerid().etapa;
+        if (["passo_2", "passo_3", "passo_4", "passo_5", "passo_6", "passo_7", "passo_8", "passo_9"].includes(etapaAgora)) {
+          logToBackground(`Requerimento j\xE1 aberto em ${etapaAgora}. Retomando de onde parou.`);
+          return;
+        }
         const seletorServico = page.locator(mapaGerid.passo1.campoBusca);
         const novoRequerimento = page.getByRole("button", { name: /^Novo Requerimento$/i });
         const limite = Date.now() + 15e3;
@@ -1911,6 +2651,7 @@
       }
       window.iniciarProcessamento = async (caso) => {
         logToBackground(`[ROB\xD4 INICIADO] Processando caso: ${caso.nome}`);
+        vigiarPedidoEmAberto();
         const page = new MockPage();
         try {
           if (!caso?.dados?.cliente || !caso?.dados?.grupoFamiliar || !caso?.configuracao) {
@@ -1938,7 +2679,10 @@
             `[TEMPO] preenchimento total: ${(duracaoTotalMs / 1e3).toFixed(1)}s`
           );
           const resultado = classificarPreenchimento(res);
-          if (resultado.status === "revisao") {
+          if (resultado.status === "sucesso") {
+            logToBackground(`[ROB\xD4 FINALIZADO] PROTOCOLADO \u2014 protocolo ${resultado.protocolo}`);
+            return { ...resultado, metricas: { duracaoTotalMs, etapas: temposEtapas } };
+          } else if (resultado.status === "revisao") {
             logToBackground(`[ROB\xD4 FINALIZADO] Preenchido para revis\xE3o humana.`);
             return { ...resultado, metricas: { duracaoTotalMs, etapas: temposEtapas } };
           } else {
@@ -1946,6 +2690,15 @@
             return { ...resultado, metricas: { duracaoTotalMs, etapas: temposEtapas } };
           }
         } catch (e) {
+          const jaAberto = pedidoJaEmAberto();
+          if (jaAberto) {
+            logToBackground(`[ROB\xD4 FINALIZADO] J\xC1 PROTOCOLADO \u2014 pedido ${jaAberto} em aberto; n\xE3o refiz.`);
+            return {
+              status: "sucesso",
+              protocolo: jaAberto,
+              erro: `O GERID recusou refazer: j\xE1 existe o pedido ${jaAberto} em aberto para este CPF.`
+            };
+          }
           const errorMsg = e instanceof Error ? e.message : "Erro interno no rob\xF4";
           const diagnostico = capturarDiagnosticoGerid();
           const contexto = resumirDiagnosticoGerid(diagnostico);
@@ -1956,7 +2709,10 @@
           return { status: "erro", erro: `${errorMsg} ${contexto}`, diagnostico };
         }
       };
-      window.detectarProtocoloGerid = () => detectarProtocoloEmTexto(document.body?.innerText || "");
+      window.detectarProtocoloGerid = () => {
+        if (detectarEstadoGerid().etapa !== "comprovante") return null;
+        return detectarProtocoloEmTexto(document.body?.innerText || "");
+      };
     }
   });
   require_index();

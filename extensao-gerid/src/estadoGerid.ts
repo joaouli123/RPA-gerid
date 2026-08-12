@@ -25,10 +25,15 @@ export interface DiagnosticoGerid {
   modal: EstadoGerid['modal'];
   caminho: string;
   alertas: string[];
-  campos: Array<{ id: string; tipo: string; preenchido: boolean }>;
+  campos: Array<{ id: string; tipo: string; preenchido: boolean; obrigatorio: boolean }>;
   botoes: Array<{ texto: string; desabilitado: boolean }>;
   anexos: Array<{ indice: number; rotulo: string; arquivo: boolean }>;
 }
+
+// O seletor de campos pega os três: `select` e `textarea` também respondem por
+// pergunta do wizard, e tratá-los como `input` deixava o ramo do `tagName`
+// inalcançável para o compilador.
+type CampoFormulario = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
 
 function estaVisivel(elemento: Element | null): elemento is HTMLElement {
   if (!(elemento instanceof HTMLElement)) return false;
@@ -118,19 +123,60 @@ function textoSeguro(valor: string): string {
     .slice(0, 180);
 }
 
+/** Caixa de anexo com arquivo dentro ganha um controle para tirá-lo de novo. */
+function temControleDeRemocao(caixa: Element | null): boolean {
+  if (!caixa) return false;
+  return Array.from(caixa.querySelectorAll('button, a, [role="button"]')).some((controle) => {
+    const texto = normalizar([
+      controle.getAttribute('aria-label'),
+      controle.getAttribute('title'),
+      controle.textContent,
+    ].join(' '));
+    return texto.includes('excluir') || texto.includes('remover');
+  });
+}
+
 export function capturarDiagnosticoGerid(documento: Document = document): DiagnosticoGerid {
   const estado = detectarEstadoGerid(documento);
+  // Um par Sim/Não do GERID são dois checkboxes irmãos (`X-Sim` e `X-Nao`).
+  // Responder "Sim" deixa o "Não" desmarcado — o que é a resposta certa, não
+  // um campo em branco. Sem isto o diagnóstico acusava `acompanharProcesso-Nao`
+  // como pendente numa pergunta que estava respondida.
+  const respondidoNoPar = (campo: Element): boolean => {
+    const par = /^(.+)-(sim|n[aã]o)$/i.exec(campo.id || '');
+    if (!par) return false;
+    return Array.from(documento.querySelectorAll<HTMLInputElement>(`[id^="${CSS.escape(par[1]!)}-"]`))
+      .some((irmao) => irmao.checked);
+  };
+
+  // O GERID marca campo obrigatório com "*" no rótulo. Sem essa distinção o
+  // relatório de falha citava "Conhecido por/Apelido" — que é opcional — no
+  // mesmo tom do que realmente faltava, e mandava procurar no lugar errado.
+  const ehObrigatorio = (campo: CampoFormulario): boolean => {
+    if (campo.required || campo.getAttribute('aria-required') === 'true') return true;
+    const rotulos = [
+      campo.id ? documento.querySelector(`label[for="${CSS.escape(campo.id)}"]`)?.textContent : '',
+      campo.getAttribute('aria-label'),
+      campo.closest('label')?.textContent,
+    ];
+    return rotulos.some((rotulo) => (rotulo || '').trim().startsWith('*'));
+  };
+
   const campos = Array.from(
-    documento.querySelectorAll<HTMLInputElement>('input, textarea, select'),
+    documento.querySelectorAll<CampoFormulario>('input, textarea, select'),
   )
-    .filter(estaVisivel)
+    // Anexo não é campo de texto: `input[type=file]` aparece vazio por
+    // natureza e enchia o relatório com `single-file` repetido doze vezes,
+    // escondendo a pendência de verdade. O estado dos anexos vai em `anexos`.
+    .filter((campo) => estaVisivel(campo) && campo.type !== 'file')
     .slice(0, 60)
     .map((campo) => ({
       id: campo.id || campo.getAttribute('name') || '(sem id)',
       tipo: campo instanceof HTMLInputElement ? campo.type || 'text' : campo.tagName.toLowerCase(),
       preenchido: campo instanceof HTMLInputElement && ['checkbox', 'radio'].includes(campo.type)
-        ? campo.checked
+        ? campo.checked || respondidoNoPar(campo)
         : Boolean(campo.value),
+      obrigatorio: ehObrigatorio(campo),
     }));
 
   const alertas = Array.from(
@@ -158,7 +204,12 @@ export function capturarDiagnosticoGerid(documento: Document = document): Diagno
         input.closest<HTMLElement>('.containerAnexo')?.querySelector<HTMLElement>('strong')?.innerText ||
         input.closest<HTMLElement>('.containerAnexo')?.innerText || '',
       ),
-      arquivo: Boolean(input.files?.length),
+      // ⚠️ `input.files` não diz se o anexo está lá. Quando o GERID assume o
+      // arquivo ele ESVAZIA o input e passa a mostrar o nome com um botão de
+      // excluir. Ler só o input reportava "11/11 sem arquivo" numa tela onde os
+      // anexos tinham entrado — e isso já mandou a investigação para o lado
+      // errado uma vez.
+      arquivo: Boolean(input.files?.length) || temControleDeRemocao(input.closest('.containerAnexo')),
     }));
 
   return {
@@ -190,7 +241,13 @@ export function listarPerguntasObrigatoriasPendentes(documento: Document = docum
 
 export function resumirDiagnosticoGerid(diagnostico: DiagnosticoGerid): string {
   const alertas = diagnostico.alertas.length ? ` Alertas: ${diagnostico.alertas.join(' | ')}.` : '';
-  const pendentes = diagnostico.campos.filter((campo) => !campo.preenchido).map((campo) => campo.id).slice(0, 12);
+  // Só o que é obrigatório e está vazio merece o nome de "pendente". Campo
+  // opcional em branco vira ruído e desvia a leitura do erro.
+  const vazios = diagnostico.campos.filter((campo) => !campo.preenchido);
+  const pendentes = vazios.filter((campo) => campo.obrigatorio).map((campo) => campo.id).slice(0, 12);
+  const anexosVazios = diagnostico.anexos.filter((anexo) => !anexo.arquivo).length;
   return `Estado ${diagnostico.etapa}${diagnostico.modal ? `, modal ${diagnostico.modal}` : ''}.` +
-    (pendentes.length ? ` Campos pendentes: ${pendentes.join(', ')}.` : '') + alertas;
+    (pendentes.length ? ` Campos obrigatórios pendentes: ${pendentes.join(', ')}.` : '') +
+    (anexosVazios ? ` Caixas de anexo sem arquivo: ${anexosVazios}/${diagnostico.anexos.length}.` : '') +
+    alertas;
 }

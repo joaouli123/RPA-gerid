@@ -1,5 +1,5 @@
 import { MockPage } from './playwright-polyfill';
-import { preencherRequerimento } from './preencherGerid';
+import { pedidoJaEmAberto, preencherRequerimento, vigiarPedidoEmAberto } from './preencherGerid';
 import { ErroGerid } from './tiposGerid';
 import { mapaGerid } from './mapaGerid';
 import { classificarPreenchimento } from './classificarPreenchimento';
@@ -11,7 +11,7 @@ import {
   resumirDiagnosticoGerid,
 } from './estadoGerid';
 
-const CONTENT_BUILD_ID = '1.6.0-20260811.1';
+const CONTENT_BUILD_ID = '1.6.0-20260812.27';
 const EVENTO_LOG_GERID = '__gerid_rpa_log__';
 const CANAL_CONTROLE_GERID = '__gerid_rpa_control__';
 const emContextoExtensao = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.id);
@@ -152,12 +152,15 @@ async function resolverBloqueiosConhecidosGerid() {
       }
     }
 
-    const confirmacaoFinal = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
-      .some((botao) => textoNormalizado(botao.innerText) === 'confirmar');
-    if (textoPagina.includes('atencao') && confirmacaoFinal) {
+    // Modal "Atencao/Confirmar" JA ABERTO antes de o robo comecar: quem clicou
+    // em Avancar foi outra pessoa, num requerimento que nao sabemos de quem e.
+    // Confirmar por cima protocolaria o pedido de terceiro. O robo abre e
+    // confirma o proprio modal dentro do passo 10, com o requerimento que ele
+    // mesmo preencheu — isto aqui e so o caso do modal orfao.
+    if (detectarEstadoGerid().modal === 'confirmacao_final') {
       return {
         estado: 'revisao_manual',
-        mensagem: 'Confirmacao final preservada para revisao humana.',
+        mensagem: 'Ja havia uma confirmacao final aberta na tela. Resolva no Gerid antes de rodar o robo.',
       };
     }
 
@@ -178,6 +181,32 @@ async function resolverBloqueiosConhecidosGerid() {
 (window as any).obterEstadoGerid = () => detectarEstadoGerid();
 (window as any).diagnosticarGerid = () => capturarDiagnosticoGerid();
 (window as any).obterPendenciasGerid = () => listarPerguntasObrigatoriasPendentes();
+/**
+ * De QUEM é o requerimento que está aberto na tela?
+ *
+ * É a pergunta que decide entre retomar e recomeçar. Continuar o requerimento
+ * de outra pessoa protocolaria dado de um cliente no nome de outro — por isso
+ * "não sei" tem o mesmo peso de "não é": só um reconhecimento POSITIVO autoriza
+ * retomar. O CPF é procurado em dígitos (pega `093.903.334-82` e `09390333482`)
+ * e o nome sem acento nem caixa.
+ */
+(window as any).requerimentoAbertoEhDoCaso = (cpf: string, nome: string): 'sim' | 'nao' | 'indefinido' => {
+  const bruto = document.body?.innerText || '';
+  const texto = textoNormalizado(bruto);
+  const digitosDaTela = bruto.replace(/\D/g, '');
+
+  const cpfAlvo = String(cpf || '').replace(/\D/g, '');
+  if (cpfAlvo.length === 11 && digitosDaTela.includes(cpfAlvo)) return 'sim';
+
+  const nomeAlvo = textoNormalizado(String(nome || ''));
+  if (nomeAlvo.length >= 6 && texto.includes(nomeAlvo)) return 'sim';
+
+  // Nenhum sinal do nosso caso. Se há OUTRO CPF na tela, o requerimento é de
+  // terceiro; se não há CPF nenhum, a tela simplesmente não mostra dono.
+  const temAlgumCpf = /\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/.test(bruto);
+  return temAlgumCpf ? 'nao' : 'indefinido';
+};
+
 (window as any).reiniciarRequerimentoGerid = async () => {
   if (detectarEstadoGerid().etapa === 'passo_1') return true;
 
@@ -198,6 +227,16 @@ async function resolverBloqueiosConhecidosGerid() {
 };
 
 async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> {
+  // Retomada: o wizard já está aberto no meio do caminho. Procurar aqui a tela
+  // de serviços (que não existe mais) só gastaria 15s antes de um erro falso —
+  // era isso que travava a segunda tentativa. O preenchimento sabe continuar.
+  const etapaAgora = detectarEstadoGerid().etapa;
+  if (['passo_2', 'passo_3', 'passo_4', 'passo_5', 'passo_6', 'passo_7', 'passo_8', 'passo_9']
+    .includes(etapaAgora)) {
+    logToBackground(`Requerimento já aberto em ${etapaAgora}. Retomando de onde parou.`);
+    return;
+  }
+
   const seletorServico = page.locator(mapaGerid.passo1.campoBusca);
   const novoRequerimento = page.getByRole('button', { name: /^Novo Requerimento$/i });
 
@@ -224,6 +263,11 @@ async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> 
 // Expõe a função no window do ISOLATED WORLD para ser chamada pelo executeScript
 (window as any).iniciarProcessamento = async (caso: any) => {
   logToBackground(`[ROBÔ INICIADO] Processando caso: ${caso.nome}`);
+  // Zera e religa a vigilância do bloqueio "pedido N em aberto" ANTES de tocar
+  // na tela. Zerar é o ponto crítico: o content script continua vivo na mesma
+  // aba entre casos, e um número lembrado do requerente anterior seria colado
+  // neste aqui.
+  vigiarPedidoEmAberto();
   const page = new MockPage();
 
   try {
@@ -256,7 +300,10 @@ async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> 
     );
     
     const resultado = classificarPreenchimento(res);
-    if (resultado.status === 'revisao') {
+    if (resultado.status === 'sucesso') {
+      logToBackground(`[ROBÔ FINALIZADO] PROTOCOLADO — protocolo ${resultado.protocolo}`);
+      return { ...resultado, metricas: { duracaoTotalMs, etapas: temposEtapas } };
+    } else if (resultado.status === 'revisao') {
       logToBackground(`[ROBÔ FINALIZADO] Preenchido para revisão humana.`);
       return { ...resultado, metricas: { duracaoTotalMs, etapas: temposEtapas } };
     } else {
@@ -264,6 +311,17 @@ async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> 
       return { ...resultado, metricas: { duracaoTotalMs, etapas: temposEtapas } };
     }
   } catch (e) {
+    // Etapa que ESTOURA nao passa pelo laco de preencherRequerimento, e o motivo
+    // do estouro pode ser justamente o GERID recusando um caso ja protocolado.
+    const jaAberto = pedidoJaEmAberto();
+    if (jaAberto) {
+      logToBackground(`[ROBÔ FINALIZADO] JÁ PROTOCOLADO — pedido ${jaAberto} em aberto; não refiz.`);
+      return {
+        status: 'sucesso',
+        protocolo: jaAberto,
+        erro: `O GERID recusou refazer: já existe o pedido ${jaAberto} em aberto para este CPF.`,
+      };
+    }
     const errorMsg = e instanceof Error ? e.message : 'Erro interno no robô';
     const diagnostico = capturarDiagnosticoGerid();
     const contexto = resumirDiagnosticoGerid(diagnostico);
@@ -278,4 +336,16 @@ async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> 
 
 // A tela final pode ser renderizada sem trocar a URL da SPA. O background
 // consulta esta funcao depois que o operador confirma manualmente.
-(window as any).detectarProtocoloGerid = () => detectarProtocoloEmTexto(document.body?.innerText || '');
+//
+// ⚠️ A TELA IMPORTA. Antes esta funcao lia o `innerText` da pagina INTEIRA sem
+// olhar em que etapa o GERID estava — e a lista de requerimentos e uma tabela
+// com uma coluna "Protocolo" cheia de numeros de OUTROS requerimentos. Como a
+// verificacao de confirmacao roda de 6 em 6 segundos, bastava a aba passar pela
+// lista (ou pelo modal "voce criou uma tarefa, protocolo ...") para o robo
+// capturar protocolo de terceiro e registrar o caso como PROTOCOLADO sem nada
+// ter sido enviado ao INSS. So a tela de comprovante responde por protocolo.
+(window as any).detectarProtocoloGerid = () => {
+  if (detectarEstadoGerid().etapa !== 'comprovante') return null;
+  return detectarProtocoloEmTexto(document.body?.innerText || '');
+};
+

@@ -19,6 +19,21 @@ import { ehTitular } from './domain/grupoFamiliar';
 import { normalizar } from './domain/texto';
 import type { GrupoFamiliar, Integrante } from './domain/types';
 
+/**
+ * O robô conclui o requerimento sozinho (marca a declaração, avança e confirma
+ * no modal "Atenção")?
+ *
+ * É o único interruptor do sistema que produz efeito IRREVERSÍVEL: com ele
+ * ligado sai um protocolo real no INSS em nome de uma pessoa real. Fica aqui,
+ * junto das outras decisões do escritório, para poder ser desligado sem mexer
+ * em código de navegação — e para que trocar isso seja uma escolha explícita,
+ * nunca um efeito colateral de outro ajuste.
+ *
+ * Desligado, o robô para na tela Confirmar com tudo preenchido e o advogado
+ * conclui na mão, que era o comportamento até 12/08/2026.
+ */
+export const PROTOCOLAR_AUTOMATICAMENTE = true;
+
 /** Uma opção de combobox do GERID: id do radio + rótulo exato exibido. */
 export interface OpcaoGerid {
   id: string;
