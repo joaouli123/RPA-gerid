@@ -1,4 +1,12 @@
 import { MockPage as Page, type Locator } from './playwright-polyfill';
+
+// Este arquivo roda dentro do content script, onde `chrome` existe. O typecheck
+// do repo nao carrega @types/chrome (o painel Next nao precisa dele), entao a
+// forma minima que este arquivo usa fica declarada aqui mesmo — escopo do
+// modulo, sem poluir o global do painel.
+declare const chrome: {
+  runtime: { sendMessage(mensagem: unknown): Promise<{ ok?: boolean } | undefined> };
+};
 import { ErroGerid, FalhaGerid, type CasoParaProtocolar } from './tiposGerid';
 import { apenasDigitos, normalizar } from './domain/texto';
 import { mapaGerid, NAVEGACAO } from './mapaGerid';

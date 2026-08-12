@@ -352,7 +352,8 @@ export class MockPage {
     l._getElement = async () => {
       let els = Array.from(document.querySelectorAll(`button, [role="${role}"], input[type="${role}"]`)) as HTMLElement[];
       els = els.filter(estaInteragivel);
-      if (options?.name) {
+      const alvo = options?.name;
+      if (alvo) {
         els = els.filter((e) => {
           // O GERID adiciona espaços e quebras de linha ao texto de alguns
           // botões. Normalizar aqui evita perder "Novo Requerimento".
@@ -363,9 +364,9 @@ export class MockPage {
             (e as HTMLInputElement).value ||
             ''
           ).trim().replace(/\s+/g, ' ');
-          if (typeof options.name === 'string') return nome.includes(options.name);
-          options.name.lastIndex = 0;
-          return options.name.test(nome);
+          if (typeof alvo === 'string') return nome.includes(alvo);
+          alvo.lastIndex = 0;
+          return alvo.test(nome);
         });
       }
       return els[0] || null;

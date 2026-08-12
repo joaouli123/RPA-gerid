@@ -298,12 +298,13 @@
           l._getElement = async () => {
             let els = Array.from(document.querySelectorAll(`button, [role="${role}"], input[type="${role}"]`));
             els = els.filter(estaInteragivel);
-            if (options?.name) {
+            const alvo = options?.name;
+            if (alvo) {
               els = els.filter((e) => {
                 const nome = (e.getAttribute("aria-label") || e.innerText || e.textContent || e.value || "").trim().replace(/\s+/g, " ");
-                if (typeof options.name === "string") return nome.includes(options.name);
-                options.name.lastIndex = 0;
-                return options.name.test(nome);
+                if (typeof alvo === "string") return nome.includes(alvo);
+                alvo.lastIndex = 0;
+                return alvo.test(nome);
               });
             }
             return els[0] || null;
@@ -2469,7 +2470,7 @@
       init_classificarPreenchimento();
       init_detectarProtocolo();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.6.0-20260812.27";
+      var CONTENT_BUILD_ID = "1.6.0-20260812.28";
       var EVENTO_LOG_GERID = "__gerid_rpa_log__";
       var CANAL_CONTROLE_GERID = "__gerid_rpa_control__";
       var emContextoExtensao = typeof chrome !== "undefined" && Boolean(chrome.runtime?.id);
