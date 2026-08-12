@@ -1141,7 +1141,76 @@ async function buscarLinhasNaLista(tabId, cpf) {
  * `fetch` (resposta application/pdf), `URL.createObjectURL` (blob -> <a download>)
  * e `<a href="data:...">`. O GERID so precisa usar UM deles.
  */
+/**
+ * O comprovante que o GERID entrega como DOWNLOAD do navegador.
+ *
+ * Os ganchos de dentro da pagina (`createObjectURL`, `fetch`, `<a download>`)
+ * so enxergam PDF que nasce no proprio documento. Quando o clique em "Gerar
+ * Comprovante" dispara um download de verdade — que e o que acontece na tela
+ * de Tarefas — o arquivo vai direto para a pasta de downloads e a pagina nao
+ * ve nada. Era esse o buraco: o robo protocolava, pedia o comprovante, o PDF
+ * baixava na maquina do operador, e o sistema registrava "PDF nao capturado".
+ *
+ * Aqui o background escuta o evento. Precisa estar ARMADO antes do clique.
+ */
+function esperarDownload(ms) {
+  return new Promise((resolve) => {
+    let respondido = false;
+    const encerrar = (item) => {
+      if (respondido) return;
+      respondido = true;
+      clearTimeout(prazo);
+      try { chrome.downloads.onCreated.removeListener(ouvir); } catch (e) {}
+      resolve(item);
+    };
+    const ouvir = (item) => encerrar(item);
+    const prazo = setTimeout(() => encerrar(null), ms);
+    try {
+      chrome.downloads.onCreated.addListener(ouvir);
+    } catch (e) {
+      encerrar(null);
+    }
+  });
+}
+
+/**
+ * Le a URL do download DENTRO da aba do GERID.
+ *
+ * De proposito na aba, e nao no background: o link do comprovante e da sessao
+ * autenticada. Buscar de fora sairia sem os cookies e voltaria a tela de
+ * login em vez do PDF. `blob:` tambem so existe para o documento que criou.
+ */
+async function lerUrlNaAba(tabId, url) {
+  const saida = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [url],
+    func: async (endereco) => {
+      try {
+        const resposta = await fetch(endereco, { credentials: 'include' });
+        if (!resposta.ok) return { erro: `O download respondeu ${resposta.status}.` };
+        const blob = await resposta.blob();
+        const base64 = await new Promise((resolve) => {
+          const leitor = new FileReader();
+          leitor.onload = () => resolve(String(leitor.result).split(',')[1] || '');
+          leitor.onerror = () => resolve('');
+          leitor.readAsDataURL(blob);
+        });
+        return base64
+          ? { pdfBase64: base64, bytes: blob.size }
+          : { erro: 'Nao consegui ler o arquivo baixado.' };
+      } catch (erro) {
+        return { erro: `Nao consegui reler o download: ${erro?.message || erro}` };
+      }
+    },
+  });
+  return saida[0]?.result || { erro: 'A aba nao respondeu ao reler o download.' };
+}
+
 async function gerarComprovanteNaLista(tabId, protocolo) {
+  // Armado ANTES do clique: o download pode comecar em milissegundos, e um
+  // ouvinte registrado depois perde o evento.
+  const download = esperarDownload(30000);
   const saida = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
@@ -1239,7 +1308,20 @@ async function gerarComprovanteNaLista(tabId, protocolo) {
         : { erro: 'Nao consegui ler o arquivo do comprovante.' };
     },
   });
-  return saida[0]?.result || { erro: 'A tela do comprovante nao respondeu.' };
+  const naPagina = saida[0]?.result || { erro: 'A tela do comprovante nao respondeu.' };
+  if (naPagina.pdfBase64) return naPagina;
+
+  // Nada dentro da pagina. Se o navegador baixou, o arquivo existe — so nao
+  // passou por onde estavamos olhando.
+  const item = await download;
+  const endereco = item?.finalUrl || item?.url;
+  if (!endereco) return naPagina;
+  sendLog(`O comprovante veio como download do navegador; relendo o arquivo (${item.filename || 'sem nome'}).`);
+  const relido = await lerUrlNaAba(tabId, endereco).catch((erro) => ({
+    erro: `Nao consegui reler o download: ${erro?.message || erro}`,
+  }));
+  if (relido.pdfBase64) return relido;
+  return { erro: `${naPagina.erro || 'sem captura na pagina'} | ${relido.erro}` };
 }
 
 /**
@@ -1307,6 +1389,9 @@ async function lerProtocoloNaTelaDetalhe(tabId, cpf, nome) {
  * por posicao.
  */
 async function gerarComprovanteNaTelaDetalhe(tabId, protocolo) {
+  // Mesmo motivo da lista: o "Gerar Comprovante" daqui tambem pode sair como
+  // download do navegador, e ai nada aparece dentro da pagina.
+  const download = esperarDownload(30000);
   const saida = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
@@ -1401,7 +1486,16 @@ async function gerarComprovanteNaTelaDetalhe(tabId, protocolo) {
         : { erro: 'Nao consegui ler o arquivo do comprovante.' };
     },
   });
-  return saida[0]?.result || { erro: 'A tela de detalhe nao respondeu.' };
+  const naPagina = saida[0]?.result || { erro: 'A tela de detalhe nao respondeu.' };
+  if (naPagina.pdfBase64) return naPagina;
+  const item = await download;
+  const endereco = item?.finalUrl || item?.url;
+  if (!endereco) return naPagina;
+  sendLog(`Comprovante baixado pelo navegador na tela de detalhe; relendo o arquivo.`);
+  const relido = await lerUrlNaAba(tabId, endereco).catch((erro) => ({
+    erro: `Nao consegui reler o download: ${erro?.message || erro}`,
+  }));
+  return relido.pdfBase64 ? relido : { erro: `${naPagina.erro || 'sem captura na pagina'} | ${relido.erro}` };
 }
 
 /**
