@@ -282,6 +282,16 @@ function agendarRetomadaAutenticacao() {
   chrome.alarms?.create?.(ALARME_AUTENTICACAO, { delayInMinutes: 0.1 });
 }
 
+/**
+ * Credenciais do painel guardadas pelo bootstrap. Devolve vazio sem reclamar:
+ * quem chama trata a ausencia (o pedido do certificado funciona sem elas; so o
+ * codigo de 6 digitos por WhatsApp e que precisa).
+ */
+async function credenciaisPainel() {
+  const salvo = await chrome.storage.local.get(['apiUrl', 'apiToken']).catch(() => ({}));
+  return { apiUrl: salvo?.apiUrl || '', apiToken: salvo?.apiToken || '' };
+}
+
 function agendarVerificacaoConfirmacao() {
   chrome.alarms?.create?.(ALARME_CONFIRMACAO, { delayInMinutes: 0.1 });
 }
@@ -2356,11 +2366,26 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
         });
       return;
     }
+    // Pedir o certificado vivia SO dentro do laco da fila. Com a fila vazia — ou
+    // com a sessao caindo enquanto ninguem processa nada — o laco nunca roda, e
+    // aqui a extensao apenas trocava o texto do aviso e ia embora: a tela de
+    // login ficava aberta, o botao intocado, e o operador olhando para um
+    // "conclua o SafeID" sem SafeID nenhum ter sido pedido.
+    //
+    // O clique nao autentica ninguem: so faz o SafeID mandar a notificacao para
+    // o celular do titular. O debounce de 3 minutos la dentro impede encher o
+    // aparelho de push se a pagina recarregar varias vezes.
     void atualizarEstadoAutenticacao(
       estado,
       'Conclua o SafeID e informe o codigo de 6 digitos do GERID.',
       tabId,
-    );
+    ).then(async () => {
+      if (info.status !== 'complete') return;
+      const { apiUrl, apiToken } = await credenciaisPainel();
+      await pedirAutorizacaoNoCelular(tabId, apiUrl, apiToken);
+      // Retoma sozinha se havia execucao parada esperando a sessao voltar.
+      agendarRetomadaAutenticacao();
+    });
     return;
   }
   if (estado === EstadoAutenticacao.AUTENTICADO && info.status === 'complete') {
