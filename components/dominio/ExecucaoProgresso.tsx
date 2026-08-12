@@ -299,6 +299,15 @@ export function ExecucaoProgresso({
               <div className="text-xs tabular-nums text-zinc-400">{formatarCpf(c.cpf)}</div>
             </div>
             <div className="flex items-center gap-3">
+              {/* Deixa explícito que este caso NÃO vai ser preenchido de novo:
+                  ele já tem protocolo e voltou só atrás do PDF que faltou. Sem
+                  o aviso, ver a pessoa "de volta na fila" faria o operador
+                  achar que o robô vai reprotocolar. */}
+              {c.somenteComprovante && (
+                <span className="rounded-md border border-sky-300 px-2 py-1 text-xs font-medium text-sky-700 dark:border-sky-500/40 dark:text-sky-300">
+                  Só buscar comprovante
+                </span>
+              )}
               {c.protocolo && (
                 <span className="text-xs text-zinc-500 dark:text-zinc-400">
                   Protocolo <span className="font-medium tabular-nums">{c.protocolo}</span>
@@ -338,6 +347,38 @@ export function ExecucaoProgresso({
           </li>
         ))}
       </ul>
+
+      {/* Clientes que a leitura do Drive trouxe e que a fila NÃO pegou porque
+          já têm protocolo. Precisa estar na tela: sem isso, o operador abre a
+          Execução, não encontra a pessoa, e protocola de novo na mão — que é
+          exatamente o que a trava existe para impedir. */}
+      {atual?.pulados && atual.pulados.length > 0 && (
+        <Card>
+          <div className="mb-1 font-medium">
+            Já protocolados — fora deste lote ({atual.pulados.length})
+          </div>
+          <p className="mb-3 text-sm text-zinc-500 dark:text-zinc-400">
+            A pasta continua no Drive, então a leitura traz estas pessoas todo dia. O robô não
+            refaz o requerimento: cada uma já tem número e comprovante guardados.
+          </p>
+          <ul className="space-y-2">
+            {atual.pulados.map((p) => (
+              <li
+                key={p.cpf}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200 px-4 py-3 dark:border-zinc-800"
+              >
+                <div>
+                  <div className="font-medium">{p.nome}</div>
+                  <div className="text-xs tabular-nums text-zinc-400">{formatarCpf(p.cpf)}</div>
+                </div>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Protocolo <span className="font-medium tabular-nums">{p.protocolo}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
     </div>
   );
 }

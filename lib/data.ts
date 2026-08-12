@@ -1,6 +1,11 @@
 import type { AppConfig } from '@/config/default';
 import type { ClienteRevisao, ClienteValidado, ResultadoLeitura } from '@/src/domain/types';
-import type { Execucao, ExecucaoAtual, RegistroAcaoRevisao } from '@/lib/types';
+import type {
+  Execucao,
+  ExecucaoAtual,
+  ProtocoloRegistrado,
+  RegistroAcaoRevisao,
+} from '@/lib/types';
 import { digitosCpf } from '@/lib/format';
 import {
   getAcoesRevisao,
@@ -11,6 +16,7 @@ import {
   getExecucoes as getExecucoesStore,
   getLidoEm,
   getResultado as getResultadoStore,
+  protocolosPorCpf as protocolosPorCpfStore,
   usandoDadosReais,
 } from '@/lib/server/store';
 
@@ -28,6 +34,18 @@ import {
 export type DetalheCliente =
   | { tipo: 'pronto'; validado: ClienteValidado }
   | { tipo: 'revisao'; revisao: ClienteRevisao };
+
+/**
+ * Protocolos já emitidos, por CPF (só dígitos).
+ *
+ * A tela precisa disso porque "pronto para o Gerid" e "falta protocolar" não
+ * são a mesma coisa: a pasta do cliente continua no Drive depois do protocolo,
+ * então a leitura devolve a mesma pessoa como "pronta" para sempre. Mostrar
+ * todo mundo como pronto faria alguém protocolar de novo na mão.
+ */
+export async function getProtocolosPorCpf(): Promise<Map<string, ProtocoloRegistrado>> {
+  return protocolosPorCpfStore();
+}
 
 export async function getResultado(): Promise<ResultadoLeitura> {
   return getResultadoStore();

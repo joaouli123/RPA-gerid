@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { getEstadoFonte, getExecucoes, getResultado } from '@/lib/data';
+import { getEstadoFonte, getExecucoes, getProtocolosPorCpf, getResultado } from '@/lib/data';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, Secao } from '@/components/ui/Card';
 import { Botao } from '@/components/ui/Botao';
@@ -11,12 +11,17 @@ import { BotaoRecarregar } from '@/components/dominio/BotaoRecarregar';
 import { digitosCpf, formatarCpf, formatarData } from '@/lib/format';
 
 export default async function PainelPage() {
-  const [resultado, execucoes, fonte] = await Promise.all([
+  const [resultado, execucoes, fonte, protocolados] = await Promise.all([
     getResultado(),
     getExecucoes(),
     getEstadoFonte(),
+    getProtocolosPorCpf(),
   ]);
   const prontos = resultado.clientesProntos;
+  // "Pronto" e "falta protocolar" não são a mesma coisa: a pasta continua no
+  // Drive depois do protocolo, então quem já foi volta como pronto todo dia.
+  const faltam = prontos.filter((c) => !protocolados.has(digitosCpf(c.cliente.cpf))).length;
+  const jaProtocolados = prontos.length - faltam;
 
   return (
     <div className="space-y-6">
@@ -63,7 +68,11 @@ export default async function PainelPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <Secao
           titulo="Prontos para o Gerid"
-          descricao="Passaram em todas as validações."
+          descricao={
+            jaProtocolados > 0
+              ? `Passaram em todas as validações. ${faltam} a protocolar · ${jaProtocolados} já protocolado(s).`
+              : 'Passaram em todas as validações.'
+          }
           acao={
             <Link href="/clientes" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
               Ver todos
@@ -77,22 +86,32 @@ export default async function PainelPage() {
               </div>
             ) : (
               <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                {prontos.slice(0, 5).map((c) => (
-                  <li key={digitosCpf(c.cliente.cpf)} className="flex items-center justify-between px-4 py-3">
-                    <div>
-                      <Link
-                        href={`/clientes/${digitosCpf(c.cliente.cpf)}`}
-                        className="font-medium text-blue-600 hover:underline dark:text-blue-400"
-                      >
-                        {c.cliente.nome}
-                      </Link>
-                      <div className="text-xs text-zinc-400 tabular-nums">
-                        {formatarCpf(c.cliente.cpf)} · {c.grupoFamiliar.integrantes.length} integrante(s)
+                {prontos.slice(0, 5).map((c) => {
+                  const feito = protocolados.get(digitosCpf(c.cliente.cpf));
+                  return (
+                    <li key={digitosCpf(c.cliente.cpf)} className="flex items-center justify-between px-4 py-3">
+                      <div>
+                        <Link
+                          href={`/clientes/${digitosCpf(c.cliente.cpf)}`}
+                          className="font-medium text-blue-600 hover:underline dark:text-blue-400"
+                        >
+                          {c.cliente.nome}
+                        </Link>
+                        <div className="text-xs text-zinc-400 tabular-nums">
+                          {formatarCpf(c.cliente.cpf)} · {c.grupoFamiliar.integrantes.length} integrante(s)
+                          {feito && ` · protocolo ${feito.protocolo}`}
+                        </div>
                       </div>
-                    </div>
-                    <StatusPill tom="verde">Pronto</StatusPill>
-                  </li>
-                ))}
+                      {/* Quem já tem número NÃO pode aparecer como "Pronto":
+                          é o rótulo que faz alguém protocolar duas vezes. */}
+                      {feito ? (
+                        <StatusPill tom="cinza">Protocolado</StatusPill>
+                      ) : (
+                        <StatusPill tom="verde">Pronto</StatusPill>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </Card>
