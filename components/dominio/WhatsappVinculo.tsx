@@ -7,10 +7,9 @@ import { Botao } from '@/components/ui/Botao';
 /**
  * Vincular o WhatsApp que entrega os 6 dígitos do 2FA do GERID.
  *
- * Dois caminhos, porque a situação do operador varia: o QR resolve em segundos
- * para quem está com o celular na mão em frente ao painel; o código de 8 letras
- * serve para quem está longe da tela, com o painel aberto por outra pessoa, ou
- * numa câmera que não colabora.
+ * Um caminho só: QR code. Havia também um código de 8 letras para digitar no
+ * celular, e ter dois caminhos para a mesma coisa só dava chance de o operador
+ * escolher o mais lento. Com o celular na mão, apontar a câmera resolve.
  *
  * Vale parear o MESMO número que o escritório já usa. Aí o robô conversa na
  * "Mensagem para mim mesmo" do operador: o aviso e o código ficam na conversa
@@ -25,26 +24,38 @@ interface Situacao {
   /** Já existe credencial em disco: essa sessão volta sozinha. */
   pareado: boolean;
   reconectando: boolean;
-  codigoPareamento: string | null;
   /** SVG pronto — o servidor desenha, para não carregar mais um pacote no navegador. */
   qrSvg: string | null;
   numeroMascarado: string;
   ultimoErro: string | null;
 }
 
+/**
+ * Intervalo mínimo entre dois pedidos de QR.
+ *
+ * O QR do WhatsApp expira sozinho e a conexão cai junto — é o ciclo normal, não
+ * falha. Enquanto esta tela estiver aberta ela pede outro, e é isso que faz o
+ * código voltar sem ninguém clicar em nada. Antes o pedido era UMA vez por
+ * abertura: se aquela primeira tentativa morresse, a tela ficava em "Preparando
+ * o QR code..." para sempre.
+ *
+ * A tela aberta é o sinal de que existe alguém esperando — por isso o pedido é
+ * daqui e não um laço no servidor, que ficaria martelando o WhatsApp de
+ * madrugada com ninguém na frente do painel.
+ */
+const INTERVALO_ENTRE_QRS = 8_000;
+
 export function WhatsappVinculo() {
   const [situacao, setSituacao] = useState<Situacao | null>(null);
-  const [pedindo, setPedindo] = useState<'qr' | 'codigo' | null>(null);
+  const [pedindo, setPedindo] = useState(false);
   const [erro, setErro] = useState('');
   // O pareamento acontece no celular — o painel não recebe evento nenhum. Só
   // perguntando de tempos em tempos dá para saber que conectou e trocar a tela
   // sozinho. É também o que faz o QR se renovar: o WhatsApp troca a cada ~20s.
   const consultando = useRef(false);
-  // O QR aparece sozinho, uma vez por abertura da tela. Antes era preciso saber
-  // que existia um botão para pedi-lo: quem abria Configurações via "não
-  // vinculado" e nada mais. Uma vez só porque, se o pareamento estiver falhando,
-  // repetir o pedido a cada 3s não conserta nada e ainda martela o WhatsApp.
-  const qrAutomatico = useRef(false);
+  // Quando saiu o último pedido de QR. Antes era um booleano "já pedi": bastava
+  // a primeira tentativa cair para a tela nunca mais pedir outro.
+  const ultimoPedido = useRef(0);
 
   async function consultar() {
     if (consultando.current) return;
@@ -70,25 +81,25 @@ export function WhatsappVinculo() {
     // `precisaParear` já exclui a sessão que só caiu e está voltando — pedir QR
     // ali derrubaria a credencial boa que está em disco.
     if (!situacao.precisaParear) return;
-    if (situacao.qrSvg || situacao.codigoPareamento) return;
-    if (qrAutomatico.current) return;
-    qrAutomatico.current = true;
-    void parear('qr');
+    if (situacao.qrSvg) return;
+    if (Date.now() - ultimoPedido.current < INTERVALO_ENTRE_QRS) return;
+    void pedirQr();
   }, [situacao]);
 
-  async function parear(modo: 'qr' | 'codigo') {
-    setPedindo(modo);
+  async function pedirQr() {
+    ultimoPedido.current = Date.now();
+    setPedindo(true);
     setErro('');
     try {
-      const resposta = await fetch(`/api/whatsapp?modo=${modo}`, { method: 'POST' });
+      const resposta = await fetch('/api/whatsapp', { method: 'POST' });
       // Resposta que não é JSON quer dizer proxy no meio (502/504), não WhatsApp.
       const corpo = await resposta.json().catch(() => null);
-      if (!corpo?.ok) setErro(corpo?.erro || 'O servidor não aceitou o pedido de pareamento.');
+      if (!corpo?.ok) setErro(corpo?.erro || 'O servidor não aceitou o pedido de QR code.');
       await consultar();
     } catch (falha) {
       setErro(falha instanceof Error ? falha.message : String(falha));
     } finally {
-      setPedindo(null);
+      setPedindo(false);
     }
   }
 
@@ -124,7 +135,7 @@ export function WhatsappVinculo() {
   // Sessão pareada que caiu: ela volta sozinha, sem QR e sem ninguém na frente
   // da tela. Mostrar "não vinculado" aqui fazia o operador escanear um código
   // por nada — e escanear DERRUBA a credencial que estava só voltando.
-  if (situacao.pareado && !situacao.qrSvg && !situacao.codigoPareamento) {
+  if (situacao.pareado && !situacao.qrSvg) {
     return (
       <Card className="p-4">
         <h3 className="font-semibold">
@@ -141,12 +152,8 @@ export function WhatsappVinculo() {
           <p className="mt-3 text-sm text-amber-600 dark:text-amber-400">{situacao.ultimoErro}</p>
         )}
         <div className="mt-4">
-          <Botao
-            variante="secundario"
-            onClick={() => void parear('qr')}
-            disabled={pedindo !== null}
-          >
-            {pedindo === 'qr' ? 'Gerando...' : 'Parear outro número'}
+          <Botao variante="secundario" onClick={() => void pedirQr()} disabled={pedindo}>
+            {pedindo ? 'Gerando...' : 'Parear outro número'}
           </Botao>
         </div>
         {erro && <p className="mt-3 text-sm text-rose-600 dark:text-rose-400">{erro}</p>}
@@ -154,7 +161,7 @@ export function WhatsappVinculo() {
     );
   }
 
-  const esperando = situacao.qrSvg || situacao.codigoPareamento;
+  const esperando = Boolean(situacao.qrSvg);
 
   return (
     <Card className="p-4">
@@ -168,7 +175,7 @@ export function WhatsappVinculo() {
 
       {!esperando && (
         <p className="mt-4 text-sm text-zinc-500 dark:text-zinc-400">
-          {pedindo === 'qr' ? 'Gerando o QR code...' : 'Preparando o QR code...'}
+          {pedindo ? 'Gerando o QR code...' : 'Preparando o QR code...'}
         </p>
       )}
 
@@ -190,35 +197,9 @@ export function WhatsappVinculo() {
         </div>
       )}
 
-      {situacao.codigoPareamento && (
-        <div className="mt-4 space-y-3">
-          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-center dark:border-zinc-700 dark:bg-zinc-800">
-            <p className="text-xs uppercase tracking-wide text-zinc-500">Digite no celular</p>
-            <p className="mt-1 font-mono text-2xl font-semibold tracking-[0.3em]">
-              {situacao.codigoPareamento}
-            </p>
-          </div>
-          <ol className="list-decimal space-y-1 pl-5 text-sm text-zinc-600 dark:text-zinc-300">
-            <li>No celular: WhatsApp → Aparelhos conectados → Conectar aparelho</li>
-            <li>Toque em &ldquo;Conectar com número de telefone&rdquo;</li>
-            <li>Digite o código acima</li>
-          </ol>
-          <p className="text-xs text-zinc-500">
-            O código vale poucos minutos. Se expirar, gere outro.
-          </p>
-        </div>
-      )}
-
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Botao onClick={() => void parear('qr')} disabled={pedindo !== null}>
-          {pedindo === 'qr' ? 'Gerando...' : esperando ? 'Gerar outro QR code' : 'Mostrar QR code'}
-        </Botao>
-        <Botao
-          variante="secundario"
-          onClick={() => void parear('codigo')}
-          disabled={pedindo !== null}
-        >
-          {pedindo === 'codigo' ? 'Pedindo...' : 'Prefiro digitar um código'}
+        <Botao onClick={() => void pedirQr()} disabled={pedindo}>
+          {pedindo ? 'Gerando...' : esperando ? 'Gerar outro QR code' : 'Gerar QR code'}
         </Botao>
       </div>
 

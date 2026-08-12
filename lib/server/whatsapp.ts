@@ -56,8 +56,6 @@ interface Ponte {
   /** Último QR gerado, para o operador parear pela tela de configurações. */
   qr: string | null;
   ultimoErro: string | null;
-  /** Código de 8 letras a digitar no celular, enquanto o pareamento não conclui. */
-  codigoPareamento: string | null;
   /**
    * Ids das mensagens que o PRÓPRIO robô mandou.
    *
@@ -75,6 +73,14 @@ interface Ponte {
   registrada: boolean;
   /** O operador desvinculou no celular. Insistir aqui é gastar VPS à toa. */
   desvinculado: boolean;
+  /**
+   * Qual conexão é a atual.
+   *
+   * Sobe a cada socket novo. Evento que chega de um socket já substituído é
+   * descartado por este número — sem isso, o `close` de uma conexão velha apaga
+   * o QR que a conexão nova acabou de publicar.
+   */
+  geracao: number;
 }
 
 /**
@@ -85,6 +91,16 @@ interface Ponte {
  * o comportamento que faz a Meta olhar torto para um cliente não-oficial.
  */
 const ESPERAS_RECONEXAO = [3_000, 5_000, 10_000, 20_000, 30_000, 60_000];
+
+/**
+ * Espera entre tentativas enquanto NINGUÉM pareou ainda.
+ *
+ * Fixa e curta porque a situação é outra: aqui existe uma pessoa parada na
+ * frente da tela esperando um QR aparecer. Fazê-la esperar 60s pelo código
+ * seguinte é o mesmo que não mostrar código nenhum. Depois de pareado, a
+ * conexão volta sozinha e a escada de esperas acima é que vale.
+ */
+const ESPERA_ANTES_DE_PAREAR = 3_000;
 
 /**
  * Quantas vezes tentar quando a sessão AINDA não pareou.
@@ -105,12 +121,12 @@ raiz[chave] ??= {
   conectado: false,
   qr: null,
   ultimoErro: null,
-  codigoPareamento: null,
   enviadas: new Set(),
   tentativas: 0,
   religarEm: null,
   registrada: false,
   desvinculado: false,
+  geracao: 0,
 };
 const ponte = raiz[chave]!;
 // Uma ponte que sobreviveu ao hot reload pode ter sido criada por uma versão
@@ -120,6 +136,7 @@ ponte.tentativas ??= 0;
 ponte.religarEm ??= null;
 ponte.registrada ??= false;
 ponte.desvinculado ??= false;
+ponte.geracao ??= 0;
 
 /** A pasta da sessão já guarda credencial? É o que separa "pareado" de "novo". */
 async function sessaoJaPareada(): Promise<boolean> {
@@ -132,7 +149,9 @@ async function sessaoJaPareada(): Promise<boolean> {
 /** Marca a próxima tentativa, com espera crescente. Uma de cada vez. */
 function agendarReconexao(): void {
   if (ponte.religarEm || ponte.desvinculado) return;
-  const espera = ESPERAS_RECONEXAO[Math.min(ponte.tentativas, ESPERAS_RECONEXAO.length - 1)]!;
+  const espera = ponte.registrada
+    ? ESPERAS_RECONEXAO[Math.min(ponte.tentativas, ESPERAS_RECONEXAO.length - 1)]!
+    : ESPERA_ANTES_DE_PAREAR;
   ponte.tentativas += 1;
   ponte.religarEm = setTimeout(() => {
     ponte.religarEm = null;
@@ -253,6 +272,24 @@ async function conectar(): Promise<void> {
   // ponte passa a insistir na reconexão em vez de desistir depois de 5 quedas.
   if (state.creds.registered) ponte.registrada = true;
 
+  // O socket anterior sai de cena ANTES de abrir outro.
+  //
+  // Era daqui que vinha o "Preparando o QR code..." eterno: cada tentativa
+  // abria mais uma conexão sem encerrar a de antes, e quando a velha caía —
+  // segundos depois — o `close` dela zerava o `ponte.qr` que a NOVA tinha
+  // acabado de publicar. Quanto mais o operador clicava, mais sockets vivos, e
+  // menos chance de um QR sobreviver até a tela buscar. O contador de geração é
+  // o que faz o evento atrasado ser ignorado em vez de apagar o estado bom.
+  const anterior = ponte.socket;
+  const geracao = ++ponte.geracao;
+  ponte.socket = null;
+  ponte.conectado = false;
+  try {
+    anterior?.end(undefined);
+  } catch {
+    // Já estava morto: é exatamente o que se queria.
+  }
+
   const socket = makeWASocket({
     version,
     auth: {
@@ -270,6 +307,8 @@ async function conectar(): Promise<void> {
   socket.ev.on('creds.update', saveCreds);
 
   socket.ev.on('connection.update', (atualizacao) => {
+    // Conexão que já foi substituída não mexe mais no estado de ninguém.
+    if (geracao !== ponte.geracao) return;
     if (atualizacao.qr) {
       ponte.qr = atualizacao.qr;
       console.log('[WhatsApp] Leia o QR code para parear o número do robô.');
@@ -277,7 +316,6 @@ async function conectar(): Promise<void> {
     if (atualizacao.connection === 'open') {
       ponte.conectado = true;
       ponte.qr = null;
-      ponte.codigoPareamento = null;
       ponte.ultimoErro = null;
       // Conectou: a contagem de falhas volta a zero, senão a primeira queda
       // depois de semanas no ar já cairia direto no intervalo de 60s.
@@ -294,8 +332,15 @@ async function conectar(): Promise<void> {
       // operador escanear um código que o WhatsApp já descartou.
       ponte.qr = null;
       const erroFechamento = atualizacao.lastDisconnect?.error as
-        { output?: { statusCode?: number } } | undefined;
+        { output?: { statusCode?: number }; message?: string } | undefined;
       const causa = erroFechamento?.output?.statusCode;
+      // Fechamento SEM código não veio do protocolo do WhatsApp — veio da rede
+      // do servidor (DNS, TLS, socket cortado). "código desconhecido" não dá a
+      // ninguém o que fazer; a mensagem do erro dá. É a diferença entre o
+      // operador conseguir dizer o que aconteceu e só saber que não funcionou.
+      const detalhe = causa
+        ? `código ${causa}`
+        : (erroFechamento?.message?.trim() || 'motivo desconhecido');
       // `loggedOut` = o operador desvinculou o aparelho. Reconectar em laço só
       // gastaria a VPS; é preciso ler o QR de novo.
       if (causa === DisconnectReason.loggedOut) {
@@ -308,17 +353,26 @@ async function conectar(): Promise<void> {
       // Sessão que nunca pareou não fica tentando para sempre: o QR só vale se
       // alguém estiver na frente da tela, e ninguém está às 3h da manhã.
       if (!ponte.registrada && ponte.tentativas >= LIMITE_SEM_PAREAR) {
-        ponte.ultimoErro = 'Não consegui parear. Clique em "Mostrar QR code" para tentar de novo.';
+        ponte.ultimoErro =
+          `Não consegui gerar o QR code (${detalhe}). Clique em "Gerar QR code" para tentar de novo.`;
         console.log(`[WhatsApp] ${ponte.ultimoErro}`);
         return;
       }
-      ponte.ultimoErro = `Conexão caiu (código ${causa ?? 'desconhecido'}). Reconectando...`;
-      console.log(`[WhatsApp] ${ponte.ultimoErro}`);
+      // O código do fechamento vai para o log SEMPRE — é o que diagnostica. Mas
+      // quem está com o celular na mão esperando um QR não tem o que fazer com
+      // "código desconhecido": o QR do WhatsApp expira sozinho e derrubar a
+      // conexão faz parte do ciclo normal. Para essa pessoa a frase honesta é
+      // que outro código está vindo.
+      ponte.ultimoErro = ponte.registrada
+        ? `Conexão caiu (${detalhe}). Reconectando...`
+        : 'Gerando um QR code novo...';
+      console.log(`[WhatsApp] ${ponte.ultimoErro} (${detalhe})`);
       agendarReconexao();
     }
   });
 
   socket.ev.on('messages.upsert', ({ messages }) => {
+    if (geracao !== ponte.geracao) return;
     for (const mensagem of messages) {
       void tratarMensagem(socket, mensagem as Parameters<typeof tratarMensagem>[1])
         .catch((erro) => console.log(`[WhatsApp] Falha ao tratar mensagem: ${erro}`));
@@ -349,35 +403,34 @@ export async function avisarOperador(texto: string): Promise<boolean> {
 }
 
 /**
- * Começa o pareamento e VOLTA NA HORA, sem esperar o WhatsApp.
+ * Pede um QR code e VOLTA NA HORA, sem esperar o WhatsApp.
  *
  * Antes esta função era `await` do começo ao fim: subia a conexão, dormia 4s e
  * só então pedia o código. Passava dos 30s do proxy, que devolvia a página
  * "Bad Gateway" — e o painel, esperando JSON, quebrava com "Unexpected token
  * 'B'". O erro não tinha nada a ver com o WhatsApp; era a espera.
  *
- * Agora o trabalho fica em segundo plano e o resultado (QR ou código) aparece em
- * `situacaoWhatsapp()`, que a tela já consulta de tempos em tempos.
+ * Agora o trabalho fica em segundo plano e o QR aparece em `situacaoWhatsapp()`,
+ * que a tela já consulta de tempos em tempos.
  *
- * `modo` decide o que o operador vai ver:
- *   - `qr`     — o QR do Baileys, que a tela desenha como imagem para escanear;
- *   - `codigo` — as 8 letras de "Conectar com número de telefone", para quem
- *                está longe do servidor ou não consegue apontar a câmera.
- * Os dois pareiam o MESMO aparelho; muda só a forma de confirmar.
+ * Existia também um modo "código de 8 letras" (Conectar com número de telefone).
+ * Saiu: eram dois caminhos para o mesmo pareamento, e o segundo pedia 4s de
+ * espera antes de virar um número que ainda tinha que ser digitado no celular.
+ * Com o celular na mão, apontar a câmera é mais curto — e um caminho só é um
+ * caminho que sempre funciona.
  */
-export function iniciarPareamento(modo: 'qr' | 'codigo'): { ok: boolean; erro?: string } {
+export function iniciarPareamento(): { ok: boolean; erro?: string } {
   if (!whatsappConfigurado()) {
     return { ok: false, erro: 'RPA_WHATSAPP_NUMERO não configurado no servidor.' };
   }
   if (ponte.conectado) return { ok: true };
 
   ponte.ultimoErro = null;
-  if (modo === 'qr') ponte.codigoPareamento = null;
 
-  // Clique explícito zera a contagem: quem apertou o botão está na frente da
-  // tela agora, então nem o limite de tentativas nem o "desvinculado" de uma
-  // sessão antiga podem segurar. E se havia retentativa marcada, ela sai da
-  // frente — esperar 60s depois de clicar pareceria que o botão não funcionou.
+  // Pedido explícito zera a contagem: quem pediu está na frente da tela agora,
+  // então nem o limite de tentativas nem o "desvinculado" de uma sessão antiga
+  // podem segurar. E se havia retentativa marcada, ela sai da frente — esperar
+  // 60s depois de clicar pareceria que o botão não funcionou.
   ponte.tentativas = 0;
   ponte.desvinculado = false;
   if (ponte.religarEm) {
@@ -385,26 +438,11 @@ export function iniciarPareamento(modo: 'qr' | 'codigo'): { ok: boolean; erro?: 
     ponte.religarEm = null;
   }
 
-  void (async () => {
-    try {
-      await garantirConexao();
-      const socket = ponte.socket;
-      if (!socket) throw new Error('Não consegui abrir a conexão com o WhatsApp.');
-      // Sessão que já tem credencial não pede nada: ela só precisa reconectar.
-      if (modo === 'qr' || socket.authState.creds.registered) return;
-
-      // O socket acabou de nascer; o pedido do código é um nó enviado pela
-      // websocket, que ainda está subindo. Sem esta espera o pedido sai antes da
-      // conexão existir e estoura "Connection Closed".
-      await new Promise((resolve) => setTimeout(resolve, 4_000));
-
-      ponte.codigoPareamento = await socket.requestPairingCode(numeroAutorizado());
-      ponte.ultimoErro = null;
-    } catch (erro) {
-      ponte.ultimoErro = erro instanceof Error ? erro.message : String(erro);
-      console.log(`[WhatsApp] Pareamento falhou: ${ponte.ultimoErro}`);
-    }
-  })();
+  void garantirConexao().catch((erro) => {
+    ponte.ultimoErro = erro instanceof Error ? erro.message : String(erro);
+    console.log(`[WhatsApp] Não consegui gerar o QR code: ${ponte.ultimoErro}`);
+    agendarReconexao();
+  });
 
   return { ok: true };
 }
@@ -415,7 +453,6 @@ export function situacaoWhatsapp(): {
   precisaParear: boolean;
   pareado: boolean;
   reconectando: boolean;
-  codigoPareamento: string | null;
   qr: string | null;
   numeroMascarado: string;
   ultimoErro: string | null;
@@ -430,7 +467,6 @@ export function situacaoWhatsapp(): {
     precisaParear: !ponte.conectado && !ponte.registrada,
     pareado: ponte.registrada,
     reconectando: !ponte.conectado && (ponte.conectando !== null || ponte.religarEm !== null),
-    codigoPareamento: ponte.codigoPareamento,
     // O QR era capturado e jogado fora: só ia para o log do servidor, onde
     // ninguém que usa o painel consegue apontar a câmera. É o mesmo dado, agora
     // entregue a quem precisa dele. O WhatsApp troca de QR a cada ~20s, e a tela

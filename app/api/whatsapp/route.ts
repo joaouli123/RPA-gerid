@@ -5,8 +5,8 @@ import { iniciarPareamento, manterConexaoViva, situacaoWhatsapp } from '@/lib/se
 /**
  * Vincular o WhatsApp pelo painel.
  *
- * GET  — como está a ponte: conectada? tem QR para escanear? código na tela?
- * POST — começa o pareamento (`?modo=qr` ou `?modo=codigo`) e volta na hora.
+ * GET  — como está a ponte: conectada? tem QR para escanear?
+ * POST — pede um QR code e volta na hora.
  *
  * O POST não espera o WhatsApp de propósito. Quando esperava, a requisição
  * passava dos 30s do proxy e voltava a página "Bad Gateway" no lugar do JSON —
@@ -46,8 +46,7 @@ export async function GET() {
   return NextResponse.json({ ...resto, qrSvg });
 }
 
-export async function POST(req: Request) {
-  const modo = new URL(req.url).searchParams.get('modo') === 'codigo' ? 'codigo' : 'qr';
-  const resultado = iniciarPareamento(modo);
+export async function POST() {
+  const resultado = iniciarPareamento();
   return NextResponse.json(resultado, { status: resultado.ok ? 202 : 400 });
 }
