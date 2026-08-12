@@ -1,6 +1,7 @@
 import { getConfig } from '@/lib/data';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { ConfiguracoesForm } from '@/components/dominio/ConfiguracoesForm';
+import { WhatsappVinculo } from '@/components/dominio/WhatsappVinculo';
 
 export default async function ConfiguracoesPage() {
   const config = await getConfig();
@@ -11,6 +12,7 @@ export default async function ConfiguracoesPage() {
         titulo="Configurações"
         descricao="Parâmetros do robô. Campos em âmbar ainda precisam do dado real."
       />
+      <WhatsappVinculo />
       <ConfiguracoesForm config={config} />
     </div>
   );
