@@ -30,7 +30,7 @@ const INICIADO_EM = new Date().toISOString();
 async function religarWhatsapp(): Promise<void> {
   try {
     const { manterConexaoViva } = await import('@/lib/server/whatsapp');
-    manterConexaoViva();
+    await manterConexaoViva();
   } catch {
     // Sem WhatsApp o robô ainda protocola; só o 2FA fica manual.
   }

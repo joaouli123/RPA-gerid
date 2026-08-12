@@ -25,7 +25,10 @@ export async function GET() {
   // estiver conectada. É aqui porque a tela de configurações consulta esta rota
   // em intervalo — sem isso, a ponte só subiria quando o GERID pedisse o 2FA,
   // que é o pior momento para descobrir que a conexão caiu no deploy da manhã.
-  manterConexaoViva();
+  // O `await` é só a leitura da credencial em disco (rápida), não a conexão.
+  // É ele que faz a primeira resposta depois de um restart já saber que a
+  // sessão é pareada, em vez de mandar a tela abrir um QR desnecessário.
+  await manterConexaoViva();
 
   const situacao = situacaoWhatsapp();
 

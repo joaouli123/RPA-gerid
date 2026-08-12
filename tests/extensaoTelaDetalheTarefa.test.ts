@@ -45,7 +45,12 @@ const TELA_DETALHE = `
 `;
 
 type LeituraDaTela = { protocolo: string; protocoladoEm: string };
-type DecisaoDeModal = { tipo: string; texto: string; algumDialogo: boolean };
+type DecisaoDeModal = {
+  tipo: string;
+  texto: string;
+  algumDialogo: boolean;
+  naoReconhecido: string;
+};
 
 async function comAPagina<T>(html: string, acao: (pagina: any) => Promise<unknown>): Promise<T> {
   const navegador = await chromium.launch({ headless: true });

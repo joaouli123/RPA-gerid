@@ -154,15 +154,20 @@ function agendarReconexao(): void {
  * Chamada a cada consulta de status, que é o que a tela de configurações já faz
  * de segundos em segundos. Barata: sai na hora se já estiver conectada ou se já
  * houver tentativa em andamento.
+ *
+ * Devolve promessa porque quem consulta o status precisa esperar por ela: o
+ * único trabalho aqui é ler se existe credencial em disco, e é isso que separa
+ * "precisa de alguém com o celular" de "já é pareado, está só voltando". Sem o
+ * `await`, a primeira consulta depois de um restart respondia "não vinculado" e
+ * a tela mostrava um QR que ninguém precisava escanear. A conexão em si NÃO é
+ * esperada — essa demora, e a resposta não pode esperar por ela.
  */
-export function manterConexaoViva(): void {
+export async function manterConexaoViva(): Promise<void> {
   if (!whatsappConfigurado()) return;
   if (ponte.conectado || ponte.conectando || ponte.religarEm || ponte.desvinculado) return;
-  void sessaoJaPareada().then((pareada) => {
-    if (!pareada) return;
-    ponte.registrada = true;
-    void garantirConexao().catch(() => agendarReconexao());
-  });
+  if (!(await sessaoJaPareada())) return;
+  ponte.registrada = true;
+  void garantirConexao().catch(() => agendarReconexao());
 }
 
 /**
@@ -408,6 +413,8 @@ export function situacaoWhatsapp(): {
   configurado: boolean;
   conectado: boolean;
   precisaParear: boolean;
+  pareado: boolean;
+  reconectando: boolean;
   codigoPareamento: string | null;
   qr: string | null;
   numeroMascarado: string;
@@ -417,7 +424,12 @@ export function situacaoWhatsapp(): {
   return {
     configurado: whatsappConfigurado(),
     conectado: ponte.conectado,
-    precisaParear: !ponte.conectado,
+    // Cair não é o mesmo que estar solto. `precisaParear` agora quer dizer
+    // "precisa de alguém com o celular na frente da tela": uma sessão já pareada
+    // que caiu volta sozinha, e mostrar QR nela seria pedir trabalho à toa.
+    precisaParear: !ponte.conectado && !ponte.registrada,
+    pareado: ponte.registrada,
+    reconectando: !ponte.conectado && (ponte.conectando !== null || ponte.religarEm !== null),
     codigoPareamento: ponte.codigoPareamento,
     // O QR era capturado e jogado fora: só ia para o log do servidor, onde
     // ninguém que usa o painel consegue apontar a câmera. É o mesmo dado, agora
