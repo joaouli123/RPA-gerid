@@ -3,7 +3,12 @@ import { pedidoJaEmAberto, preencherRequerimento, vigiarPedidoEmAberto } from '.
 import { ErroGerid } from './tiposGerid';
 import { mapaGerid } from './mapaGerid';
 import { classificarPreenchimento } from './classificarPreenchimento';
-import { detectarProtocoloEmTexto } from './detectarProtocolo';
+import {
+  campoDaTelaDeTarefa,
+  detectarProtocoloEmTexto,
+  protocoloNaTelaDeTarefa,
+} from './detectarProtocolo';
+import { decidirModalDoEnvio } from './modaisDoEnvio';
 import {
   capturarDiagnosticoGerid,
   detectarEstadoGerid,
@@ -11,7 +16,7 @@ import {
   resumirDiagnosticoGerid,
 } from './estadoGerid';
 
-const CONTENT_BUILD_ID = '1.6.0-20260812.28';
+const CONTENT_BUILD_ID = '1.6.0-20260812.29';
 const EVENTO_LOG_GERID = '__gerid_rpa_log__';
 const CANAL_CONTROLE_GERID = '__gerid_rpa_control__';
 const emContextoExtensao = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.id);
@@ -347,5 +352,40 @@ async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> 
 (window as any).detectarProtocoloGerid = () => {
   if (detectarEstadoGerid().etapa !== 'comprovante') return null;
   return detectarProtocoloEmTexto(document.body?.innerText || '');
+};
+
+/**
+ * O protocolo na TELA DE DETALHE da tarefa (`/tarefas/detalhar_tarefa/…`).
+ *
+ * Ao confirmar o aviso de biometria o GERID nao abre o comprovante: ele
+ * RECARREGA o navegador no detalhamento do requerimento. O laco que esperava o
+ * numero morre junto com o documento antigo, e sem esta funcao o background so
+ * enxergaria "a pagina recarregou" — e tentaria o caso de novo, criando um
+ * segundo pedido para a mesma pessoa.
+ *
+ * Aqui nao ha o risco que obriga `detectarProtocoloGerid` a exigir a tela de
+ * comprovante: a lista mostra protocolo de muita gente, o detalhamento mostra
+ * UM requerimento, com o numero num campo rotulado. A conferencia de dono
+ * continua sendo feita por `requerimentoAbertoEhDoCaso`.
+ */
+(window as any).protocoloDaTarefaNaTela = () => ({
+  protocolo: protocoloNaTelaDeTarefa(document) || '',
+  // A DATA vem junto porque e ela que separa "acabei de protocolar" de "esta
+  // aberto na tela um BPC que esta pessoa pediu ano passado". E a mesma regra
+  // que ja protege a leitura da lista de tarefas.
+  protocoladoEm: campoDaTelaDeTarefa(document, 'protocolado em'),
+});
+
+/**
+ * Diagnostico: o que o robo FARIA com o modal aberto agora — sem clicar.
+ *
+ * Existe para que a regra mais perigosa do robo (clicar em "Confirmar") possa
+ * ser conferida na tela real e coberta por teste sem disparar o clique. Devolve
+ * so o tipo e o texto; o elemento do botao fica de fora de proposito, para nao
+ * dar a ninguem uma alca de clique atraves do console.
+ */
+(window as any).decidirModalDoEnvioGerid = () => {
+  const decisao = decidirModalDoEnvio(document);
+  return { tipo: decisao.tipo, texto: decisao.texto, algumDialogo: decisao.algumDialogo };
 };
 

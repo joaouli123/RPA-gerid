@@ -31,7 +31,8 @@ import {
   SLOTS_GERID,
   PROTOCOLAR_AUTOMATICAMENTE,
 } from './regrasPreenchimento';
-import { detectarProtocoloEmTexto } from './detectarProtocolo';
+import { detectarProtocoloEmTexto, protocoloNaTelaDeTarefa } from './detectarProtocolo';
+import { decidirModalDoEnvio } from './modaisDoEnvio';
 
 /**
  * PREENCHIMENTO DO REQUERIMENTO NO GERID — passos 1 a 9, parando no Confirmar.
@@ -432,6 +433,7 @@ async function passo10ConfirmarEProtocolar(
 
   return recusar(
     'Confirmei o envio, mas o GERID não mostrou o número do protocolo em 60s. ' +
+    (modais.ciente ? `O aviso que confirmei dizia: "${modais.ciente}". ` : '') +
     'NÃO refaça o requerimento sem antes conferir na lista se ele já foi protocolado.',
   );
 }
@@ -445,6 +447,9 @@ async function passo10ConfirmarEProtocolar(
  * 2. **"Aviso"**, com um único botão Confirmar e o texto "Seu requerimento
  *    ainda não foi finalizado. Você precisa realizar o agendamento de Avaliação
  *    Social…". É um ciente: sem clicar nele o envio não anda.
+ * 3. **Qualquer outro ciente de botão único** — o INSS acrescenta aviso novo
+ *    sem avisar ninguém (o de biometria apareceu em 08/2026). Modal com um
+ *    único botão rotulado não oferece escolha, então confirmar é a única saída.
  *
  * ⚠️ Existe um TERCEIRO modal no GERID que também tem um botão "Confirmar": o
  * "Você criou uma tarefa, protocolo …, para este interessado recentemente.
@@ -455,47 +460,21 @@ async function passo10ConfirmarEProtocolar(
  */
 async function confirmarModaisDoEnvio(
   page: Page,
-): Promise<{ confirmou: boolean; agendamento: string }> {
+): Promise<{ confirmou: boolean; agendamento: string; ciente: string }> {
   const limite = Date.now() + 20_000;
   let confirmou = false;
   let agendamento = '';
+  let ciente = '';
 
   while (Date.now() < limite) {
+    // A DECISAO mora em `decidirModalDoEnvio`, que nao clica em nada; o clique
+    // e daqui. Separado assim a regra pode ser testada com modal de verdade na
+    // tela, sem que o teste dispare o clique que, na tela errada, abandonaria um
+    // requerimento inteiro.
     const achado = await page.evaluate(() => {
-      const norm = (valor: string | null | undefined) => (valor || '')
-        .replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      const naTela = (el: Element | null): el is HTMLElement => {
-        if (!(el instanceof HTMLElement) || !el.isConnected) return false;
-        const estilo = window.getComputedStyle(el);
-        return estilo.display !== 'none' && estilo.visibility !== 'hidden' &&
-          el.getClientRects().length > 0;
-      };
-
-      let algumDialogo = false;
-      for (const dialogo of Array.from(document.querySelectorAll('[role="dialog"]'))) {
-        if (!naTela(dialogo)) continue;
-        algumDialogo = true;
-        const texto = (dialogo as HTMLElement).innerText || dialogo.textContent || '';
-        const t = norm(texto);
-        const botoes = Array.from(dialogo.querySelectorAll('button')).filter(naTela);
-        const confirmar = botoes.find((botao) => norm(botao.innerText) === 'confirmar');
-        if (!confirmar) continue;
-
-        // 1. Confirmação final: "Atenção" + Cancelar ao lado do Confirmar.
-        if (t.includes('atencao') && botoes.some((b) => norm(b.innerText) === 'cancelar')) {
-          confirmar.click();
-          return { tipo: 'atencao', texto: texto.trim().slice(0, 400), algumDialogo };
-        }
-
-        // 2. Ciente do agendamento. A frase é a assinatura: nenhum outro modal
-        //    do GERID diz que o requerimento ainda não foi finalizado.
-        if (t.includes('requerimento ainda nao foi finalizado')) {
-          confirmar.click();
-          return { tipo: 'agendamento', texto: texto.trim().slice(0, 400), algumDialogo };
-        }
-      }
-      return { tipo: '', texto: '', algumDialogo };
+      const decisao = decidirModalDoEnvio(document);
+      if (decisao.tipo && decisao.confirmar) decisao.confirmar.click();
+      return { tipo: decisao.tipo, texto: decisao.texto, algumDialogo: decisao.algumDialogo };
     });
 
     if (achado.tipo === 'atencao') confirmou = true;
@@ -503,14 +482,21 @@ async function confirmarModaisDoEnvio(
       confirmou = true;
       agendamento = achado.texto;
     }
-    if (achado.tipo) console.log('[P10] modal confirmado:', achado.tipo);
+    if (achado.tipo === 'ciente') {
+      confirmou = true;
+      // O texto NÃO é engolido: "é necessário realizar o cadastro biométrico"
+      // é uma exigência que alguém vai ter que cumprir em 30 dias. Confirmar o
+      // ciente sem repetir a frase esconderia isso de quem opera.
+      ciente = achado.texto;
+    }
+    if (achado.tipo) console.log('[P10] modal confirmado:', achado.tipo, '—', achado.texto);
 
     // Já confirmei e a tela ficou sem modal: acabou, não há o que esperar.
     if (confirmou && !achado.tipo && !achado.algumDialogo) break;
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
 
-  return { confirmou, agendamento };
+  return { confirmou, agendamento, ciente };
 }
 
 /**
@@ -524,7 +510,9 @@ async function confirmarModaisDoEnvio(
 function lerComprovante(): { protocolo: string; comprovante: string } {
   const texto = (document.body?.innerText || '').replace(/\u00a0/g, ' ');
   return {
-    protocolo: detectarProtocoloEmTexto(texto) || '',
+    // A tela de detalhe da tarefa vem primeiro porque ali o n\u00famero est\u00e1 num
+    // campo rotulado \u2014 \u00e9 leitura exata, n\u00e3o reconhecimento de frase.
+    protocolo: protocoloNaTelaDeTarefa(document) || detectarProtocoloEmTexto(texto) || '',
     // Recorta a partir do título "Comprovante" para não arquivar o menu do
     // portal junto; sem o título, guarda a tela toda em vez de perder o dado.
     comprovante: (texto.split(/^\s*Comprovante\s*$/m)[1] || texto).trim().slice(0, 8_000),

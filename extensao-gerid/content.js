@@ -796,6 +796,22 @@
   });
 
   // src/detectarProtocolo.ts
+  function campoDaTelaDeTarefa(doc, rotuloProcurado) {
+    if (!doc.querySelector("#tarefas-container")) return "";
+    const alvo = rotuloProcurado.trim().toLowerCase();
+    for (const rotulo of Array.from(doc.querySelectorAll(".dtp-datagrid-label"))) {
+      const nome = (rotulo.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+      if (nome !== alvo) continue;
+      const valor = rotulo.parentElement?.querySelector(".dtp-datagrid-value");
+      const texto = (valor?.textContent || "").replace(/\s+/g, " ").trim();
+      if (texto) return texto;
+    }
+    return "";
+  }
+  function protocoloNaTelaDeTarefa(doc) {
+    const digitos = campoDaTelaDeTarefa(doc, "protocolo").replace(/\D/g, "");
+    return digitos.length >= 8 && digitos.length <= 25 ? digitos : null;
+  }
   function detectarProtocoloEmTexto(texto) {
     const normalizado = String(texto || "").replace(/\s+/g, " ").trim();
     const padroes = [
@@ -813,6 +829,45 @@
   }
   var init_detectarProtocolo = __esm({
     "src/detectarProtocolo.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/modaisDoEnvio.ts
+  function norm(valor) {
+    return (valor || "").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "");
+  }
+  function naTela(el) {
+    if (!(el instanceof HTMLElement) || !el.isConnected) return false;
+    const estilo = window.getComputedStyle(el);
+    return estilo.display !== "none" && estilo.visibility !== "hidden" && el.getClientRects().length > 0;
+  }
+  function decidirModalDoEnvio(doc) {
+    let algumDialogo = false;
+    for (const dialogo of Array.from(doc.querySelectorAll('[role="dialog"]'))) {
+      if (!naTela(dialogo)) continue;
+      algumDialogo = true;
+      const texto = dialogo.innerText || dialogo.textContent || "";
+      const t = norm(texto);
+      const recorte = texto.trim().slice(0, 400);
+      const botoes = Array.from(dialogo.querySelectorAll("button")).filter(naTela);
+      const confirmar = botoes.find((botao) => norm(botao.innerText) === "confirmar");
+      if (!confirmar) continue;
+      if (t.includes("atencao") && botoes.some((b) => norm(b.innerText) === "cancelar")) {
+        return { tipo: "atencao", texto: recorte, algumDialogo, confirmar };
+      }
+      if (t.includes("requerimento ainda nao foi finalizado")) {
+        return { tipo: "agendamento", texto: recorte, algumDialogo, confirmar };
+      }
+      const comRotulo = botoes.filter((botao) => norm(botao.innerText).length > 0);
+      if (comRotulo.length === 1 && comRotulo[0] === confirmar) {
+        return { tipo: "ciente", texto: recorte, algumDialogo, confirmar };
+      }
+    }
+    return { tipo: "", texto: "", algumDialogo, confirmar: null };
+  }
+  var init_modaisDoEnvio = __esm({
+    "src/modaisDoEnvio.ts"() {
       "use strict";
     }
   });
@@ -1017,56 +1072,41 @@
       );
     }
     return recusar(
-      "Confirmei o envio, mas o GERID n\xE3o mostrou o n\xFAmero do protocolo em 60s. N\xC3O refa\xE7a o requerimento sem antes conferir na lista se ele j\xE1 foi protocolado."
+      "Confirmei o envio, mas o GERID n\xE3o mostrou o n\xFAmero do protocolo em 60s. " + (modais.ciente ? `O aviso que confirmei dizia: "${modais.ciente}". ` : "") + "N\xC3O refa\xE7a o requerimento sem antes conferir na lista se ele j\xE1 foi protocolado."
     );
   }
   async function confirmarModaisDoEnvio(page) {
     const limite = Date.now() + 2e4;
     let confirmou = false;
     let agendamento = "";
+    let ciente = "";
     while (Date.now() < limite) {
       const achado = await page.evaluate(() => {
-        const norm = (valor) => (valor || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        const naTela = (el) => {
-          if (!(el instanceof HTMLElement) || !el.isConnected) return false;
-          const estilo = window.getComputedStyle(el);
-          return estilo.display !== "none" && estilo.visibility !== "hidden" && el.getClientRects().length > 0;
-        };
-        let algumDialogo = false;
-        for (const dialogo of Array.from(document.querySelectorAll('[role="dialog"]'))) {
-          if (!naTela(dialogo)) continue;
-          algumDialogo = true;
-          const texto = dialogo.innerText || dialogo.textContent || "";
-          const t = norm(texto);
-          const botoes = Array.from(dialogo.querySelectorAll("button")).filter(naTela);
-          const confirmar = botoes.find((botao) => norm(botao.innerText) === "confirmar");
-          if (!confirmar) continue;
-          if (t.includes("atencao") && botoes.some((b) => norm(b.innerText) === "cancelar")) {
-            confirmar.click();
-            return { tipo: "atencao", texto: texto.trim().slice(0, 400), algumDialogo };
-          }
-          if (t.includes("requerimento ainda nao foi finalizado")) {
-            confirmar.click();
-            return { tipo: "agendamento", texto: texto.trim().slice(0, 400), algumDialogo };
-          }
-        }
-        return { tipo: "", texto: "", algumDialogo };
+        const decisao = decidirModalDoEnvio(document);
+        if (decisao.tipo && decisao.confirmar) decisao.confirmar.click();
+        return { tipo: decisao.tipo, texto: decisao.texto, algumDialogo: decisao.algumDialogo };
       });
       if (achado.tipo === "atencao") confirmou = true;
       if (achado.tipo === "agendamento") {
         confirmou = true;
         agendamento = achado.texto;
       }
-      if (achado.tipo) console.log("[P10] modal confirmado:", achado.tipo);
+      if (achado.tipo === "ciente") {
+        confirmou = true;
+        ciente = achado.texto;
+      }
+      if (achado.tipo) console.log("[P10] modal confirmado:", achado.tipo, "\u2014", achado.texto);
       if (confirmou && !achado.tipo && !achado.algumDialogo) break;
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
-    return { confirmou, agendamento };
+    return { confirmou, agendamento, ciente };
   }
   function lerComprovante() {
     const texto = (document.body?.innerText || "").replace(/\u00a0/g, " ");
     return {
-      protocolo: detectarProtocoloEmTexto(texto) || "",
+      // A tela de detalhe da tarefa vem primeiro porque ali o n\u00famero est\u00e1 num
+      // campo rotulado \u2014 \u00e9 leitura exata, n\u00e3o reconhecimento de frase.
+      protocolo: protocoloNaTelaDeTarefa(document) || detectarProtocoloEmTexto(texto) || "",
       // Recorta a partir do título "Comprovante" para não arquivar o menu do
       // portal junto; sem o título, guarda a tela toda em vez de perder o dado.
       comprovante: (texto.split(/^\s*Comprovante\s*$/m)[1] || texto).trim().slice(0, 8e3)
@@ -1390,9 +1430,9 @@
   }
   async function buscarCampoPorPergunta(page, trechoPergunta, querCombobox) {
     return page.evaluate(({ trecho, combobox }) => {
-      const norm = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      const ler = (el) => norm(el.innerText || el.textContent || "");
-      const alvo = norm(trecho);
+      const norm2 = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const ler = (el) => norm2(el.innerText || el.textContent || "");
+      const alvo = norm2(trecho);
       if (!alvo) return null;
       const naoTexto = ["file", "checkbox", "radio", "hidden", "submit", "button"];
       const serve = (input) => combobox ? input.getAttribute("role") === "combobox" : input.getAttribute("role") !== "combobox" && !naoTexto.includes(input.type);
@@ -1441,14 +1481,14 @@
         if (id) return id;
       }
       const generico = await page.evaluate(() => {
-        const norm = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        const ler = (el) => norm(el.innerText || el.textContent || "");
+        const norm2 = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const ler = (el) => norm2(el.innerText || el.textContent || "");
         const naoTexto = ["file", "checkbox", "radio", "hidden", "submit", "button"];
         const outroDono = ["requerente", "interessado", "titular", "representante legal"];
         for (const input of Array.from(document.querySelectorAll("input"))) {
           if (!input.id || input.disabled || input.getAttribute("role") === "combobox") continue;
           if (naoTexto.includes(input.type)) continue;
-          const proprio = norm([
+          const proprio = norm2([
             document.querySelector(`label[for="${CSS.escape(input.id)}"]`)?.textContent || "",
             input.getAttribute("aria-label") || "",
             input.getAttribute("placeholder") || "",
@@ -1465,10 +1505,10 @@
       });
       if (generico) return generico;
       return page.evaluate(() => {
-        const norm = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        const ler = (el) => el ? norm(el.innerText || el.textContent || "") : "";
+        const norm2 = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const ler = (el) => el ? norm2(el.innerText || el.textContent || "") : "";
         const naoTexto = ["file", "checkbox", "radio", "hidden", "submit", "button"];
-        const identidade = (input) => norm([
+        const identidade = (input) => norm2([
           document.querySelector(`label[for="${CSS.escape(input.id)}"]`)?.textContent || "",
           input.getAttribute("aria-label") || "",
           input.getAttribute("placeholder") || "",
@@ -1494,12 +1534,12 @@
   }
   async function pistasDoProcurador(page) {
     return page.evaluate(() => {
-      const norm = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const norm2 = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       const ler = (el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
       const pistas = /* @__PURE__ */ new Set();
       for (const bloco of Array.from(document.querySelectorAll('[id^="div-ca-"]'))) {
         const rotulo = bloco.querySelector("label");
-        if (!rotulo || !norm(ler(rotulo)).includes("deseja cadastrar procurador")) continue;
+        if (!rotulo || !norm2(ler(rotulo)).includes("deseja cadastrar procurador")) continue;
         const campos = Array.from(bloco.querySelectorAll("input"));
         const combo = campos.find((c) => c.getAttribute("role") === "combobox");
         pistas.add(`resposta atual: "${combo?.value || "(vazio)"}"`);
@@ -1526,7 +1566,7 @@
       for (const el of Array.from(document.querySelectorAll("body *"))) {
         if (el.children.length > 2 || el.getClientRects().length === 0) continue;
         const texto = ler(el);
-        if (!texto || texto.length > 90 || !norm(texto).includes("procurador")) continue;
+        if (!texto || texto.length > 90 || !norm2(texto).includes("procurador")) continue;
         pistas.add(`${el.tagName.toLowerCase()}: "${texto.slice(0, 70)}"`);
       }
       const acoes = 'button, a[role="button"], .br-button, [aria-label]';
@@ -1543,15 +1583,15 @@
   }
   async function fecharAvisosSobrepostos(page) {
     return page.evaluate(() => {
-      const norm = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const norm2 = (s) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       const fechados = [];
       for (const modal of Array.from(document.querySelectorAll('[role="dialog"]'))) {
         if (modal.getClientRects().length === 0) continue;
-        const texto = norm(modal.innerText || modal.textContent || "");
+        const texto = norm2(modal.innerText || modal.textContent || "");
         if (texto.includes("tipo de contato") || texto.includes("contatos")) continue;
         const conhecido = texto.includes("deseja visualizar esta tarefa") || texto.includes("cpf do requerente");
         if (!conhecido) continue;
-        const fechar = Array.from(modal.querySelectorAll("button")).find((botao) => norm(botao.innerText || botao.textContent || "") === "fechar");
+        const fechar = Array.from(modal.querySelectorAll("button")).find((botao) => norm2(botao.innerText || botao.textContent || "") === "fechar");
         if (!fechar) continue;
         fechar.click();
         fechados.push(texto.slice(0, 120));
@@ -1777,14 +1817,14 @@
   }
   function lerLinhasGrupoFamiliar(page) {
     return page.evaluate(() => {
-      const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+      const norm2 = (s) => (s || "").replace(/\s+/g, " ").trim();
       const out = [];
       for (let i = 0; i < 40; i++) {
         const ec = document.getElementById(`selectEstadoCivil${i}`);
         if (!ec) break;
         const tr = ec.closest("tr");
         const primeiraCelula = tr?.querySelector("td");
-        const digitos = norm(primeiraCelula?.innerText || "").replace(/\D/g, "");
+        const digitos = norm2(primeiraCelula?.innerText || "").replace(/\D/g, "");
         const cpf = digitos.length === 10 ? digitos.padStart(11, "0") : digitos;
         const ehRequerente = !document.getElementById(`selectParentesco${i}`);
         out.push({ indice: i, cpf, ehRequerente });
@@ -2358,11 +2398,11 @@
     const unidades = page.locator(mapaGerid.passo8.cardUnidade);
     await unidades.first().waitFor({ state: "visible", timeout: 1e4 }).catch(() => void 0);
     const opcoes = await page.evaluate(() => {
-      const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+      const norm2 = (s) => (s || "").replace(/\s+/g, " ").trim();
       return Array.from(document.querySelectorAll(".unidade")).map((e, indice) => ({
         indice,
-        nome: norm(e.querySelector(".nome")?.innerText || ""),
-        cidade: norm(e.querySelector(".municipio")?.innerText || "")
+        nome: norm2(e.querySelector(".nome")?.innerText || ""),
+        cidade: norm2(e.querySelector(".municipio")?.innerText || "")
       }));
     });
     if (opcoes.length === 0) {
@@ -2404,6 +2444,7 @@
       init_estadoGerid();
       init_regrasPreenchimento();
       init_detectarProtocolo();
+      init_modaisDoEnvio();
       ORDEM_ETAPAS = [
         "passo_1",
         "passo_2",
@@ -2469,8 +2510,9 @@
       init_mapaGerid();
       init_classificarPreenchimento();
       init_detectarProtocolo();
+      init_modaisDoEnvio();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.6.0-20260812.28";
+      var CONTENT_BUILD_ID = "1.6.0-20260812.29";
       var EVENTO_LOG_GERID = "__gerid_rpa_log__";
       var CANAL_CONTROLE_GERID = "__gerid_rpa_control__";
       var emContextoExtensao = typeof chrome !== "undefined" && Boolean(chrome.runtime?.id);
@@ -2713,6 +2755,17 @@
       window.detectarProtocoloGerid = () => {
         if (detectarEstadoGerid().etapa !== "comprovante") return null;
         return detectarProtocoloEmTexto(document.body?.innerText || "");
+      };
+      window.protocoloDaTarefaNaTela = () => ({
+        protocolo: protocoloNaTelaDeTarefa(document) || "",
+        // A DATA vem junto porque e ela que separa "acabei de protocolar" de "esta
+        // aberto na tela um BPC que esta pessoa pediu ano passado". E a mesma regra
+        // que ja protege a leitura da lista de tarefas.
+        protocoladoEm: campoDaTelaDeTarefa(document, "protocolado em")
+      });
+      window.decidirModalDoEnvioGerid = () => {
+        const decisao = decidirModalDoEnvio(document);
+        return { tipo: decisao.tipo, texto: decisao.texto, algumDialogo: decisao.algumDialogo };
       };
     }
   });

@@ -762,6 +762,51 @@ async function reiniciarWizardNaAba(tabId) {
   return resultado[0]?.result === true;
 }
 
+/**
+ * "A pagina recarregou" ou "o requerimento ENTROU e o GERID mudou de tela"?
+ *
+ * Sao indistinguiveis pelo erro: nos dois casos o script que estava rodando
+ * morre junto com o documento. A diferenca so aparece olhando ONDE o navegador
+ * parou. Ao confirmar o aviso de biometria o GERID recarrega direto em
+ * `/tarefas/detalhar_tarefa/<protocolo>` — se o robo tratasse isso como falha
+ * de navegacao, tentaria o caso de novo e abriria um SEGUNDO pedido para a
+ * mesma pessoa. Por isso a pergunta vem ANTES da retentativa, sempre.
+ *
+ * Devolve o resultado de sucesso quando ha protocolo de HOJE, deste caso, na
+ * tela; senao null, e a retentativa segue normalmente.
+ */
+async function protocoloDepoisDeNavegar(tabId, caso) {
+  try {
+    // A tela nova ainda pode estar carregando: o erro chega no instante em que
+    // o documento antigo morre, nao quando o novo termina.
+    const limite = Date.now() + 20000;
+    while (Date.now() < limite) {
+      const aba = await chrome.tabs.get(tabId).catch(() => null);
+      if (!aba) return null;
+      if (aba.status === 'complete') break;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    await new Promise((r) => setTimeout(r, 1200));
+
+    const protocolo = await lerProtocoloNaTelaDetalhe(tabId, caso.cpf, caso.nome);
+    if (!protocolo) return null;
+
+    sendLog(
+      `O GERID trocou de tela porque o requerimento ENTROU: protocolo ${protocolo} ` +
+      `para ${caso.nome}. Nao vou refazer o caso.`,
+    );
+    return {
+      status: 'sucesso',
+      protocolo,
+      erro: 'O GERID saiu do formulário direto para o detalhe da tarefa (é o que acontece ' +
+        'quando ele exige o cadastro biométrico). O protocolo foi lido nessa tela.',
+    };
+  } catch (erro) {
+    sendLog(`Nao consegui conferir a tela depois da navegacao: ${erro?.message || erro}`);
+    return null;
+  }
+}
+
 async function executarCasoNoGerid(tabId, casoComAnexos) {
   for (let tentativa = 0; tentativa < 2; tentativa++) {
     try {
@@ -808,6 +853,8 @@ async function executarCasoNoGerid(tabId, casoComAnexos) {
       const resultado = resultados[0]?.result;
       if (!resultado) throw new Error('O script não retornou resultado; a página pode ter recarregado.');
       if (resultado.status === 'erro' && tentativa === 0 && erroDeNavegacao(resultado.erro)) {
+        const jaEntrou = await protocoloDepoisDeNavegar(abaId, casoComAnexos);
+        if (jaEntrou) return jaEntrou;
         sendLog('O Gerid retornou a uma tela anterior durante o preenchimento. Vou recarregar e retomar o mesmo caso...');
         continue;
       }
@@ -820,6 +867,8 @@ async function executarCasoNoGerid(tabId, casoComAnexos) {
         };
       }
       if (tentativa === 0 && erroDeNavegacao(erro)) {
+        const jaEntrou = await protocoloDepoisDeNavegar(tabId, casoComAnexos);
+        if (jaEntrou) return jaEntrou;
         sendLog('O Gerid mudou de tela durante o preenchimento. Vou recuperar o mesmo caso sem perder a fila...');
         continue;
       }
@@ -1069,6 +1118,183 @@ async function gerarComprovanteNaLista(tabId, protocolo) {
     },
   });
   return saida[0]?.result || { erro: 'A tela do comprovante nao respondeu.' };
+}
+
+/**
+ * O protocolo na tela de DETALHE da tarefa, se for mesmo deste caso.
+ *
+ * Ao confirmar o aviso de biometria o GERID recarrega o navegador em
+ * `/tarefas/detalhar_tarefa/<protocolo>`. Sem ler aqui, o background so veria
+ * "a pagina recarregou durante o preenchimento" e tentaria o caso outra vez —
+ * um SEGUNDO requerimento no nome de quem ja tem um.
+ *
+ * Devolve '' quando a tela nao e essa, quando nao ha numero, quando o dono da
+ * tela nao e o caso (numero de terceiro entraria no painel como se fosse deste
+ * cliente) ou quando o requerimento nao e de HOJE — a tela de detalhe tambem
+ * abre por um BPC que a pessoa pediu ano passado, e usar aquele numero marcaria
+ * como protocolado um caso que nunca foi enviado.
+ */
+async function lerProtocoloNaTelaDetalhe(tabId, cpf, nome) {
+  try {
+    await garantirContentScript(tabId);
+    const tela = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => window.protocoloDaTarefaNaTela?.() || null,
+    }).then((r) => r[0]?.result).catch(() => null);
+    const lido = String(tela?.protocolo || '');
+    if (!lido) return '';
+
+    const protocoladoEm = String(tela?.protocoladoEm || '');
+    if (protocoladoEm && protocoladoEm !== dataDeHojeBR()) {
+      sendLog(
+        `A tela de detalhe mostra o protocolo ${lido}, protocolado em ${protocoladoEm} ` +
+        '(nao e de hoje). Nao usei esse numero.',
+      );
+      return '';
+    }
+
+    const dono = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      args: [String(cpf || ''), String(nome || '')],
+      func: (cpfAlvo, nomeAlvo) => window.requerimentoAbertoEhDoCaso?.(cpfAlvo, nomeAlvo) || 'indefinido',
+    }).then((r) => r[0]?.result).catch(() => 'indefinido');
+
+    if (dono === 'nao') {
+      sendLog(`A tela de detalhe mostra o protocolo ${lido}, mas de outra pessoa. Ignorei.`);
+      return '';
+    }
+    return lido;
+  } catch (erro) {
+    sendLog(`Nao consegui ler a tela de detalhe da tarefa: ${erro?.message || erro}`);
+    return '';
+  }
+}
+
+/**
+ * Clica "Gerar Comprovante" NA PROPRIA tela de detalhe e captura o PDF.
+ *
+ * E o caminho curto: o robo ja esta na pagina do requerimento que acabou de
+ * protocolar, com o botao a vista (`#btn-dt-gerar-comprovante`). Abrir uma aba
+ * nova e refiltrar a lista por CPF, como faz `gerarComprovanteNaLista`, so faz
+ * sentido quando o robo NAO esta nesta tela.
+ *
+ * ⚠️ Ao lado do botao certo existe "Cancelar Requerimento", que apaga o pedido
+ * que acabou de entrar. Por isso a busca e pelo id exato, nunca por texto nem
+ * por posicao.
+ */
+async function gerarComprovanteNaTelaDetalhe(tabId, protocolo) {
+  const saida = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [String(protocolo || '').replace(/\D/g, '')],
+    func: async (protocoloAlvo) => {
+      const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+      const g = window;
+      if (!g.__geridCapturaPdf) {
+        g.__geridCapturaPdf = { blob: null, dataUrl: '' };
+        const criarUrl = URL.createObjectURL.bind(URL);
+        URL.createObjectURL = function (obj) {
+          try { if (obj instanceof Blob) g.__geridCapturaPdf.blob = obj; } catch (e) {}
+          return criarUrl(obj);
+        };
+        const fetchOriginal = g.fetch;
+        g.fetch = async function (...args) {
+          const resposta = await fetchOriginal.apply(this, args);
+          try {
+            const tipo = resposta.headers.get('content-type') || '';
+            if (/pdf|octet-stream/i.test(tipo)) {
+              g.__geridCapturaPdf.blob = await resposta.clone().blob();
+            }
+          } catch (e) {}
+          return resposta;
+        };
+        const cliqueOriginal = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function () {
+          try {
+            if (typeof this.href === 'string' && this.href.startsWith('data:')) {
+              g.__geridCapturaPdf.dataUrl = this.href;
+            }
+          } catch (e) {}
+          return cliqueOriginal.call(this);
+        };
+      }
+      g.__geridCapturaPdf.blob = null;
+      g.__geridCapturaPdf.dataUrl = '';
+
+      // Confere que a tela aberta e a do protocolo pedido ANTES de clicar: se o
+      // GERID tiver trocado de requerimento, o PDF baixado seria de outro caso.
+      const naTela = document.querySelector('#tarefas-container');
+      if (!naTela) return { erro: 'Esta aba nao esta na tela de detalhe da tarefa.' };
+      if (protocoloAlvo && !String(naTela.innerText || '').replace(/\D/g, '').includes(protocoloAlvo)) {
+        return { erro: `A tela de detalhe aberta nao e a do protocolo ${protocoloAlvo}.` };
+      }
+
+      const botao = document.querySelector('#btn-dt-gerar-comprovante');
+      if (!botao) return { erro: 'Nao achei o botao "Gerar Comprovante" na tela de detalhe.' };
+      botao.click();
+
+      const fim = Date.now() + 25000;
+      for (;;) {
+        if (g.__geridCapturaPdf.blob || g.__geridCapturaPdf.dataUrl) break;
+        if (Date.now() >= fim) return { erro: 'Pedi o comprovante, mas nao consegui capturar o arquivo.' };
+        await dormir(200);
+      }
+
+      if (g.__geridCapturaPdf.dataUrl) {
+        const base64 = g.__geridCapturaPdf.dataUrl.split(',')[1] || '';
+        return base64
+          ? { pdfBase64: base64, bytes: Math.round(base64.length * 0.75) }
+          : { erro: 'O link do comprovante veio vazio.' };
+      }
+      const blob = g.__geridCapturaPdf.blob;
+      const base64 = await new Promise((resolve) => {
+        const leitor = new FileReader();
+        leitor.onload = () => resolve(String(leitor.result).split(',')[1] || '');
+        leitor.onerror = () => resolve('');
+        leitor.readAsDataURL(blob);
+      });
+      return base64
+        ? { pdfBase64: base64, bytes: blob.size }
+        : { erro: 'Nao consegui ler o arquivo do comprovante.' };
+    },
+  });
+  return saida[0]?.result || { erro: 'A tela de detalhe nao respondeu.' };
+}
+
+/**
+ * Traz o comprovante SEM sair da tela em que o robo ja esta, quando da.
+ *
+ * MUTA `resultado`, igual a `conferirNaListaDeTarefas`. Devolve true quando o
+ * PDF veio — o chamador so cai para a lista de tarefas se aqui der false.
+ */
+async function comprovantePelaTelaDeDetalhe(tabId, caso, resultado) {
+  const protocolo = await lerProtocoloNaTelaDetalhe(tabId, caso.cpf, caso.nome);
+  if (!protocolo) return false;
+
+  if (!resultado.protocolo) {
+    resultado.status = 'sucesso';
+    resultado.protocolo = protocolo;
+    sendLog(`${caso.nome}: a tela de detalhe do GERID mostra o protocolo ${protocolo}.`);
+  } else if (String(resultado.protocolo).replace(/\D/g, '') !== protocolo) {
+    // Divergencia e caso para humano, nao para escolha do robo.
+    sendLog(
+      `ATENCAO: li ${resultado.protocolo} no preenchimento e ${protocolo} na tela de detalhe. ` +
+      'Nao baixei comprovante nenhum; confira qual e o requerimento certo.',
+    );
+    return false;
+  }
+
+  const pdf = await gerarComprovanteNaTelaDetalhe(tabId, protocolo);
+  if (!pdf.pdfBase64) {
+    sendLog(`Nao consegui gerar o comprovante na tela de detalhe: ${pdf.erro || 'motivo desconhecido'}`);
+    return false;
+  }
+  resultado.pdfBase64 = pdf.pdfBase64;
+  resultado.pdfNome = `comprovante ${protocolo}.pdf`;
+  sendLog(`Comprovante do protocolo ${protocolo} capturado na tela de detalhe (${pdf.bytes} bytes).`);
+  return true;
 }
 
 /**
@@ -1563,8 +1789,15 @@ async function processQueue(
 
       // Sessao morta: a lista tambem nao carregaria. Nos outros casos sempre
       // pergunta ao GERID — inclusive no sucesso, porque e de la que vem o PDF.
+      //
+      // Antes da lista, tenta a tela em que o robo JA esta: quando o GERID
+      // termina no detalhe da tarefa, o botao "Gerar Comprovante" esta ali na
+      // frente e nao ha por que abrir aba nova e refiltrar por CPF. So cai para
+      // a lista quando esse caminho curto nao resolve.
       if (resultado.status !== 'autenticacao') {
-        await conferirNaListaDeTarefas(caso, resultado);
+        const pelaTela = await comprovantePelaTelaDeDetalhe(aba.id, caso, resultado)
+          .catch(() => false);
+        if (!pelaTela) await conferirNaListaDeTarefas(caso, resultado);
       }
 
       if (resultado.status === 'autenticacao') {
