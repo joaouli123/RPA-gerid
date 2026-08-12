@@ -7,10 +7,10 @@ import { Botao } from '@/components/ui/Botao';
 /**
  * Vincular o WhatsApp que entrega os 6 dígitos do 2FA do GERID.
  *
- * Pareamento por CÓDIGO, não por QR: o painel roda no navegador (e em produção
- * fica num servidor remoto), então um QR que só existe no terminal do servidor
- * não serviria para nada. Aqui o operador vê 8 letras e digita no próprio
- * celular.
+ * Dois caminhos, porque a situação do operador varia: o QR resolve em segundos
+ * para quem está com o celular na mão em frente ao painel; o código de 8 letras
+ * serve para quem está longe da tela, com o painel aberto por outra pessoa, ou
+ * numa câmera que não colabora.
  *
  * Vale parear o MESMO número que o escritório já usa. Aí o robô conversa na
  * "Mensagem para mim mesmo" do operador: o aviso e o código ficam na conversa
@@ -22,17 +22,19 @@ interface Situacao {
   conectado: boolean;
   precisaParear: boolean;
   codigoPareamento: string | null;
+  /** SVG pronto — o servidor desenha, para não carregar mais um pacote no navegador. */
+  qrSvg: string | null;
   numeroMascarado: string;
   ultimoErro: string | null;
 }
 
 export function WhatsappVinculo() {
   const [situacao, setSituacao] = useState<Situacao | null>(null);
-  const [pedindo, setPedindo] = useState(false);
+  const [pedindo, setPedindo] = useState<'qr' | 'codigo' | null>(null);
   const [erro, setErro] = useState('');
-  // Enquanto o código está na tela, o pareamento acontece no celular — o painel
-  // não recebe evento nenhum. Só perguntando de tempos em tempos dá para saber
-  // que conectou e trocar a tela sozinho.
+  // O pareamento acontece no celular — o painel não recebe evento nenhum. Só
+  // perguntando de tempos em tempos dá para saber que conectou e trocar a tela
+  // sozinho. É também o que faz o QR se renovar: o WhatsApp troca a cada ~20s.
   const consultando = useRef(false);
 
   async function consultar() {
@@ -50,22 +52,23 @@ export function WhatsappVinculo() {
 
   useEffect(() => {
     void consultar();
-    const relogio = setInterval(() => { void consultar(); }, 4_000);
+    const relogio = setInterval(() => { void consultar(); }, 3_000);
     return () => clearInterval(relogio);
   }, []);
 
-  async function parear() {
-    setPedindo(true);
+  async function parear(modo: 'qr' | 'codigo') {
+    setPedindo(modo);
     setErro('');
     try {
-      const resposta = await fetch('/api/whatsapp', { method: 'POST' });
-      const corpo = await resposta.json();
-      if (!corpo.ok) setErro(corpo.erro || 'Não consegui falar com o WhatsApp.');
+      const resposta = await fetch(`/api/whatsapp?modo=${modo}`, { method: 'POST' });
+      // Resposta que não é JSON quer dizer proxy no meio (502/504), não WhatsApp.
+      const corpo = await resposta.json().catch(() => null);
+      if (!corpo?.ok) setErro(corpo?.erro || 'O servidor não aceitou o pedido de pareamento.');
       await consultar();
     } catch (falha) {
       setErro(falha instanceof Error ? falha.message : String(falha));
     } finally {
-      setPedindo(false);
+      setPedindo(null);
     }
   }
 
@@ -86,21 +89,19 @@ export function WhatsappVinculo() {
   if (situacao.conectado) {
     return (
       <Card className="p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="font-semibold">
-              WhatsApp vinculado{' '}
-              <span className="font-normal text-emerald-600 dark:text-emerald-400">• conectado</span>
-            </h3>
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-              Número {situacao.numeroMascarado}. Quando o GERID pedir o código, o aviso chega
-              nessa conversa e você responde só os 6 dígitos.
-            </p>
-          </div>
-        </div>
+        <h3 className="font-semibold">
+          WhatsApp vinculado{' '}
+          <span className="font-normal text-emerald-600 dark:text-emerald-400">• conectado</span>
+        </h3>
+        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+          Número {situacao.numeroMascarado}. Quando o GERID pedir o código, o aviso chega
+          nessa conversa e você responde só os 6 dígitos.
+        </p>
       </Card>
     );
   }
+
+  const esperando = situacao.qrSvg || situacao.codigoPareamento;
 
   return (
     <Card className="p-4">
@@ -112,7 +113,25 @@ export function WhatsappVinculo() {
         Vincula o número {situacao.numeroMascarado} para receber o pedido de código do GERID.
       </p>
 
-      {situacao.codigoPareamento ? (
+      {situacao.qrSvg && (
+        <div className="mt-4 space-y-3">
+          <div
+            className="mx-auto w-48 rounded-lg bg-white p-2 [&>svg]:h-full [&>svg]:w-full"
+            // SVG gerado pelo nosso servidor a partir da string do Baileys, não
+            // conteúdo de terceiro.
+            dangerouslySetInnerHTML={{ __html: situacao.qrSvg }}
+          />
+          <ol className="list-decimal space-y-1 pl-5 text-sm text-zinc-600 dark:text-zinc-300">
+            <li>No celular: WhatsApp → Aparelhos conectados → Conectar aparelho</li>
+            <li>Aponte a câmera para o código acima</li>
+          </ol>
+          <p className="text-xs text-zinc-500">
+            O código se renova sozinho a cada poucos segundos — pode escanear quando aparecer.
+          </p>
+        </div>
+      )}
+
+      {situacao.codigoPareamento && (
         <div className="mt-4 space-y-3">
           <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-center dark:border-zinc-700 dark:bg-zinc-800">
             <p className="text-xs uppercase tracking-wide text-zinc-500">Digite no celular</p>
@@ -129,13 +148,20 @@ export function WhatsappVinculo() {
             O código vale poucos minutos. Se expirar, gere outro.
           </p>
         </div>
-      ) : (
-        <div className="mt-4">
-          <Botao onClick={() => void parear()} disabled={pedindo}>
-            {pedindo ? 'Pedindo código...' : 'Gerar código de pareamento'}
-          </Botao>
-        </div>
       )}
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Botao onClick={() => void parear('qr')} disabled={pedindo !== null}>
+          {pedindo === 'qr' ? 'Gerando...' : esperando ? 'Gerar outro QR code' : 'Mostrar QR code'}
+        </Botao>
+        <Botao
+          variante="secundario"
+          onClick={() => void parear('codigo')}
+          disabled={pedindo !== null}
+        >
+          {pedindo === 'codigo' ? 'Pedindo...' : 'Prefiro digitar um código'}
+        </Botao>
+      </div>
 
       {erro && <p className="mt-3 text-sm text-rose-600 dark:text-rose-400">{erro}</p>}
       {!erro && situacao.ultimoErro && (

@@ -243,42 +243,53 @@ export async function avisarOperador(texto: string): Promise<boolean> {
 }
 
 /**
- * Pareia o número SEM QR code: o WhatsApp aceita "Conectar com número de
- * telefone", onde o celular pede um código de 8 letras que aparece aqui.
+ * Começa o pareamento e VOLTA NA HORA, sem esperar o WhatsApp.
  *
- * É o único jeito que funciona pelo painel. O QR do Baileys só existe como
- * string no terminal do servidor — inútil para quem usa o sistema no navegador,
- * ainda mais com o painel publicado. Com código digitado, o operador pareia o
- * PRÓPRIO celular e a conversa do 2FA passa a ser a dele consigo mesmo.
+ * Antes esta função era `await` do começo ao fim: subia a conexão, dormia 4s e
+ * só então pedia o código. Passava dos 30s do proxy, que devolvia a página
+ * "Bad Gateway" — e o painel, esperando JSON, quebrava com "Unexpected token
+ * 'B'". O erro não tinha nada a ver com o WhatsApp; era a espera.
+ *
+ * Agora o trabalho fica em segundo plano e o resultado (QR ou código) aparece em
+ * `situacaoWhatsapp()`, que a tela já consulta de tempos em tempos.
+ *
+ * `modo` decide o que o operador vai ver:
+ *   - `qr`     — o QR do Baileys, que a tela desenha como imagem para escanear;
+ *   - `codigo` — as 8 letras de "Conectar com número de telefone", para quem
+ *                está longe do servidor ou não consegue apontar a câmera.
+ * Os dois pareiam o MESMO aparelho; muda só a forma de confirmar.
  */
-export async function parearPorCodigo(): Promise<
-  { ok: true; codigo?: string; jaPareado?: boolean } | { ok: false; erro: string }
-> {
+export function iniciarPareamento(modo: 'qr' | 'codigo'): { ok: boolean; erro?: string } {
   if (!whatsappConfigurado()) {
     return { ok: false, erro: 'RPA_WHATSAPP_NUMERO não configurado no servidor.' };
   }
-  if (ponte.conectado) return { ok: true, jaPareado: true };
+  if (ponte.conectado) return { ok: true };
 
-  try {
-    await garantirConexao();
-    const socket = ponte.socket;
-    if (!socket) return { ok: false, erro: 'Não consegui abrir a conexão com o WhatsApp.' };
-    // Sessão que já tem credencial não pede código: ela só precisa reconectar.
-    if (socket.authState.creds.registered) return { ok: true, jaPareado: true };
+  ponte.ultimoErro = null;
+  if (modo === 'qr') ponte.codigoPareamento = null;
 
-    // O socket acabou de nascer; o pedido do código é um nó enviado pela
-    // websocket, que ainda está subindo. Sem esta espera o pedido sai antes da
-    // conexão existir e estoura "Connection Closed".
-    await new Promise((resolve) => setTimeout(resolve, 4_000));
+  void (async () => {
+    try {
+      await garantirConexao();
+      const socket = ponte.socket;
+      if (!socket) throw new Error('Não consegui abrir a conexão com o WhatsApp.');
+      // Sessão que já tem credencial não pede nada: ela só precisa reconectar.
+      if (modo === 'qr' || socket.authState.creds.registered) return;
 
-    const codigo = await socket.requestPairingCode(numeroAutorizado());
-    ponte.codigoPareamento = codigo;
-    ponte.ultimoErro = null;
-    return { ok: true, codigo };
-  } catch (erro) {
-    ponte.ultimoErro = erro instanceof Error ? erro.message : String(erro);
-    return { ok: false, erro: ponte.ultimoErro };
-  }
+      // O socket acabou de nascer; o pedido do código é um nó enviado pela
+      // websocket, que ainda está subindo. Sem esta espera o pedido sai antes da
+      // conexão existir e estoura "Connection Closed".
+      await new Promise((resolve) => setTimeout(resolve, 4_000));
+
+      ponte.codigoPareamento = await socket.requestPairingCode(numeroAutorizado());
+      ponte.ultimoErro = null;
+    } catch (erro) {
+      ponte.ultimoErro = erro instanceof Error ? erro.message : String(erro);
+      console.log(`[WhatsApp] Pareamento falhou: ${ponte.ultimoErro}`);
+    }
+  })();
+
+  return { ok: true };
 }
 
 export function situacaoWhatsapp(): {
@@ -286,6 +297,7 @@ export function situacaoWhatsapp(): {
   conectado: boolean;
   precisaParear: boolean;
   codigoPareamento: string | null;
+  qr: string | null;
   numeroMascarado: string;
   ultimoErro: string | null;
 } {
@@ -295,6 +307,11 @@ export function situacaoWhatsapp(): {
     conectado: ponte.conectado,
     precisaParear: !ponte.conectado,
     codigoPareamento: ponte.codigoPareamento,
+    // O QR era capturado e jogado fora: só ia para o log do servidor, onde
+    // ninguém que usa o painel consegue apontar a câmera. É o mesmo dado, agora
+    // entregue a quem precisa dele. O WhatsApp troca de QR a cada ~20s, e a tela
+    // acompanha porque já consulta esta rota em intervalo.
+    qr: ponte.qr,
     // O painel mostra só o fim do número: é dado pessoal e a tela fica aberta na
     // mesa. Quem configurou sabe qual é; para os outros, não precisa aparecer.
     numeroMascarado: numero ? `•••• ${numero.slice(-4)}` : '',
