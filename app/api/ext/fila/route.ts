@@ -88,10 +88,24 @@ export async function GET(req: Request) {
       };
     });
 
-    return NextResponse.json({ 
-      sucesso: true, 
+    return NextResponse.json({
+      sucesso: true,
       idExecucao: atual.id,
-      casos
+      casos,
+      // Quem NAO veio, e por que. Sem isto a extensao so sabe dizer "nao ha
+      // casos pendentes" — e quem esta olhando conclui que o robo nem conferiu
+      // o cliente, quando na verdade ele conferiu, travou e ficou calado.
+      // `parados` esperam decisao humana (Reenfileirar no painel); `pulados` ja
+      // tem protocolo e nao podem voltar, sob pena de abrir pedido em duplicata.
+      parados: atual.casos
+        .filter((c) => c.status === 'erro' || c.status === 'revisao')
+        .map((c) => ({ nome: c.nome, cpf: c.cpf, status: c.status, motivoErro: c.motivoErro })),
+      concluidos: atual.casos.filter((c) => c.status === 'sucesso').length,
+      pulados: (atual.pulados ?? []).map((p) => ({
+        nome: p.nome,
+        cpf: p.cpf,
+        protocolo: p.protocolo,
+      })),
     }, { headers: corsHeaders });
   } catch (error) {
     console.error('Erro na API de fila:', error);

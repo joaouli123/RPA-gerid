@@ -529,6 +529,47 @@ async function buscarFila(apiUrl, apiToken) {
   return dados;
 }
 
+/**
+ * Fila sem caso pendente: explica QUEM ficou de fora, nome por nome.
+ *
+ * "Nao ha casos pendentes na fila." sozinho e verdade e engana ao mesmo tempo.
+ * Quem esta olhando a extensao ve o cliente na pasta do Drive, ve que ele nao
+ * foi protocolado, le "zerado" e conclui que o robo nem chegou a conferir. Na
+ * maioria das vezes o robo conferiu: o caso travou em erro/revisao e ficou
+ * esperando uma decisao humana que ninguem sabia que era necessaria.
+ *
+ * Sao tres saidas diferentes e cada uma pede uma acao diferente do operador —
+ * reenfileirar, nao mexer, ou cadastrar pasta nova. Juntar as tres num texto so
+ * mandaria o operador procurar no lugar errado.
+ */
+function relatarFilaVazia(data) {
+  const parados = Array.isArray(data?.parados) ? data.parados : [];
+  const pulados = Array.isArray(data?.pulados) ? data.pulados : [];
+
+  if (parados.length) {
+    sendLog(
+      `Nada pendente, mas ${parados.length} caso(s) travaram e estao esperando voce:`,
+    );
+    for (const c of parados) {
+      const motivo = c.status === 'revisao' ? 'revisao manual' : c.motivoErro || 'erro';
+      sendLog(`  - ${c.nome}: ${motivo}`);
+    }
+    sendLog('Abra Execucao no painel e clique em Reenfileirar para tentar de novo.');
+  }
+
+  if (pulados.length) {
+    // Nao e falha: e a trava que impede abrir um segundo requerimento no nome
+    // da mesma pessoa. O numero vai junto para o operador poder conferir no
+    // GERID se o protocolo atribuido e mesmo daquele cliente.
+    sendLog(`${pulados.length} cliente(s) fora da fila por ja terem protocolo:`);
+    for (const p of pulados) sendLog(`  - ${p.nome}: protocolo ${p.protocolo}`);
+  }
+
+  if (!parados.length && !pulados.length) {
+    sendLog('Nao ha casos pendentes na fila.');
+  }
+}
+
 async function prepararFila(apiUrl, apiToken) {
   const resposta = await buscarComTimeout(apiUrl.replace(/\/$/, '') + '/api/ext/iniciar', {
     method: 'POST',
@@ -1681,7 +1722,7 @@ async function processQueue(
 
     const casos = modoTeste ? data.casos.slice(0, 1) : data.casos;
     if (casos.length === 0 || !data.idExecucao) {
-      sendLog('Não há casos pendentes na fila.');
+      relatarFilaVazia(data);
       return;
     }
 

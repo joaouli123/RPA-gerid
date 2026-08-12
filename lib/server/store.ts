@@ -918,8 +918,13 @@ export async function iniciarExecucao(): Promise<ExecucaoAtual> {
     // normal de um dia sem pasta nova, e dizer "resolva as pendências" nela
     // mandaria o operador procurar um problema que não existe.
     if (pulados.length > 0) {
+      // Nome e número, não só a contagem. Quando alguém reclama que um cliente
+      // "não foi protocolado" mas a fila insiste em vir vazia, a única pergunta
+      // que importa é QUAL protocolo o sistema acha que é dele — com o número na
+      // mão dá para conferir no GERID em dez segundos se a atribuição está certa.
+      const quem = pulados.map((p) => `${p.nome} (protocolo ${p.protocolo})`).join('; ');
       throw new Error(
-        `Nada a protocolar: os ${pulados.length} cliente(s) prontos já têm protocolo. ` +
+        `Nada a protocolar: os ${pulados.length} cliente(s) prontos já têm protocolo — ${quem}. ` +
           'Pastas novas no Drive entram na fila sozinhas.',
       );
     }
