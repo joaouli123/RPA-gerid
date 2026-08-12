@@ -2180,6 +2180,27 @@ async function processQueue(
       // O robô concluiu sozinho (passo 10) e o GERID devolveu o número. Não há
       // o que esperar de humano: segue para o próximo caso da fila.
       if (resultado.status === 'sucesso') {
+        // Protocolo que ja existia: nada foi enviado agora, e a aba ficou onde
+        // o GERID barrou — meio do formulario, com o modal aberto. Diferente do
+        // sucesso de verdade, que termina no comprovante e o proximo caso sabe
+        // tratar. Aqui a tela PRECISA voltar ao inicio antes do proximo
+        // cliente; sem isso a fila andava e ninguem mais conseguia comecar.
+        if (resultado.jaEstavaAberto) {
+          sendLog(
+            `${caso.nome} ja tinha o pedido ${resultado.protocolo} em aberto; nao refiz. ` +
+            'Voltando a tela ao inicio para o proximo.',
+          );
+          if (!(await limparAbaParaProximoCaso(aba.id).catch(() => false))) {
+            const etapa = await etapaDaAba(aba.id);
+            sendLog(
+              `Parei a fila: o GERID ficou em ${etapa || 'tela desconhecida'} e nao consegui ` +
+              'voltar ao inicio com seguranca. Resolva na tela e clique em Iniciar.',
+            );
+            interrompida = true;
+            break;
+          }
+          continue;
+        }
         sendLog(`${caso.nome}: PROTOCOLADO — ${resultado.protocolo}`);
         continue;
       }

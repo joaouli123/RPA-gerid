@@ -325,6 +325,13 @@ async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> 
         status: 'sucesso',
         protocolo: jaAberto,
         erro: `O GERID recusou refazer: já existe o pedido ${jaAberto} em aberto para este CPF.`,
+        // Sucesso SEM requerimento novo — e a diferenca importa para quem vem
+        // depois. O protocolo veio de um pedido que ja existia, e a excecao que
+        // trouxe o robo ate aqui estourou no MEIO do formulario: a aba ficou
+        // parada no passo em que o GERID barrou, com o modal na tela. Sem essa
+        // marca a fila seguia para o proximo cliente nesse estado, e o proximo
+        // nao tinha de onde comecar.
+        jaEstavaAberto: true,
       };
     }
     const errorMsg = e instanceof Error ? e.message : 'Erro interno no robô';
