@@ -995,13 +995,23 @@ async function abrirAbaTarefas() {
   throw new Error('A lista de tarefas do GERID nao carregou a tempo.');
 }
 
+/**
+ * Comeco do periodo da consulta.
+ *
+ * O GERID exige "Atualizada em (Inicial)" e preenche sozinho. A data aqui e
+ * deliberadamente antiga: a pergunta que a consulta responde e "ESTE CPF ja tem
+ * requerimento?", e essa pergunta nao tem recorte de periodo. Nao e chute de
+ * seletor — e valor de filtro, escolhido para nao esconder resposta.
+ */
+const DATA_CONSULTA_INICIAL = '01/01/2015';
+
 /** Filtra a lista por CPF e devolve as linhas encontradas. */
 async function buscarLinhasNaLista(tabId, cpf) {
   const saida = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    args: [String(cpf || '').replace(/\D/g, '')],
-    func: async (cpfDigitos) => {
+    args: [String(cpf || '').replace(/\D/g, ''), DATA_CONSULTA_INICIAL],
+    func: async (cpfDigitos, DATA_MAIS_ANTIGA) => {
       const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
       const dig = (v) => (v || '').replace(/\D/g, '');
       const norm = (v) => (v || '').replace(/\s+/g, ' ').trim();
@@ -1027,10 +1037,36 @@ async function buscarLinhasNaLista(tabId, cpf) {
       const setter = Object.getOwnPropertyDescriptor(
         window.HTMLInputElement.prototype, 'value',
       )?.set;
-      if (setter) setter.call(campo, cpfDigitos); else campo.value = cpfDigitos;
-      campo.dispatchEvent(new Event('input', { bubbles: true }));
-      campo.dispatchEvent(new Event('change', { bubbles: true }));
+      const preencher = (input, valor) => {
+        if (setter) setter.call(input, valor); else input.value = valor;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+
+      preencher(campo, cpfDigitos);
       await dormir(400);
+
+      // "Atualizada em (Inicial)" e um filtro OBRIGATORIO que ja vem preenchido.
+      // Enquanto ninguem mexia nele, a consulta so enxergava o periodo que o
+      // GERID escolheu sozinho — protocolo mais antigo que isso simplesmente nao
+      // aparecia, e o robo concluia "nao ha requerimento" para quem tinha um.
+      // Era essa a "possivel filtro de periodo" que o codigo ja desconfiava.
+      let avisoData = '';
+      const dataInicial = document.querySelector('#filtro-entidade-conveniada-data-inicial');
+      if (dataInicial) {
+        const original = dataInicial.value;
+        preencher(dataInicial, DATA_MAIS_ANTIGA);
+        await dormir(300);
+        if (dig(dataInicial.value) !== dig(DATA_MAIS_ANTIGA)) {
+          // Campo mascarado que recusou o valor. Nao insiste: buscar com o
+          // periodo estreito ainda serve, desde que o log diga qual periodo foi.
+          avisoData =
+            `Nao consegui abrir o periodo da consulta (o campo continuou em "${norm(original)}"). ` +
+            'Requerimento anterior a essa data pode nao aparecer.';
+        }
+      } else {
+        avisoData = 'Nao achei o filtro de data da consulta; usei o periodo que estava na tela.';
+      }
 
       // Ha DOIS botoes "Buscar" na tela (Requerimentos e Cumprimento de
       // Exigencia). O escopo #requerimento e o que separa um do outro.
@@ -1060,19 +1096,26 @@ async function buscarLinhasNaLista(tabId, cpf) {
         if (!linhas.every((l) => l.cpf === cpfDigitos)) return null;
         return linhas;
       }, 25000);
-      if (filtradas) return { linhas: filtradas };
+      const juntar = (...partes) => partes.filter(Boolean).join(' ');
+      if (filtradas) return { linhas: filtradas, aviso: avisoData };
 
       // O filtro pode nao ter pegado. Em vez de desistir, aproveita o que esta
       // na tela — a linha certa continua sendo a que tem este CPF.
       const naTela = lerLinhas().filter((l) => l.cpf === cpfDigitos);
       if (naTela.length) {
-        return { linhas: naTela, aviso: 'O filtro de CPF nao pegou; li a linha direto da tabela.' };
+        return {
+          linhas: naTela,
+          aviso: juntar('O filtro de CPF nao pegou; li a linha direto da tabela.', avisoData),
+        };
       }
       return {
         linhas: [],
-        aviso: antes === lerLinhas().map((l) => l.protocolo).join(',')
-          ? 'A lista nao mudou depois do Buscar; pode nao ter filtrado.'
-          : 'A lista do GERID nao trouxe nenhuma linha para este CPF.',
+        aviso: juntar(
+          antes === lerLinhas().map((l) => l.protocolo).join(',')
+            ? 'A lista nao mudou depois do Buscar; pode nao ter filtrado.'
+            : 'A lista do GERID nao trouxe nenhuma linha para este CPF.',
+          avisoData,
+        ),
       };
     },
   });
@@ -1446,9 +1489,26 @@ async function conferirNaListaDeTarefas(caso, resultado) {
 
     const linhas = busca.linhas || [];
     const hoje = dataDeHojeBR();
+    // Sem numero em maos, a regra e "so linha de HOJE" — um BPC do ano passado
+    // nao pode ser apresentado como trabalho desta rodada.
+    //
+    // A excecao e quando o PROPRIO GERID recusou dizendo que ja existe pedido.
+    // Ai a linha de outro dia deixa de ser coincidencia e passa a ser a resposta
+    // da pergunta: e ela que tem o numero e o comprovante que faltam.
+    const portalDisseQueJaExiste = !jaTem && indicioDeRequerimentoExistente(resultado.erro);
     const escolhida = jaTem
       ? linhas.find((l) => l.protocolo === jaTem)
-      : linhas.find((l) => l.protocoladoEm === hoje);
+      : linhas.find((l) => l.protocoladoEm === hoje)
+        || (portalDisseQueJaExiste
+          ? linhas.find((l) => ehMesmoServicoDoRobo(l.servico) && situacaoEmAberto(l.situacao))
+          : undefined);
+    if (escolhida && portalDisseQueJaExiste && escolhida.protocoladoEm !== hoje) {
+      sendLog(
+        `O GERID recusou refazer o requerimento de ${caso.nome} e a consulta mostra ` +
+        `${escolhida.protocolo} (${escolhida.situacao}, de ${escolhida.protocoladoEm}). ` +
+        'Usei esse numero em vez de tentar de novo.',
+      );
+    }
 
     if (!escolhida) {
       if (citadoNoBloqueio) {
@@ -1506,6 +1566,95 @@ async function conferirNaListaDeTarefas(caso, resultado) {
         await chrome.tabs.remove(tabId);
       } catch (falhaAoFechar) {
         sendLog(`Nao consegui fechar a aba da lista de tarefas: ${falhaAoFechar?.message || falhaAoFechar}`);
+      }
+    }
+  }
+}
+
+/**
+ * Situacoes que o GERID oferece no filtro "Situação" da consulta:
+ * Em Análise (PENDENTE), Cancelada, Concluída, Exigência.
+ *
+ * Só as duas primeiras impedem um pedido novo. "Cancelada" e "Concluída" são
+ * requerimentos ENCERRADOS — pedir de novo depois de um BPC negado é
+ * exatamente o trabalho do escritório, e travar isso seria pior do que o
+ * duplicado que estamos evitando.
+ */
+function situacaoEmAberto(situacao) {
+  const t = String(situacao || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  return t.includes('em analise') || t.includes('exigencia');
+}
+
+/**
+ * A linha da consulta e do MESMO servico que o robo ia pedir?
+ *
+ * "Benefício Assistencial à Pessoa com Deficiência" — o nome oficial do INSS
+ * sempre traz "Assistencial", e e so isso que se exige aqui. Um requerimento de
+ * aposentadoria em analise nao pode bloquear um BPC.
+ *
+ * Se o GERID um dia abreviar o nome a ponto de sumir a palavra, esta funcao
+ * devolve false e o robo apenas NAO usa o atalho — o bloqueio "pedido X em
+ * aberto" do proprio portal continua sendo a ultima linha de defesa contra o
+ * duplicado. Errar para o lado de nao reconhecer e seguro; o contrario nao e.
+ */
+function ehMesmoServicoDoRobo(servico) {
+  return String(servico || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .includes('assistencial');
+}
+
+/**
+ * Pergunta ao GERID, ANTES de preencher, se este CPF ja tem BPC em andamento.
+ *
+ * Existe porque a conferencia so acontecia DEPOIS: o robo preenchia o
+ * requerimento inteiro e so entao descobria que ja havia um. Quando o portal
+ * deixava passar, o resultado era um SEGUNDO pedido no nome de uma pessoa real
+ * — e o RYAN, que tem protocolo no GERID mas consta como erro no painel, seria
+ * o proximo. Uma consulta de dez segundos e mais barata que isso.
+ *
+ * Devolve `{ aberto, pdf }` quando achou requerimento em andamento; `{}` quando
+ * o caminho esta livre; `{ erro }` quando nao deu para perguntar — e nesse caso
+ * quem chama SEGUE o fluxo normal, porque falha de consulta nao pode virar
+ * motivo para nao atender ninguem.
+ */
+async function verificarSeJaProtocolado(caso) {
+  let tabId = null;
+  try {
+    tabId = await abrirAbaTarefas();
+    const busca = await buscarLinhasNaLista(tabId, caso.cpf);
+    if (busca.erro) return { erro: busca.erro };
+    if (busca.aviso) sendLog(`Consulta do GERID: ${busca.aviso}`);
+
+    const linhas = busca.linhas || [];
+    const aberto = linhas.find(
+      (l) => ehMesmoServicoDoRobo(l.servico) && situacaoEmAberto(l.situacao),
+    );
+    if (!aberto) {
+      sendLog(
+        `Consulta do GERID: ${caso.nome} nao tem BPC em andamento` +
+        `${linhas.length ? ` (${linhas.length} requerimento(s) no historico, nenhum em aberto)` : ''}. ` +
+        'Pode protocolar.',
+      );
+      return {};
+    }
+
+    sendLog(
+      `${caso.nome} JA TEM requerimento no GERID: protocolo ${aberto.protocolo}, ` +
+      `${aberto.servico}, ${aberto.situacao}, protocolado em ${aberto.protocoladoEm}. ` +
+      'NAO vou preencher outro.',
+    );
+    const pdf = await gerarComprovanteNaLista(tabId, aberto.protocolo);
+    if (!pdf.pdfBase64) sendLog(`Nao consegui baixar o comprovante agora: ${pdf.erro || 'motivo desconhecido'}`);
+    return { aberto, pdf };
+  } catch (erro) {
+    return { erro: erro?.message || String(erro) };
+  } finally {
+    if (tabId !== null && tabId !== undefined) {
+      try {
+        await chrome.tabs.remove(tabId);
+      } catch (falhaAoFechar) {
+        sendLog(`Nao consegui fechar a aba da consulta: ${falhaAoFechar?.message || falhaAoFechar}`);
       }
     }
   }
@@ -1704,12 +1853,33 @@ async function verificarConfirmacaoPendente(tabIdPreferido) {
   }
 }
 
+/**
+ * O GERID esta dizendo que ESTE requerente ja tem um pedido?
+ *
+ * "Em aberto" era a unica forma reconhecida, e o portal tem varias: em
+ * andamento, em processamento, em analise, ja possui, ja existe. Todas
+ * significam a mesma coisa para o robo — nao e para preencher outro, e a
+ * consulta e que vai dizer qual e o numero.
+ *
+ * Nao extrai numero nenhum daqui: e so o gatilho para ir perguntar. Numero de
+ * protocolo so entra no painel vindo da consulta ou da tela, nunca deduzido de
+ * texto de alerta.
+ */
+function indicioDeRequerimentoExistente(texto) {
+  const t = String(texto || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return /em aberto|em andamento|em processamento|em analise|ja possui|ja existe/.test(t);
+}
+
 function erroDefinitivoDoRequerente(resultado) {
   if (resultado?.status !== 'erro') return false;
   const texto = String(resultado.erro || '').toLowerCase();
   // Só um bloqueio inequívoco do próprio Gerid encerra automaticamente o caso.
   // Falhas de tela, rede ou mapeamento precisam permanecer pendentes para retry.
-  return /pedido\s+\d+.*em aberto|existe pedido em aberto|cpf inv[aá]lido/.test(texto);
+  if (/pedido\s+\d+.*em aberto|existe pedido em aberto|cpf inv[aá]lido/.test(texto)) return true;
+  // Requerimento que o portal diz JA EXISTIR nao melhora com nova tentativa:
+  // repetir so produziria o duplicado que estamos evitando.
+  return indicioDeRequerimentoExistente(texto);
 }
 
 async function processQueue(
@@ -1873,6 +2043,34 @@ async function processQueue(
           );
         }
         await enviarResultado(apiUrl, apiToken, data.idExecucao, caso, resultado);
+        continue;
+      }
+
+      // Pergunta ao GERID ANTES de tocar no formulario. A conferencia que ja
+      // existia acontecia depois do preenchimento, o que so descobria o pedido
+      // repetido quando ele ja tinha sido feito.
+      const jaExiste = await verificarSeJaProtocolado(caso);
+      if (jaExiste.erro) {
+        // Consulta indisponivel nao pode virar motivo para nao atender ninguem.
+        // O bloqueio "pedido X em aberto" do proprio portal continua valendo.
+        sendLog(
+          `Nao consegui consultar o GERID antes de protocolar ${caso.nome}: ${jaExiste.erro}. ` +
+          'Sigo com o preenchimento.',
+        );
+      } else if (jaExiste.aberto) {
+        const achado = jaExiste.aberto;
+        const resultadoConsulta = {
+          status: 'sucesso',
+          protocolo: achado.protocolo,
+          erro:
+            `JA ESTAVA protocolado: ${achado.protocolo} (${achado.servico}, ${achado.situacao}, ` +
+            `protocolado em ${achado.protocoladoEm}). Consultei antes e nao refiz o requerimento.`,
+        };
+        if (jaExiste.pdf?.pdfBase64) {
+          resultadoConsulta.pdfBase64 = jaExiste.pdf.pdfBase64;
+          resultadoConsulta.pdfNome = `comprovante ${achado.protocolo}.pdf`;
+        }
+        await enviarResultado(apiUrl, apiToken, data.idExecucao, caso, resultadoConsulta);
         continue;
       }
 

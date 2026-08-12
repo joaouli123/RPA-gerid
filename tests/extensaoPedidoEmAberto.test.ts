@@ -32,6 +32,10 @@ describe('extensao Gerid - pedido ja em aberto', () => {
     };
     const abaTarefas = { id: 22, status: 'complete', url: 'https://atendimento.inss.gov.br/tarefas' };
     const abasFechadas: number[] = [];
+    // Quantas vezes cada CPF foi consultado. A lista do GERID muda entre a
+    // pergunta de antes de preencher e a conferência de depois — um stub que
+    // devolve sempre a mesma coisa não sabe representar isso.
+    const consultas: Record<string, number> = {};
 
     const chrome = {
       runtime: {
@@ -85,6 +89,16 @@ describe('extensao Gerid - pedido ja em aberto', () => {
           // propósito: o caso foi protocolado antes, e a busca por "linha de
           // hoje" não pode ser o que salva este cenário.
           if (arg === '11111111111') {
+            consultas[arg] = (consultas[arg] ?? 0) + 1;
+            // 1ª chamada = a checagem que acontece ANTES de preencher. Aqui ela
+            // FALHA de propósito: é o único jeito de o robô chegar ao formulário
+            // e receber a recusa do GERID, que é o que este teste cobre.
+            // Consulta fora do ar não pode impedir o atendimento — só tira a
+            // rede de proteção, e o bloqueio do próprio portal fica sendo a
+            // última linha de defesa. É exatamente esse último trecho aqui.
+            if (consultas[arg] === 1) {
+              return [{ result: { erro: 'A lista de tarefas do GERID nao carregou a tempo.' } }];
+            }
             return [{
               result: {
                 linhas: [{
@@ -101,6 +115,11 @@ describe('extensao Gerid - pedido ja em aberto', () => {
             }];
           }
           if (arg === '22222222222') {
+            consultas[arg] = (consultas[arg] ?? 0) + 1;
+            // Este ainda NÃO tem requerimento: a consulta de antes vem vazia e
+            // o robô segue para o formulário. A linha só passa a existir depois
+            // que o pedido entra — é o que a segunda chamada devolve.
+            if (consultas[arg] === 1) return [{ result: { linhas: [] } }];
             return [{
               result: {
                 linhas: [{

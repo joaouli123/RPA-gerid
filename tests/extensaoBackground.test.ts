@@ -322,6 +322,7 @@ describe('extensão Gerid — service worker', () => {
           if (opcoes.url) urlsAutenticacao.push(opcoes.url);
           return abaCas;
         },
+        remove: async () => undefined,
         reload: async () => undefined,
         onUpdated: {
           addListener: (fn: (id: number, info: any, tab: any) => void) => listenersAbas.push(fn),
@@ -443,7 +444,10 @@ describe('extensão Gerid — service worker', () => {
       listener(abaPat.id, { status: 'complete', url: abaPat.url }, abaPat);
     }
 
-    const limiteResultado = Date.now() + 2_000;
+    // Antes de preencher, o robô abre a consulta do GERID para ver se este CPF
+    // já tem requerimento. Isso custa alguns segundos de carga de aba por caso —
+    // barato perto de um segundo pedido no nome da mesma pessoa.
+    const limiteResultado = Date.now() + 15_000;
     while (statusEnviados.length === 0 && Date.now() < limiteResultado) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
@@ -454,7 +458,7 @@ describe('extensão Gerid — service worker', () => {
       geridTabId: 92,
       aguardandoConfirmacao: true,
     });
-  });
+  }, 30_000);
 
   it('captura o protocolo apos a confirmacao humana e encerra a espera', async () => {
     const statusEnviados: any[] = [];
