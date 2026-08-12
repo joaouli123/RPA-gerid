@@ -84,6 +84,136 @@ async function avisarAutenticacaoNecessaria() {
 }
 
 /**
+ * Tela "Codigo numerico" do CAS — o segundo fator, depois do SafeID.
+ *
+ * O robo NAO tem a semente do Google Authenticator e nunca vai ter: quem le os
+ * 6 digitos e o operador, no celular dele. Aqui a extensao so faz o transporte
+ * — avisa o painel, o painel chama o operador no WhatsApp, o operador responde
+ * os digitos, e a extensao digita no campo. O codigo vive segundos, so em
+ * memoria, e nunca entra em log nem em storage.
+ *
+ * O botao "Reiniciar Dispositivo MFA" fica ao lado do "Entrar" nessa mesma
+ * tela. Ele nao e tocado em lugar nenhum deste arquivo: clicar por engano
+ * desparearia o autenticador do titular, e ai ninguem mais entra.
+ *
+ * Devolve true quando assumiu a tela (com ou sem sucesso) — o chamador entao
+ * nao mexe no botao de certificado, que e de outra etapa.
+ */
+let mfaEmAndamento = false;
+
+async function resolverCodigoMfa(tabId, apiUrl, apiToken) {
+  if (!tabId || mfaEmAndamento) return mfaEmAndamento;
+
+  let tela = '';
+  try {
+    const saida = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        if (document.querySelector('#main-frame-error')) return 'site_fora';
+        const campo = document.querySelector('#token, input[name="token"]');
+        const enviar = document.querySelector('input[name="_eventId_submit"]');
+        if (!campo || !enviar || !campo.offsetParent) return 'sem_tela';
+        // Campo ja preenchido: o proprio operador esta digitando na frente do
+        // computador. Sobrescrever atrapalharia quem esta resolvendo na mao.
+        if (String(campo.value || '').trim()) return 'operador_digitando';
+        return 'pedir';
+      },
+    });
+    tela = saida?.[0]?.result || '';
+  } catch {
+    return false;
+  }
+
+  if (tela === 'operador_digitando') return true;
+  if (tela !== 'pedir') return false;
+
+  if (!apiUrl || !apiToken) {
+    sendLog(
+      'O GERID pediu o codigo de 6 digitos, mas a extensao ainda nao tem o painel '
+      + 'configurado para pedir por WhatsApp. Digite o codigo voce mesmo.',
+    );
+    return true;
+  }
+
+  mfaEmAndamento = true;
+  try {
+    const base = apiUrl.replace(/\/$/, '');
+    let desafio = '';
+    try {
+      const resposta = await buscarComTimeout(`${base}/api/ext/login-2fa`, {
+        method: 'POST',
+        headers: headersAutorizacao(apiToken, true),
+      });
+      const dados = await lerJsonResposta(resposta, 'Nao consegui pedir o codigo.');
+      if (!dados.sucesso || !dados.desafio) throw new Error(dados.erro || 'Nao consegui pedir o codigo.');
+      desafio = dados.desafio;
+    } catch (erro) {
+      sendLog(`Nao consegui pedir o codigo pelo WhatsApp: ${erro?.message || erro}. Digite o codigo voce mesmo.`);
+      return true;
+    }
+
+    sendLog('Pedi o codigo de 6 digitos no seu WhatsApp. Responda so os digitos — eu digito aqui.');
+
+    // O desafio expira em 2 minutos no servidor; paramos junto para nao ficar
+    // perguntando por um codigo que ja nao vale.
+    const limite = Date.now() + 115 * 1000;
+    let codigo = null;
+    while (Date.now() < limite && !codigo) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      try {
+        const resposta = await buscarComTimeout(
+          `${base}/api/ext/login-2fa?desafio=${encodeURIComponent(desafio)}`,
+          { headers: headersAutorizacao(apiToken) },
+        );
+        const dados = await lerJsonResposta(resposta, 'Erro ao buscar o codigo.');
+        if (dados.codigo) codigo = String(dados.codigo);
+        else if (dados.sucesso && !dados.aguardando && !dados.segundosRestantes) break;
+      } catch {
+        // Rede oscilando nao encerra a espera: o operador pode estar digitando.
+      }
+    }
+
+    if (!codigo) {
+      sendLog('O codigo nao chegou a tempo. Digite os 6 digitos na tela ou inicie a fila de novo.');
+      return true;
+    }
+
+    let resultado = '';
+    try {
+      const saida = await chrome.scripting.executeScript({
+        target: { tabId },
+        args: [codigo],
+        func: (digitos) => {
+          const campo = document.querySelector('#token, input[name="token"]');
+          // So o submit "Entrar". NUNCA _eventId_requestDeviceReset.
+          const enviar = document.querySelector('input[name="_eventId_submit"]');
+          if (!campo || !enviar) return 'sem_tela';
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+          campo.focus();
+          if (setter) setter.call(campo, digitos);
+          else campo.value = digitos;
+          campo.dispatchEvent(new Event('input', { bubbles: true }));
+          campo.dispatchEvent(new Event('change', { bubbles: true }));
+          enviar.click();
+          return 'enviado';
+        },
+      });
+      resultado = saida?.[0]?.result || '';
+    } catch {
+      resultado = '';
+    }
+    // `codigo` sai de escopo aqui e nunca foi para log, storage nem heartbeat.
+
+    sendLog(resultado === 'enviado'
+      ? 'Codigo informado no GERID. A fila retoma sozinha.'
+      : 'Recebi o codigo mas a tela mudou antes de digitar. Vou pedir de novo se precisar.');
+    return true;
+  } finally {
+    mfaEmAndamento = false;
+  }
+}
+
+/**
  * Aperta "Entrar com Certificado Digital" na tela de login do CAS.
  *
  * Esse botao nao autentica ninguem: ele so faz o SafeID mandar a notificacao
@@ -95,8 +225,14 @@ async function avisarAutenticacaoNecessaria() {
  * O que este codigo NUNCA faz: tocar em #username ou #password. Senha e
  * digitada pelo titular, ponto. Nao ha ramo aqui que preencha credencial.
  */
-async function pedirAutorizacaoNoCelular(tabId) {
+async function pedirAutorizacaoNoCelular(tabId, apiUrl, apiToken) {
   if (!tabId) return;
+
+  // A tela dos 6 digitos vem DEPOIS do SafeID, dentro da janela de 3 minutos do
+  // debounce abaixo. Se ela fosse checada depois, o robo sairia calado
+  // justamente na etapa em que ele tem o que fazer.
+  if (await resolverCodigoMfa(tabId, apiUrl, apiToken)) return;
+
   const salvo = await chrome.storage.local.get([CHAVE_ULTIMO_CERTIFICADO]);
   // A notificacao do SafeID vale ~3 min. Clicar de novo antes disso derruba a
   // solicitacao que ja esta no celular do titular e enche o aparelho de push.
@@ -1342,7 +1478,7 @@ async function processQueue(
         aba?.id,
       );
       await avisarAutenticacaoNecessaria();
-      await pedirAutorizacaoNoCelular(aba?.id);
+      await pedirAutorizacaoNoCelular(aba?.id, apiUrl, apiToken);
       agendarRetomadaAutenticacao();
       sendLog('Aguardando autenticacao. A fila sera retomada automaticamente.');
       return;
@@ -1429,7 +1565,7 @@ async function processQueue(
         );
         await atualizarEstadoAutenticacao(EstadoAutenticacao.NECESSARIA, resultado.erro, aba.id);
         await avisarAutenticacaoNecessaria();
-        await pedirAutorizacaoNoCelular(aba.id);
+        await pedirAutorizacaoNoCelular(aba.id, apiUrl, apiToken);
         agendarRetomadaAutenticacao();
         sendLog('Sessao expirada. Conclua a autenticacao; a fila sera retomada sozinha.');
         break;
