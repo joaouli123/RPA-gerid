@@ -8,6 +8,7 @@ import { StatusPill } from '@/components/ui/Badge';
 import { GrupoFamiliarTabela } from '@/components/dominio/GrupoFamiliarTabela';
 import { DocumentosChecklist } from '@/components/dominio/DocumentosChecklist';
 import { MotivoBadge } from '@/components/dominio/MotivoBadge';
+import { RegistrarProtocoloManual } from '@/components/dominio/RegistrarProtocoloManual';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icone } from '@/components/ui/Icone';
 import { formatarBytes, formatarCpf, formatarData } from '@/lib/format';
@@ -66,7 +67,7 @@ export default async function DetalheClientePage({
         titulo="Protocolo e comprovante"
         descricao="O PDF que o robô baixou no GERID, guardado aqui e na pasta do cliente no Drive."
       >
-        <ProtocoloDoClienteCard protocolo={protocolo} />
+        <ProtocoloDoClienteCard protocolo={protocolo} cpf={cpfExibido} nome={titulo} />
       </Secao>
 
       {motivos.length > 0 && (
@@ -158,13 +159,26 @@ export default async function DetalheClientePage({
  * juntar as três num "comprovante indisponível" mandaria o operador procurar no
  * lugar errado.
  */
-function ProtocoloDoClienteCard({ protocolo }: { protocolo: ProtocoloDoCliente | null }) {
+function ProtocoloDoClienteCard({
+  protocolo,
+  cpf,
+  nome,
+}: {
+  protocolo: ProtocoloDoCliente | null;
+  cpf?: string;
+  nome: string;
+}) {
   if (!protocolo) {
     return (
-      <EmptyState
-        titulo="Ainda não protocolado"
-        descricao="O comprovante aparece aqui assim que o robô protocolar no GERID e baixar o PDF."
-      />
+      <>
+        <EmptyState
+          titulo="Ainda não protocolado"
+          descricao="O comprovante aparece aqui assim que o robô protocolar no GERID e baixar o PDF."
+        />
+        {/* Sem CPF não há chave para o registro — é o caso da pasta que não
+            casou com nenhuma linha da planilha. */}
+        {cpf && <RegistrarProtocoloManual cpf={cpf} nome={nome} />}
+      </>
     );
   }
 

@@ -791,6 +791,59 @@ export async function getExecucaoAtual(): Promise<ExecucaoAtual | null> {
  * Quando o mesmo CPF aparece mais de uma vez, fica o registro MAIS ANTIGO: é
  * o protocolo que vale, os seguintes seriam duplicidade a corrigir.
  */
+/**
+ * Registra à mão um protocolo que o GERID já devolveu mas que o sistema não
+ * chegou a anotar.
+ *
+ * Acontece quando a extensão cai DEPOIS de o requerimento ser aceito e ANTES de
+ * gravar o número: o INSS tem o pedido, o histórico não tem nada — e a trava
+ * anti-duplicidade, que lê exatamente esse histórico, libera a mesma pessoa para
+ * uma segunda tentativa. Um segundo requerimento de BPC no nome de alguém é
+ * trabalho de cancelamento manual no INSS, então a porta de conserto tem que
+ * existir dentro do painel; a alternativa era editar `estado.json` na mão dentro
+ * do container.
+ *
+ * Recusa sobrescrever número existente de propósito. Trocar um protocolo já
+ * gravado é a forma mais rápida de perder o rastro do requerimento verdadeiro —
+ * se o número está errado, isso é conserto de histórico, não de cadastro.
+ */
+export async function registrarProtocoloManual(
+  cpf: string,
+  nome: string,
+  protocolo: string,
+): Promise<ProtocoloRegistrado> {
+  const digitos = apenasDigitos(cpf);
+  const numero = apenasDigitos(protocolo);
+  if (!digitos) throw new Error('CPF inválido.');
+  if (!numero) throw new Error('Informe o número do protocolo (só dígitos).');
+
+  const jaTem = (await protocolosPorCpf()).get(digitos);
+  if (jaTem) {
+    throw new Error(
+      `Este CPF já tem o protocolo ${jaTem.protocolo} registrado. ` +
+        'Sobrescrever aqui apagaria o rastro do requerimento verdadeiro.',
+    );
+  }
+
+  const estado = await carregarEstado();
+  const agora = new Date().toISOString();
+
+  // Prefixo `manual-` porque o histórico não pode fingir que o robô fez: quem
+  // abrir o relatório precisa ver que este número entrou pela mão de alguém.
+  estado.execucoes.push({
+    id: `manual-${Date.now()}`,
+    dataISO: agora,
+    total: 1,
+    prontos: 1,
+    sucesso: 1,
+    erro: 0,
+    casos: [{ cpf, nome, status: 'sucesso', protocolo: numero }],
+  });
+  await persistir();
+
+  return { cpf, nome, protocolo: numero, em: agora };
+}
+
 export async function protocolosPorCpf(): Promise<Map<string, ProtocoloRegistrado>> {
   const estado = await carregarEstado();
   const mapa = new Map<string, ProtocoloRegistrado>();

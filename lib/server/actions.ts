@@ -8,6 +8,7 @@ import {
   limparAcaoRevisao,
   recarregarResultado,
   registrarAcaoRevisao,
+  registrarProtocoloManual,
   salvarClienteNaPlanilha,
   salvarConfig,
   limparExecucaoAtual,
@@ -54,6 +55,22 @@ export async function acaoLimparExecucao(): Promise<void> {
   await limparExecucaoAtual();
   revalidatePath('/execucao');
   revalidatePath('/painel');
+}
+
+/**
+ * Anota um protocolo que saiu no GERID mas não chegou ao histórico.
+ *
+ * É o conserto de quando a extensão cai entre o INSS aceitar o requerimento e o
+ * número ser gravado: sem esta anotação a trava anti-duplicidade não sabe que a
+ * pessoa já tem pedido aberto e manda protocolar de novo.
+ */
+export async function acaoRegistrarProtocoloManual(
+  cpf: string,
+  nome: string,
+  protocolo: string,
+): Promise<void> {
+  await registrarProtocoloManual(cpf, nome, protocolo);
+  revalidatePath('/', 'layout');
 }
 
 /** Snapshot leve usado pelo painel para acompanhar a execução da extensão. */
