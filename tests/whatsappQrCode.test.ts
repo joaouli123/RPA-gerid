@@ -44,19 +44,30 @@ vi.mock('@whiskeysockets/baileys', () => {
       state: { creds: { registered: false }, keys: {} },
       saveCreds: async () => undefined,
     }),
-    fetchLatestBaileysVersion: async () => ({ version: [2, 3000, 0] }),
+    fetchLatestBaileysVersion: async () => ({ version: [2, 3000, 0], isLatest: true }),
     makeCacheableSignalKeyStore: (chaves: unknown) => chaves,
     Browsers: { ubuntu: () => ['RPA Gerid', 'Chrome', '1.0'] },
     DisconnectReason: { loggedOut: 401 },
   };
 });
 
-process.env.RPA_WHATSAPP_NUMERO = '5511999999999';
-
-const { garantirConexao, situacaoWhatsapp } = await import('../lib/server/whatsapp');
+/**
+ * Ponte limpa a cada caso. Ela vive num Symbol do globalThis para sobreviver ao
+ * hot reload do Next, então `resetModules` sozinho não a apaga.
+ */
+async function pontoZero() {
+  process.env.RPA_WHATSAPP_NUMERO = '5511999999999';
+  process.env.RPA_WHATSAPP_SESSAO = '.data/whatsapp-inexistente-de-teste';
+  sockets.length = 0;
+  delete (globalThis as Record<symbol, unknown>)[Symbol.for('rpa-gerid.whatsapp')];
+  vi.resetModules();
+  return import('../lib/server/whatsapp');
+}
 
 describe('whatsapp - o QR chega na tela', () => {
   it('conexao velha caindo nao apaga o QR da conexao nova', async () => {
+    const { garantirConexao, situacaoWhatsapp } = await pontoZero();
+
     await garantirConexao();
     const primeiro = sockets[0]!;
 
@@ -92,17 +103,36 @@ describe('whatsapp - o QR chega na tela', () => {
     expect(depois.ultimoErro).toBeNull();
   });
 
-  it('fechamento sem codigo mostra o motivo, nao "desconhecido"', () => {
-    // Fechamento sem `output.statusCode` não veio do protocolo do WhatsApp —
-    // veio da rede do servidor. Dizer "código desconhecido" a quem está olhando
-    // a tela não dá nada com que trabalhar; a mensagem do erro dá.
-    sockets.at(-1)!.emitir('connection.update', {
+  it('conexao que morre ANTES de mostrar qualquer QR diz o motivo', async () => {
+    const { garantirConexao, situacaoWhatsapp } = await pontoZero();
+    await garantirConexao();
+
+    // Nunca houve `qr` nesta conexão: ela morreu antes de começar. Isso não é o
+    // ciclo normal do código expirando, é defeito — e é o caso em que a tela
+    // ficava repetindo "Gerando um QR code novo..." sobre uma falha invisível.
+    sockets[0]!.emitir('connection.update', {
       connection: 'close',
       lastDisconnect: { error: new Error('getaddrinfo ENOTFOUND web.whatsapp.com') },
     });
 
     const erro = situacaoWhatsapp().ultimoErro ?? '';
     expect(erro).toMatch(/ENOTFOUND web\.whatsapp\.com/);
-    expect(erro).not.toMatch(/desconhecido/i);
+    expect(erro).not.toMatch(/Gerando um QR code novo/);
+  });
+
+  it('QR que expira depois de aparecer e rotina, e nao assusta ninguem', async () => {
+    const { garantirConexao, situacaoWhatsapp } = await pontoZero();
+    await garantirConexao();
+
+    // Apareceu, ninguém escaneou a tempo, o WhatsApp derrubou. Rotina.
+    sockets[0]!.emitir('connection.update', { qr: 'QR-QUE-EXPIROU' });
+    sockets[0]!.emitir('connection.update', {
+      connection: 'close',
+      lastDisconnect: { error: { output: { statusCode: 408 } } },
+    });
+
+    expect(situacaoWhatsapp().ultimoErro).toBe('Gerando um QR code novo...');
+    // O código morto sai da tela: escaneá-lo não pareia nada.
+    expect(situacaoWhatsapp().qr).toBeNull();
   });
 });

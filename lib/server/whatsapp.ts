@@ -283,7 +283,15 @@ async function tratarMensagem(socket: WASocket, mensagem: {
 
 async function conectar(): Promise<void> {
   const { state, saveCreds } = await useMultiFileAuthState(pastaSessao());
-  const { version } = await fetchLatestBaileysVersion();
+  // A versão do WhatsApp Web é buscada na internet. Quando o servidor não
+  // alcança a origem, o Baileys cai numa versão embutida — e versão velha
+  // demais o WhatsApp simplesmente recusa, sem dizer por quê. Fica no log
+  // porque é o primeiro lugar a olhar quando a conexão morre antes do QR.
+  const { version, isLatest } = await fetchLatestBaileysVersion();
+  console.log(
+    `[WhatsApp] Versão do WhatsApp Web: ${version.join('.')}`
+    + `${isLatest ? '' : ' (embutida — não consegui consultar a atual)'}`,
+  );
 
   // Credencial em disco quer dizer que este número já foi pareado um dia — a
   // ponte passa a insistir na reconexão em vez de desistir depois de 5 quedas.
@@ -321,12 +329,25 @@ async function conectar(): Promise<void> {
   });
   ponte.socket = socket;
 
+  /**
+   * Esta conexão chegou a produzir algum QR?
+   *
+   * É o que separa o ciclo normal do defeito. QR do WhatsApp expira e derruba a
+   * conexão junto — isso é rotina, e avisar disso só assusta quem está com o
+   * celular na mão. Já uma conexão que morre SEM nunca ter mostrado um código é
+   * sempre anormal: não chegou nem a começar. Nesse caso a tela tem que dizer o
+   * motivo, senão fica repetindo "Gerando um QR code novo..." para sempre sobre
+   * uma falha que ninguém consegue enxergar.
+   */
+  let houveQr = false;
+
   socket.ev.on('creds.update', saveCreds);
 
   socket.ev.on('connection.update', (atualizacao) => {
     // Conexão que já foi substituída não mexe mais no estado de ninguém.
     if (geracao !== ponte.geracao) return;
     if (atualizacao.qr) {
+      houveQr = true;
       ponte.qr = atualizacao.qr;
       console.log('[WhatsApp] Leia o QR code para parear o número do robô.');
     }
@@ -380,9 +401,15 @@ async function conectar(): Promise<void> {
       // "código desconhecido": o QR do WhatsApp expira sozinho e derrubar a
       // conexão faz parte do ciclo normal. Para essa pessoa a frase honesta é
       // que outro código está vindo.
-      ponte.ultimoErro = ponte.registrada
-        ? `Conexão caiu (${detalhe}). Reconectando...`
-        : 'Gerando um QR code novo...';
+      if (ponte.registrada) {
+        ponte.ultimoErro = `Conexão caiu (${detalhe}). Reconectando...`;
+      } else if (houveQr) {
+        // Ciclo normal: o código apareceu, ninguém escaneou a tempo, vem outro.
+        ponte.ultimoErro = 'Gerando um QR code novo...';
+      } else {
+        // Morreu antes de mostrar código nenhum. Isso nunca é rotina.
+        ponte.ultimoErro = `Não consegui abrir a conexão com o WhatsApp: ${detalhe}`;
+      }
       console.log(`[WhatsApp] ${ponte.ultimoErro} (${detalhe})`);
       agendarReconexao();
     }
