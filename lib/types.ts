@@ -3,6 +3,23 @@
 
 export type StatusCaso = 'pendente' | 'processando' | 'revisao' | 'sucesso' | 'erro';
 
+/**
+ * Comprovante do protocolo, do jeito que o painel precisa exibir.
+ *
+ * `destino`/`referencia` contam onde ficou o ORIGINAL (Drive do cliente ou
+ * disco, quando a service account não tem cota). O painel guarda sempre uma
+ * cópia própria, senão a tela dependeria do Drive para mostrar o arquivo — e
+ * é justamente o Drive que pode falhar.
+ */
+export interface ComprovanteCaso {
+  /** Nome que o operador vê ao baixar. */
+  nome: string;
+  tamanhoBytes: number;
+  destino: 'drive' | 'local';
+  referencia: string;
+  em: string;
+}
+
 export interface CasoExecucao {
   cpf: string;
   nome: string;
@@ -11,6 +28,8 @@ export interface CasoExecucao {
   protocolo?: string;
   /** Motivo quando o caso falhou (categoria do diagnóstico). */
   motivoErro?: string;
+  /** Só existe quando a extensão conseguiu capturar o PDF no GERID. */
+  comprovante?: ComprovanteCaso;
 }
 
 export type StatusExecucao = 'ociosa' | 'rodando' | 'concluida' | 'erro';
@@ -34,6 +53,14 @@ export interface ExecucaoAtual {
   /** Etapa operacional atual no computador que acessa o GERID. */
   estadoGerid?: EstadoGerid;
   detalheGerid?: string;
+  /**
+   * Quando o operador pausou a fila pelo painel (ISO). Ausente = rodando.
+   *
+   * A pausa vale ENTRE casos: o caso em andamento sempre termina. Parar no
+   * meio deixaria um requerimento pela metade na tela do GERID — ou pior,
+   * pararia logo depois do Confirmar, sem ler o número do protocolo.
+   */
+  pausadaEm?: string;
 }
 
 export type AcaoRevisao = 'resolvido' | 'reprocessar';

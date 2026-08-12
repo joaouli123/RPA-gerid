@@ -16,7 +16,8 @@ export type NomeIcone =
   | 'alerta'
   | 'documento'
   | 'grupo'
-  | 'recarregar';
+  | 'recarregar'
+  | 'pausa';
 
 const PATHS: Record<NomeIcone, ReactNode> = {
   painel: (
@@ -65,6 +66,7 @@ const PATHS: Record<NomeIcone, ReactNode> = {
   ),
   lua: <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z" />,
   raio: <path d="M13 2.5 5.5 13H11l-1 8.5L18.5 11H13l1-8.5Z" />,
+  pausa: <path d="M9.5 5.5v13M14.5 5.5v13" />,
   check: <path d="M5 12.5l4 4 10-10" />,
   x: <path d="M6 6l12 12M18 6L6 18" />,
   alerta: (

@@ -61,6 +61,7 @@ export function ExecucaoProgresso({
     atual?.casos ?? prontos.map((p) => ({ ...p, status: 'pendente' as const }));
   const rodando = atual?.status === 'rodando';
   const concluida = atual?.status === 'concluida';
+  const pausada = Boolean(atual?.pausadaEm);
   const estadoGerid = atual?.estadoGerid ? ESTADO_GERID[atual.estadoGerid] : null;
 
   const concluidos = casos.filter(
@@ -133,6 +134,53 @@ export function ExecucaoProgresso({
     });
   }
 
+  // Pausa/retoma a fila. Vale ENTRE casos: o requerimento que já está na tela
+  // do GERID termina, porque abandoná-lo no meio é que criaria estrago.
+  function alternarPausa(pausar: boolean) {
+    setErro(null);
+    startTransition(async () => {
+      try {
+        const resposta = await fetch('/api/execucao/pausa', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pausar }),
+        });
+        if (!resposta.ok) {
+          throw new Error(
+            await mensagemDaResposta(
+              resposta,
+              pausar ? 'Nao foi possivel pausar a fila.' : 'Nao foi possivel retomar a fila.',
+            ),
+          );
+        }
+        await buscarProgresso();
+      } catch (e: unknown) {
+        setErro(e instanceof Error ? e.message : 'Não foi possível alterar a pausa da fila.');
+      }
+    });
+  }
+
+  // Caso parado sem protocolo volta para a fila sozinho, sem "Redefinir" —
+  // que apagaria a execução inteira e o resultado dos outros casos junto.
+  function reenfileirar(cpf: string) {
+    setErro(null);
+    startTransition(async () => {
+      try {
+        const resposta = await fetch('/api/execucao/reenfileirar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cpf }),
+        });
+        if (!resposta.ok) {
+          throw new Error(await mensagemDaResposta(resposta, 'Nao foi possivel devolver o caso para a fila.'));
+        }
+        await buscarProgresso();
+      } catch (e: unknown) {
+        setErro(e instanceof Error ? e.message : 'Não foi possível devolver o caso para a fila.');
+      }
+    });
+  }
+
   return (
     <div className="space-y-4">
       {geridPronto ? (
@@ -157,6 +205,18 @@ export function ExecucaoProgresso({
         </div>
       )}
 
+      {pausada && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <Icone nome="pausa" className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <strong>Fila pausada.</strong> A extensão não pega nenhum caso novo, e os casos que
+            ainda não rodaram continuam na fila (nada vira erro). O caso que já estava na tela do
+            GERID <strong>termina normalmente</strong> — parar no meio deixaria um requerimento
+            incompleto. Clique em <strong>Retomar fila</strong> e depois em Iniciar na extensão.
+          </div>
+        </div>
+      )}
+
       {erro && (
         <div className="flex items-start gap-2 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
           <Icone nome="x" className="mt-0.5 h-4 w-4 shrink-0" />
@@ -173,11 +233,24 @@ export function ExecucaoProgresso({
             <div className="text-2xl font-semibold tabular-nums">{casos.length}</div>
           </div>
           <div className="flex items-center gap-2">
-            {rodando && estadoGerid && (
+            {pausada && <StatusPill tom="ambar">Pausada</StatusPill>}
+            {rodando && !pausada && estadoGerid && (
               <StatusPill tom={estadoGerid.tom}>{estadoGerid.rotulo}</StatusPill>
             )}
-            {rodando && !estadoGerid && <StatusPill tom="azul">Executando via Extensão</StatusPill>}
+            {rodando && !pausada && !estadoGerid && (
+              <StatusPill tom="azul">Executando via Extensão</StatusPill>
+            )}
             {concluida && <StatusPill tom="verde">Concluída</StatusPill>}
+            {rodando && (
+              <Botao
+                variante={pausada ? 'primario' : 'secundario'}
+                onClick={() => alternarPausa(!pausada)}
+                disabled={iniciando}
+              >
+                <Icone nome={pausada ? 'execucao' : 'pausa'} className="h-4 w-4" />
+                {pausada ? 'Retomar fila' : 'Pausar fila'}
+              </Botao>
+            )}
             {atual && (
               <Botao
                 variante="fantasma"
@@ -231,10 +304,36 @@ export function ExecucaoProgresso({
                   Protocolo <span className="font-medium tabular-nums">{c.protocolo}</span>
                 </span>
               )}
+              {/* O PDF que a extensão capturou no GERID, servido pelo próprio
+                  painel. Aparece além do arquivo no Drive justamente porque o
+                  Drive é a parte que pode falhar (a service account não tem
+                  cota) — aqui o operador confere sem sair da tela. */}
+              {c.comprovante && atual && (
+                <a
+                  href={`/api/execucao/comprovante?execucao=${encodeURIComponent(atual.id)}&cpf=${encodeURIComponent(c.cpf)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`Arquivado em: ${c.comprovante.referencia}`}
+                  className="inline-flex items-center gap-1 rounded-md border border-emerald-300 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 dark:border-emerald-500/40 dark:text-emerald-300 dark:hover:bg-emerald-500/10"
+                >
+                  <Icone nome="documento" className="h-3.5 w-3.5" />
+                  Comprovante
+                </a>
+              )}
               {c.motivoErro && (
                 <span className="text-xs text-rose-600 dark:text-rose-400">{c.motivoErro}</span>
               )}
               <StatusPill tom={TOM_CASO[c.status]}>{ROTULO_CASO[c.status]}</StatusPill>
+              {!c.protocolo && (c.status === 'revisao' || c.status === 'erro') && (
+                <button
+                  type="button"
+                  onClick={() => reenfileirar(c.cpf)}
+                  disabled={iniciando}
+                  className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  Devolver para a fila
+                </button>
+              )}
             </div>
           </li>
         ))}

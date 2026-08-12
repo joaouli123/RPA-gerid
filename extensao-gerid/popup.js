@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
   const API_URL_PADRAO = 'https://vmkcogtpgc1dgd5ae6gjfz1n.179.198.98.63.sslip.io';
   const btnStart = document.getElementById('btnStart');
+  const btnPausa = document.getElementById('btnPausa');
   const btnAuth = document.getElementById('btnAuth');
   const authBox = document.getElementById('authBox');
   const authLabel = document.getElementById('authLabel');
@@ -59,6 +60,16 @@ document.addEventListener('DOMContentLoaded', () => {
     },
   );
 
+  // Espelho do estado do servidor, nunca a fonte da verdade: quem manda e a
+  // resposta de /api/ext/fila. Comeca `false` so para o primeiro render.
+  let pausada = false;
+
+  function renderPausa(temExecucao) {
+    btnPausa.hidden = !temExecucao;
+    btnPausa.innerText = pausada ? 'Retomar fila' : 'Pausar fila';
+    btnPausa.disabled = false;
+  }
+
   function renderAuth(registro) {
     const autenticado = registro?.estado === 'autenticado';
     authBox.classList.toggle('ok', autenticado);
@@ -108,7 +119,18 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!data) throw new Error('O servidor retornou uma resposta invalida.');
       const salvo = await chrome.storage.local.get(['execucaoAtivaGerid']);
       const aguardandoConfirmacao = salvo.execucaoAtivaGerid?.aguardandoConfirmacao;
-      
+
+      // A pausa vem do SERVIDOR, nao de uma flag local: e o mesmo estado que o
+      // painel mostra. So aparece quando existe execucao aberta para pausar.
+      pausada = Boolean(data.pausada);
+      renderPausa(Boolean(data.idExecucao));
+      if (pausada) {
+        statusLabel.innerText = 'Fila pausada — casos aguardando:';
+        countLabel.innerText = String(data.pendentes ?? '-');
+        btnStart.disabled = true;
+        return;
+      }
+
       if (data.sucesso && data.casos) {
         const count = data.casos.length;
         countLabel.innerText = count.toString();
@@ -137,6 +159,9 @@ document.addEventListener('DOMContentLoaded', () => {
       statusLabel.innerText = 'Erro de conexão';
       countLabel.innerText = 'X';
       btnStart.disabled = true;
+      // Sem resposta do servidor nao da para saber se esta pausado; esconder o
+      // botao e melhor do que oferecer um "Retomar" que talvez nem chegue la.
+      renderPausa(false);
       log('Erro: ' + (e.name === 'AbortError' ? 'a conexao excedeu 20 segundos.' : e.message));
     } finally {
       clearTimeout(temporizador);
@@ -158,6 +183,36 @@ document.addEventListener('DOMContentLoaded', () => {
       apiToken,
       modoTeste: modoTesteInput.checked,
     });
+  });
+
+  btnPausa.addEventListener('click', async () => {
+    const salvoToken = await chrome.storage.local.get(['apiToken']);
+    const apiToken = salvoToken.apiToken?.trim();
+    if (!apiToken) {
+      await checkQueue();
+      return;
+    }
+    const alvo = !pausada;
+    btnPausa.disabled = true;
+    try {
+      const res = await fetch(apiUrlInput.value.replace(/\/$/, '') + '/api/ext/pausa', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pausar: alvo }),
+      });
+      const dados = await res.json().catch(() => null);
+      if (!res.ok || !dados?.sucesso) {
+        throw new Error(dados?.erro || `Servidor respondeu HTTP ${res.status}.`);
+      }
+      log(alvo
+        ? 'Fila pausada. O caso que ja estava na tela do GERID termina antes de parar.'
+        : 'Fila retomada. Clique em Iniciar para continuar de onde parou.');
+    } catch (e) {
+      log('Nao consegui alterar a pausa: ' + e.message);
+    } finally {
+      // O estado real vem do servidor — nunca do que este popup achou que fez.
+      await checkQueue();
+    }
   });
 
   btnAuth.addEventListener('click', () => {

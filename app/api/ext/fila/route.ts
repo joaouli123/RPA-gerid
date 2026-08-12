@@ -34,6 +34,27 @@ export async function GET(req: Request) {
       return NextResponse.json({ sucesso: true, idExecucao: null, casos: [] }, { headers: corsHeaders });
     }
 
+    // Fila pausada não entrega caso. A execução continua aberta e os casos
+    // continuam `pendente` — a pausa só impede pegar trabalho novo, inclusive
+    // quando alguém clica em Iniciar na extensão durante a pausa.
+    if (atual.pausadaEm) {
+      return NextResponse.json(
+        {
+          sucesso: true,
+          idExecucao: atual.id,
+          pausada: true,
+          pausadaEm: atual.pausadaEm,
+          casos: [],
+          // Quantos AINDA esperam. `casos: []` sozinho faria o popup anunciar
+          // "0 pendentes" numa fila que so esta parada — mentira por omissao.
+          pendentes: atual.casos.filter(
+            (c) => c.status === 'pendente' || c.status === 'processando',
+          ).length,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
     const [resultado, config] = await Promise.all([getResultado(), getConfig()]);
     garantirFonteConfiavelParaExecucao();
     const prontosPorCpf = new Map(

@@ -45,7 +45,13 @@ export async function POST(req: Request) {
         { status: 409, headers: corsHeaders },
       );
     }
-    return NextResponse.json({ sucesso: true }, { headers: corsHeaders });
+    // A resposta do heartbeat é por onde a extensão FICA SABENDO da pausa: ela
+    // já bate aqui entre um caso e outro, então não precisa de outra rota nem
+    // de polling extra para descobrir que o operador mandou parar.
+    return NextResponse.json(
+      { sucesso: true, pausada: Boolean(execucao.pausadaEm), pausadaEm: execucao.pausadaEm },
+      { headers: corsHeaders },
+    );
   } catch (erro) {
     return NextResponse.json(
       { sucesso: false, erro: erro instanceof Error ? erro.message : 'Erro interno.' },

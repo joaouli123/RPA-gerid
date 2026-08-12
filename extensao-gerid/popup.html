@@ -115,6 +115,10 @@
 
   <button id="btnStart" disabled>Preparar e iniciar</button>
 
+  <!-- Mesma pausa do painel: os dois botoes mexem no MESMO estado no servidor,
+       nao numa flag local da extensao. -->
+  <button class="secondary" id="btnPausa" hidden>Pausar fila</button>
+
   <div id="log">Aguardando...</div>
 
   <details class="config">

@@ -12,6 +12,7 @@ import type {
 import { parseClientes, parseGrupoFamiliar } from '@/src/domain/parsePlanilha';
 import { agruparGrupoFamiliar } from '@/src/domain/grupoFamiliar';
 import { apenasDigitos } from '@/src/domain/texto';
+import { salvarComprovante, type ComprovanteSalvo } from '@/src/modulo3/comprovante';
 import {
   serializarClientes,
   serializarGrupoFamiliar,
@@ -25,6 +26,7 @@ import {
 import type {
   AcaoRevisao,
   CasoExecucao,
+  ComprovanteCaso,
   EstadoGerid,
   Execucao,
   ExecucaoAtual,
@@ -45,6 +47,15 @@ export type { AcaoRevisao, ExecucaoAtual, OverridesConfig, RegistroAcaoRevisao }
 /** Caminho do estado persistido (sobrescrevível para testes). */
 const ARQUIVO_ESTADO =
   process.env.RPA_ESTADO_ARQUIVO ?? path.join(process.cwd(), '.data', 'estado.json');
+
+/**
+ * Cópia dos comprovantes que o PAINEL serve para download.
+ *
+ * Fica ao lado do estado (e não dentro dele) de propósito: `estado.json` é
+ * regravado a cada sinal da extensão, e enfiar PDFs em base64 ali deixaria
+ * cada gravação centenas de KB mais pesada.
+ */
+const PASTA_COMPROVANTES = path.join(path.dirname(ARQUIVO_ESTADO), 'comprovantes');
 
 interface Estado {
   overridesConfig: OverridesConfig;
@@ -457,6 +468,44 @@ export async function atualizarStatusCaso(
   await persistir();
 }
 
+/**
+ * Devolve um caso parado (`revisao` ou `erro`) para a fila.
+ *
+ * Existe porque `/api/ext/fila` só entrega casos `pendente`/`processando`: um
+ * caso que parou em "Revisar e confirmar" ficava fora da fila para sempre, e
+ * clicar em Iniciar não o refazia. Quem decide é o operador, depois de olhar o
+ * GERID — por isso é uma ação explícita e não algo automático.
+ *
+ * ⚠️ Caso COM protocolo nunca volta. Ter protocolo significa que o INSS já
+ * recebeu o pedido; refazer criaria um segundo requerimento em nome da mesma
+ * pessoa. Se o número estiver errado, corrija o número — não reprotocole.
+ */
+export async function reenfileirarCaso(cpf: string): Promise<void> {
+  const estado = await carregarEstado();
+  const atual = estado.execucaoAtual;
+  if (!atual) throw new Error('Nao ha execucao aberta.');
+
+  const caso = atual.casos.find((c) => c.cpf === cpf);
+  if (!caso) throw new Error('Caso nao encontrado nesta execucao.');
+  if (caso.protocolo) {
+    throw new Error(
+      `${caso.nome} ja tem o protocolo ${caso.protocolo}. Refazer criaria um segundo requerimento no INSS.`,
+    );
+  }
+  if (caso.status !== 'revisao' && caso.status !== 'erro') {
+    throw new Error(`${caso.nome} esta em "${caso.status}" — so caso parado volta para a fila.`);
+  }
+
+  caso.status = 'pendente';
+  caso.motivoErro = undefined;
+  // A execução precisa voltar a "rodando", senão `/api/ext/fila` responde que
+  // não há fila e a extensão não pega o caso que acabou de ser devolvido.
+  atual.status = 'rodando';
+  atual.estadoGerid = 'aguardando_extensao';
+  atual.ultimoSinalEm = new Date().toISOString();
+  await persistir();
+}
+
 /** Impede que um lote real seja criado com o fallback de demonstracao. */
 export function garantirFonteConfiavelParaExecucao(): void {
   if (process.env.NODE_ENV === 'test') return;
@@ -468,6 +517,38 @@ export function garantirFonteConfiavelParaExecucao(): void {
   if (cache.erroFonte) {
     throw new Error(`Execucao bloqueada: a leitura do Google Drive falhou. ${cache.erroFonte}`);
   }
+}
+
+/**
+ * Liga/desliga a pausa da fila pelo painel.
+ *
+ * A pausa NÃO cancela nada: os casos continuam `pendente` e a execução segue
+ * aberta. Ela só faz a extensão parar de pegar caso novo — o que já está na
+ * tela do GERID termina. Retomar zera o relógio de inatividade, senão a
+ * execução expiraria no instante seguinte por "extensão sumiu".
+ */
+export async function definirPausaExecucao(pausar: boolean): Promise<ExecucaoAtual | null> {
+  const estado = await carregarEstado();
+  const atual = estado.execucaoAtual;
+  if (!atual) throw new Error('Nao ha execucao aberta para pausar.');
+  if (atual.status !== 'rodando') {
+    throw new Error(`A execucao esta em "${atual.status}" — so fila rodando pode ser pausada.`);
+  }
+
+  if (pausar) {
+    atual.pausadaEm = new Date().toISOString();
+  } else {
+    delete atual.pausadaEm;
+    atual.ultimoSinalEm = new Date().toISOString();
+  }
+  await persistir();
+  return structuredClone(atual);
+}
+
+/** A fila está pausada? Consultado pelas rotas que a extensão chama. */
+export async function execucaoPausada(idExecucao: string): Promise<boolean> {
+  const atual = (await carregarEstado()).execucaoAtual;
+  return Boolean(atual && atual.id === idExecucao && atual.pausadaEm);
 }
 
 /** Registra que a extensao continua ativa e informa a etapa atual do GERID. */
@@ -517,6 +598,139 @@ export async function baixarArquivoParaExtensao(
 // ---------------------------------------------------------------------------
 // Execuções
 // ---------------------------------------------------------------------------
+
+/**
+ * Arquiva o comprovante do protocolo na pasta do cliente no Drive.
+ *
+ * Antes disso o PDF que a extensao capturava era escrito em `saida/<cpf>/` e
+ * ficava so na maquina de quem rodou — o escritorio abre a pasta do cliente no
+ * Drive, nao a pasta do robo. Aqui o destino passa a ser o Modulo 3, que TENTA
+ * o Drive e, se a credencial nao puder criar arquivo (a service account nao tem
+ * cota), cai para o disco local e devolve o motivo por escrito. Nunca finge
+ * que arquivou.
+ */
+export async function arquivarComprovante(
+  cpf: string,
+  bytes: Uint8Array,
+): Promise<ComprovanteSalvo> {
+  const config = await getConfig();
+  const alvo = apenasDigitos(cpf);
+  const pastaLocal = path.join(process.cwd(), 'saida', alvo);
+
+  // A pasta do cliente vem do Modulo 1 (a leitura do Drive). Sem ela nao ha
+  // para onde subir, e insistir no Drive so produziria um erro confuso.
+  const resultado = await getResultado().catch(() => null);
+  const dono = resultado?.clientesProntos.find(
+    (c) => apenasDigitos(c.cliente.cpf) === alvo,
+  );
+  if (!dono?.pastaId) {
+    const referencia = await salvarComprovanteLocal(bytes, config.posProtocolo.nomeComprovante, pastaLocal);
+    return {
+      destino: 'local',
+      referencia,
+      aviso:
+        'Nao encontrei a pasta deste CPF no Drive (o cliente pode ja ter sido movido para ' +
+        `"${config.posProtocolo.nomePastaProtocolado}"). O comprovante ficou em ${referencia}.`,
+    };
+  }
+
+  const { drive } = await criarGateways(config);
+  return salvarComprovante(drive, bytes, 'application/pdf', {
+    pastaClienteId: dono.pastaId,
+    nomeBase: config.posProtocolo.nomeComprovante,
+    pastaLocal,
+  });
+}
+
+/**
+ * Nome do arquivo da cópia do painel.
+ *
+ * `idExecucao` e `cpf` vêm de fora (querystring), então tudo que não for
+ * letra/dígito/hífen cai — sem isso um `../` no parâmetro leria qualquer
+ * arquivo do servidor.
+ */
+function arquivoDoComprovante(idExecucao: string, cpf: string): string {
+  const id = idExecucao.replace(/[^a-zA-Z0-9-]/g, '');
+  const alvo = apenasDigitos(cpf);
+  if (!id || !alvo) throw new Error('Execucao ou CPF invalido para o comprovante.');
+  return path.join(PASTA_COMPROVANTES, `${id}__${alvo}.pdf`);
+}
+
+/**
+ * Guarda a cópia do comprovante que o PAINEL entrega para download e anota o
+ * registro no caso.
+ *
+ * Existe porque o operador não deveria precisar abrir o Drive para conferir se
+ * o protocolo saiu — e porque, enquanto a service account não tiver cota, o
+ * Drive nem recebe o arquivo. Falhar aqui é aviso, nunca erro: o requerimento
+ * já entrou no INSS.
+ */
+export async function anexarComprovanteAoCaso(
+  idExecucao: string,
+  cpf: string,
+  bytes: Uint8Array,
+  nome: string,
+  origem: { destino: 'drive' | 'local'; referencia: string },
+): Promise<ComprovanteCaso | null> {
+  const estado = await carregarEstado();
+  const atual = estado.execucaoAtual;
+  if (!atual || atual.id !== idExecucao) return null;
+  const caso = atual.casos.find((c) => c.cpf === cpf);
+  if (!caso) return null;
+
+  const destinoArquivo = arquivoDoComprovante(idExecucao, cpf);
+  await fs.mkdir(PASTA_COMPROVANTES, { recursive: true });
+  await fs.writeFile(destinoArquivo, bytes);
+
+  caso.comprovante = {
+    nome: nome.endsWith('.pdf') ? nome : `${nome}.pdf`,
+    tamanhoBytes: bytes.byteLength,
+    destino: origem.destino,
+    referencia: origem.referencia,
+    em: new Date().toISOString(),
+  };
+  await persistir();
+  return caso.comprovante;
+}
+
+/**
+ * Lê a cópia do painel. Só devolve o arquivo de um caso que REALMENTE tem
+ * comprovante registrado — a execução atual ou o histórico —, para que a rota
+ * não vire um leitor de arquivo arbitrário a partir da querystring.
+ */
+export async function lerComprovanteDoCaso(
+  idExecucao: string,
+  cpf: string,
+): Promise<{ bytes: Buffer; nome: string } | null> {
+  const estado = await carregarEstado();
+  const execucao =
+    estado.execucaoAtual?.id === idExecucao
+      ? estado.execucaoAtual
+      : estado.execucoes.find((e) => e.id === idExecucao);
+  const caso = execucao?.casos.find((c) => c.cpf === cpf);
+  if (!caso?.comprovante) return null;
+
+  try {
+    const bytes = await fs.readFile(arquivoDoComprovante(idExecucao, cpf));
+    return { bytes, nome: caso.comprovante.nome };
+  } catch {
+    // O registro existe mas o arquivo sumiu (disco efêmero de deploy, por
+    // exemplo). Devolver null faz a rota responder 404 com franqueza em vez
+    // de entregar um PDF vazio.
+    return null;
+  }
+}
+
+async function salvarComprovanteLocal(
+  bytes: Uint8Array,
+  nomeBase: string,
+  pastaLocal: string,
+): Promise<string> {
+  await fs.mkdir(pastaLocal, { recursive: true });
+  const destino = path.join(pastaLocal, `${nomeBase}.pdf`);
+  await fs.writeFile(destino, bytes);
+  return destino;
+}
 
 export async function getExecucoes(): Promise<Execucao[]> {
   const estado = await carregarEstado();
@@ -597,6 +811,11 @@ async function processarExecucao(id: string): Promise<void> {
     await new Promise<void>((resolve) => setTimeout(resolve, intervaloMs));
     const atual = await getExecucaoAtual();
     if (!atual || atual.id !== id || atual.status !== 'rodando') return;
+
+    // Fila pausada pelo operador não é fila abandonada. Sem esta guarda, uma
+    // pausa mais longa que o prazo faria a execução expirar e os casos que
+    // ainda não rodaram virariam "erro" sozinhos.
+    if (atual.pausadaEm) continue;
 
     const referencia = Date.parse(atual.ultimoSinalEm ?? atual.iniciadoEm);
     if (!Number.isFinite(referencia) || Date.now() - referencia >= prazoMs) {
