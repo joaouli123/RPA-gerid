@@ -1364,15 +1364,28 @@
       `[P4][combo] ${id} alvo="${alvo}" motivo=${motivo2} existe=${Boolean(el)} rects=${el?.getClientRects().length ?? -1} display=${estilo?.display} visibility=${estilo?.visibility} value="${el?.value ?? ""}" itens=${lista ? lista.querySelectorAll(".br-item").length : "sem-lista"}`
     );
   }
+  function semSufixoDeGenero(texto) {
+    return texto.replace(/\([^)]*\)/g, "").replace(/\s+/g, " ").trim();
+  }
+  function jaTemValor(id, alvo) {
+    const el = document.getElementById(id);
+    const atual = normalizar(el?.value ?? "");
+    if (!atual) return false;
+    return atual === alvo || semSufixoDeGenero(atual) === semSufixoDeGenero(alvo);
+  }
   async function escolherNoCombobox(page, idCombobox, rotuloDesejado, aceitarTextoAdicional = false) {
     const idNoSeletor = idCombobox.match(/\[id="([^"]+)"\]/)?.[1];
     const id = idNoSeletor ?? idCombobox.replace(/^#/, "");
     const combo = page.locator(`[id="${id}"]`);
+    const alvo = normalizar(rotuloDesejado);
     if (!await combo.isVisible().catch(() => false)) {
+      if (jaTemValor(id, alvo)) {
+        diagCombobox(id, rotuloDesejado, "ok_ja_preenchido_em_etapa_anterior");
+        return true;
+      }
       diagCombobox(id, rotuloDesejado, "combo_nao_visivel");
       return false;
     }
-    const alvo = normalizar(rotuloDesejado);
     const rotulos = page.locator(`[id="${id}-itens"] label`);
     const limiteBusca = Date.now() + 12e3;
     let total = 0;

@@ -852,6 +852,26 @@ function diagCombobox(id: string, alvo: string, motivo: string): void {
   );
 }
 
+/**
+ * O rótulo sem o sufixo de gênero.
+ *
+ * O GERID escreve o MESMO valor de dois jeitos conforme a tela: a etapa 4
+ * grava "Solteiro" e a etapa 7 pede "Solteiro(a)". Comparar cru dá falso
+ * negativo. Só o parêntese sai — "C) Não" não tem "(", então não é tocado, e
+ * "B) Não" continua diferente de "Não".
+ */
+function semSufixoDeGenero(texto: string): string {
+  return texto.replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/** Se o combo já carrega o valor que queremos. Lê o DOM, não a nossa intenção. */
+function jaTemValor(id: string, alvo: string): boolean {
+  const el = document.getElementById(id) as HTMLInputElement | null;
+  const atual = normalizar(el?.value ?? '');
+  if (!atual) return false;
+  return atual === alvo || semSufixoDeGenero(atual) === semSufixoDeGenero(alvo);
+}
+
 async function escolherNoCombobox(
   page: Page,
   idCombobox: string,
@@ -861,12 +881,29 @@ async function escolherNoCombobox(
   const idNoSeletor = idCombobox.match(/\[id="([^"]+)"\]/)?.[1];
   const id = idNoSeletor ?? idCombobox.replace(/^#/, '');
   const combo = page.locator(`[id="${id}"]`);
+  const alvo = normalizar(rotuloDesejado);
+
   if (!(await combo.isVisible().catch(() => false))) {
+    /**
+     * Invisível NÃO quer dizer que faltou preencher.
+     *
+     * Combo de etapa anterior continua no DOM, só escondido. O Estado Civil é
+     * o caso: a etapa 4 marcou "Solteiro" e registrou sucesso; na etapa 7 a
+     * varredura reencontrava o MESMO `selectEstadoCivil0`, agora `rects=0`,
+     * não conseguia clicar num elemento sem área — e isso virava pendência.
+     * Resultado: o robô preenchia o requerimento inteiro, chegava no
+     * "Avançar" e se recusava a protocolar por um campo que estava certo.
+     *
+     * Então, antes de desistir, lemos o que está gravado. Se já é o alvo,
+     * acabou — não é o robô "achando" que deu certo, é o DOM dizendo.
+     */
+    if (jaTemValor(id, alvo)) {
+      diagCombobox(id, rotuloDesejado, 'ok_ja_preenchido_em_etapa_anterior');
+      return true;
+    }
     diagCombobox(id, rotuloDesejado, 'combo_nao_visivel');
     return false;
   }
-
-  const alvo = normalizar(rotuloDesejado);
 
   // As opcoes continuam anexadas ao DOM mesmo com a lista recolhida.
   //
