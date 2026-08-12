@@ -386,6 +386,14 @@ async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> 
  */
 (window as any).decidirModalDoEnvioGerid = () => {
   const decisao = decidirModalDoEnvio(document);
-  return { tipo: decisao.tipo, texto: decisao.texto, algumDialogo: decisao.algumDialogo };
+  return {
+    tipo: decisao.tipo,
+    texto: decisao.texto,
+    algumDialogo: decisao.algumDialogo,
+    // O modal que o robo NAO sabe tratar. E a saida mais util deste
+    // diagnostico: com a frase e os rotulos na mao da para escrever a regra
+    // sem inventar seletor.
+    naoReconhecido: decisao.naoReconhecido,
+  };
 };
 

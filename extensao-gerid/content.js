@@ -844,6 +844,8 @@
   }
   function decidirModalDoEnvio(doc) {
     let algumDialogo = false;
+    let naoReconhecido = "";
+    const descrever = (recorte, rotulos) => `"${recorte}" [botoes: ${rotulos.length ? rotulos.join(" | ") : "nenhum com rotulo"}]`;
     for (const dialogo of Array.from(doc.querySelectorAll('[role="dialog"]'))) {
       if (!naTela(dialogo)) continue;
       algumDialogo = true;
@@ -851,20 +853,25 @@
       const t = norm(texto);
       const recorte = texto.trim().slice(0, 400);
       const botoes = Array.from(dialogo.querySelectorAll("button")).filter(naTela);
+      const rotulos = botoes.map((b) => (b.innerText || "").trim()).filter(Boolean);
       const confirmar = botoes.find((botao) => norm(botao.innerText) === "confirmar");
-      if (!confirmar) continue;
+      if (!confirmar) {
+        naoReconhecido ||= descrever(recorte, rotulos);
+        continue;
+      }
       if (t.includes("atencao") && botoes.some((b) => norm(b.innerText) === "cancelar")) {
-        return { tipo: "atencao", texto: recorte, algumDialogo, confirmar };
+        return { tipo: "atencao", texto: recorte, algumDialogo, confirmar, naoReconhecido: "" };
       }
       if (t.includes("requerimento ainda nao foi finalizado")) {
-        return { tipo: "agendamento", texto: recorte, algumDialogo, confirmar };
+        return { tipo: "agendamento", texto: recorte, algumDialogo, confirmar, naoReconhecido: "" };
       }
       const comRotulo = botoes.filter((botao) => norm(botao.innerText).length > 0);
       if (comRotulo.length === 1 && comRotulo[0] === confirmar) {
-        return { tipo: "ciente", texto: recorte, algumDialogo, confirmar };
+        return { tipo: "ciente", texto: recorte, algumDialogo, confirmar, naoReconhecido: "" };
       }
+      naoReconhecido ||= descrever(recorte, rotulos);
     }
-    return { tipo: "", texto: "", algumDialogo, confirmar: null };
+    return { tipo: "", texto: "", algumDialogo, confirmar: null, naoReconhecido };
   }
   var init_modaisDoEnvio = __esm({
     "src/modaisDoEnvio.ts"() {
@@ -1057,7 +1064,9 @@
     console.log("[P10] avancar clicado; esperando o modal de confirmacao");
     const modais = await confirmarModaisDoEnvio(page);
     if (!modais.confirmou) {
-      return recusar("Cliquei em Avan\xE7ar mas nenhum modal de confirma\xE7\xE3o apareceu. Confirme na tela.");
+      return recusar(
+        modais.travou ? `Cliquei em Avan\xE7ar e o GERID abriu um modal que eu n\xE3o sei tratar: ${modais.travou}. Resolva na tela e me diga o que apareceu para eu passar a reconhecer.` : "Cliquei em Avan\xE7ar mas nenhum modal de confirma\xE7\xE3o apareceu. Confirme na tela."
+      );
     }
     console.log("[P10] confirmado no modal");
     const limite = Date.now() + 6e4;
@@ -1072,7 +1081,9 @@
       );
     }
     return recusar(
-      "Confirmei o envio, mas o GERID n\xE3o mostrou o n\xFAmero do protocolo em 60s. " + (modais.ciente ? `O aviso que confirmei dizia: "${modais.ciente}". ` : "") + "N\xC3O refa\xE7a o requerimento sem antes conferir na lista se ele j\xE1 foi protocolado."
+      "Confirmei o envio, mas o GERID n\xE3o mostrou o n\xFAmero do protocolo em 60s. " + (modais.ciente ? `O aviso que confirmei dizia: "${modais.ciente}". ` : "") + // Um modal que continuou na tela explica os 60s de espera inteiros. Antes
+      // essa informação existia só dentro do laço e morria ali.
+      (modais.travou ? `Ficou um modal que eu n\xE3o sei tratar: ${modais.travou}. ` : "") + "N\xC3O refa\xE7a o requerimento sem antes conferir na lista se ele j\xE1 foi protocolado."
     );
   }
   async function confirmarModaisDoEnvio(page) {
@@ -1080,12 +1091,19 @@
     let confirmou = false;
     let agendamento = "";
     let ciente = "";
+    let travou = "";
     while (Date.now() < limite) {
       const achado = await page.evaluate(() => {
         const decisao = decidirModalDoEnvio(document);
         if (decisao.tipo && decisao.confirmar) decisao.confirmar.click();
-        return { tipo: decisao.tipo, texto: decisao.texto, algumDialogo: decisao.algumDialogo };
+        return {
+          tipo: decisao.tipo,
+          texto: decisao.texto,
+          algumDialogo: decisao.algumDialogo,
+          naoReconhecido: decisao.naoReconhecido
+        };
       });
+      if (achado.naoReconhecido) travou = achado.naoReconhecido;
       if (achado.tipo === "atencao") confirmou = true;
       if (achado.tipo === "agendamento") {
         confirmou = true;
@@ -1096,10 +1114,11 @@
         ciente = achado.texto;
       }
       if (achado.tipo) console.log("[P10] modal confirmado:", achado.tipo, "\u2014", achado.texto);
+      if (achado.naoReconhecido) console.log("[P10] modal NAO reconhecido:", achado.naoReconhecido);
       if (confirmou && !achado.tipo && !achado.algumDialogo) break;
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
-    return { confirmou, agendamento, ciente };
+    return { confirmou, agendamento, ciente, travou };
   }
   function lerComprovante() {
     const texto = (document.body?.innerText || "").replace(/\u00a0/g, " ");
@@ -2765,7 +2784,15 @@
       });
       window.decidirModalDoEnvioGerid = () => {
         const decisao = decidirModalDoEnvio(document);
-        return { tipo: decisao.tipo, texto: decisao.texto, algumDialogo: decisao.algumDialogo };
+        return {
+          tipo: decisao.tipo,
+          texto: decisao.texto,
+          algumDialogo: decisao.algumDialogo,
+          // O modal que o robo NAO sabe tratar. E a saida mais util deste
+          // diagnostico: com a frase e os rotulos na mao da para escrever a regra
+          // sem inventar seletor.
+          naoReconhecido: decisao.naoReconhecido
+        };
       };
     }
   });

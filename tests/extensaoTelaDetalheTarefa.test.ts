@@ -131,6 +131,23 @@ describe('decisão sobre os modais do envio', () => {
 
     expect(decisao.tipo).toBe('');
     expect(decisao.algumDialogo).toBe(true);
+    // Não clica, mas CONTA o que viu. Sem isto o operador só recebia "o GERID
+    // não mostrou o número do protocolo", sem uma palavra sobre o modal que
+    // estava tapando a tela — e não havia como escrever a regra que falta.
+    expect(decisao.naoReconhecido).toContain('Deseja visualizar esta tarefa?');
+    expect(decisao.naoReconhecido).toContain('Fechar | Confirmar');
+  });
+
+  it('descreve o modal sem Confirmar nenhum, que também tapa a tela', async () => {
+    const decisao = await decidir(modal(
+      'Sistema indisponível no momento. Tente novamente mais tarde.',
+      '<button type="button">Ok</button>',
+    ));
+
+    expect(decisao.tipo).toBe('');
+    expect(decisao.algumDialogo).toBe(true);
+    expect(decisao.naoReconhecido).toContain('Sistema indisponível');
+    expect(decisao.naoReconhecido).toContain('botoes: Ok');
   });
 
   it('reconhece a confirmação final "Atenção" pelo par Cancelar/Confirmar', async () => {
@@ -158,7 +175,7 @@ describe('decisão sobre os modais do envio', () => {
 
   it('sem modal na tela não decide nada', async () => {
     const decisao = await decidir(TELA_DETALHE);
-    expect(decisao).toEqual({ tipo: '', texto: '', algumDialogo: false });
+    expect(decisao).toEqual({ tipo: '', texto: '', algumDialogo: false, naoReconhecido: '' });
   });
 });
 

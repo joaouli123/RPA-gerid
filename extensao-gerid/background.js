@@ -804,6 +804,34 @@ async function reiniciarWizardNaAba(tabId) {
 }
 
 /**
+ * Devolve a aba a um estado onde o PROXIMO cliente pode comecar.
+ *
+ * So faz sentido depois de um caso que falhou: a essa altura o GERID ja foi
+ * consultado (tela de detalhe e lista de tarefas) e disse que nao ha
+ * requerimento, entao o que sobrou na tela e formulario pela metade — jogar
+ * fora nao perde protocolo nenhum.
+ *
+ * ⚠️ Nao serve para caso em REVISAO. Ali a tela preenchida e justamente o que o
+ * operador vai conferir, e limpar seria apagar o trabalho na frente dele.
+ */
+async function limparAbaParaProximoCaso(tabId) {
+  const etapa = await etapaDaAba(tabId);
+  if (!etapa || ['lista_requerimentos', 'passo_1'].includes(etapa)) return true;
+
+  // Passo 10 e comprovante sao telas de requerimento JA ENVIADO ou prestes a
+  // ser. Nao se limpa isso por conta propria: o proximo caso espera.
+  if (['passo_10', 'comprovante'].includes(etapa)) return false;
+
+  if (await reiniciarWizardNaAba(tabId).catch(() => false)) return true;
+  try {
+    await prepararAbaGerid(tabId, true);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * "A pagina recarregou" ou "o requerimento ENTROU e o GERID mudou de tela"?
  *
  * Sao indistinguiveis pelo erro: nos dois casos o script que estava rodando
@@ -1780,6 +1808,13 @@ async function processQueue(
       ? `Modo teste: processando 1 de ${data.casos.length} caso(s) pendente(s).`
       : `Fila carregada: ${casos.length} casos pendentes.`);
 
+    // Quem falhou por motivo nao definitivo e vai voltar na proxima passada.
+    const parados = [];
+    // Parada deliberada (pausa, 2FA, revisao, tela travada). Cada uma dessas ja
+    // gravou o proprio estado e ja disse ao operador o que fazer; o reagendamento
+    // do fim do laco NAO pode passar por cima disso.
+    let interrompida = false;
+
     for (const caso of casos) {
       // Este heartbeat e tambem o ponto onde a extensao descobre a pausa. Ele
       // acontece ANTES de qualquer coisa do proximo caso: a pausa so vale
@@ -1806,6 +1841,7 @@ async function processQueue(
           `Fila PAUSADA no painel. ${caso.nome} nao foi iniciado e continua na fila. ` +
           'Clique em Retomar fila no painel e depois em Iniciar aqui.',
         );
+        interrompida = true;
         break;
       }
 
@@ -1883,31 +1919,37 @@ async function processQueue(
         await pedirAutorizacaoNoCelular(aba.id, apiUrl, apiToken);
         agendarRetomadaAutenticacao();
         sendLog('Sessao expirada. Conclua a autenticacao; a fila sera retomada sozinha.');
+        interrompida = true;
         break;
       }
 
+      // Falha que NAO e bloqueio definitivo do GERID: o caso fica de lado para
+      // nova tentativa e a fila SEGUE para o proximo cliente.
+      //
+      // Antes daqui saía um `break` que matava a rodada inteira. Um modal que o
+      // robô não sabia tratar no primeiro cliente deixava os outros três sem
+      // nenhuma tentativa — e eles terminavam no histórico com "Execução
+      // interrompida antes de processar este caso", que parece problema deles.
+      // Nenhum dos dois lados disso é verdade: o problema era de um só, e os
+      // outros nunca foram tentados.
       if (resultado.status === 'erro' && !erroDefinitivoDoRequerente(resultado)) {
-        const proximaTentativa = tentativasRetomada + 1;
         manterExecucaoPendente = true;
-        await salvarExecucaoAtiva({
-          idExecucao: data.idExecucao,
-          geridTabId: aba.id,
-          modoTeste,
-          cpfAtual: caso.cpf,
-          nomeAtual: caso.nome,
-          tentativasRetomada: proximaTentativa,
-          iniciadoEm: new Date().toISOString(),
-        });
-        sendLog(
-          `Pausa técnica no caso ${caso.nome}. Ele continua na fila para retomar após a correção: ${resultado.erro}`,
-        );
-        if (proximaTentativa <= MAX_RETOMADAS_AUTOMATICAS && chrome.alarms?.create) {
-          chrome.alarms.create(ALARME_RETOMADA, { delayInMinutes: 0.1 });
-          sendLog(`Retomada automática agendada (${proximaTentativa}/${MAX_RETOMADAS_AUTOMATICAS}).`);
-        } else {
-          sendLog('A execução continua preservada. Abra a extensão e clique em Iniciar para tentar novamente.');
+        parados.push(caso.nome);
+        sendLog(`${caso.nome} ficou para depois: ${resultado.erro}`);
+
+        // A tela precisa voltar a um ponto de partida antes do proximo cliente.
+        // Se nao voltar, ai sim para tudo: preencher por cima de requerimento
+        // alheio e a unica coisa pior do que nao preencher.
+        if (!(await limparAbaParaProximoCaso(aba.id).catch(() => false))) {
+          const etapa = await etapaDaAba(aba.id);
+          sendLog(
+            `Parei a fila: o GERID ficou em ${etapa || 'tela desconhecida'} e nao consegui voltar ` +
+            'ao inicio com seguranca. Resolva na tela e clique em Iniciar.',
+          );
+          interrompida = true;
+          break;
         }
-        break;
+        continue;
       }
       // Grave a parada local antes da chamada ao servidor. Se a rede cair
       // exatamente aqui, a tela preenchida e o CPF atual continuam recuperaveis.
@@ -1948,8 +1990,37 @@ async function processQueue(
         sendLog(modoTeste
           ? 'Revise e confirme no GERID. O protocolo deste caso de teste sera capturado automaticamente.'
           : 'Revise e confirme no GERID. Depois do clique, o protocolo sera capturado e a fila continuara.');
+        interrompida = true;
         break;
       }
+    }
+
+    // Uma nova passada por TODOS os que ficaram, e nao uma retentativa do
+    // primeiro que falhou. O contador sobe uma vez por passada — antes subia uma
+    // vez por caso, e tres clientes com problema esgotavam o limite antes de o
+    // primeiro deles ter uma segunda chance.
+    if (parados.length && !interrompida) {
+      const proximaTentativa = tentativasRetomada + 1;
+      manterExecucaoPendente = true;
+      await salvarExecucaoAtiva({
+        idExecucao: data.idExecucao,
+        geridTabId: aba.id,
+        modoTeste,
+        tentativasRetomada: proximaTentativa,
+        iniciadoEm: new Date().toISOString(),
+      });
+      sendLog(`${parados.length} caso(s) ficaram para nova tentativa: ${parados.join(', ')}.`);
+      if (proximaTentativa <= MAX_RETOMADAS_AUTOMATICAS && chrome.alarms?.create) {
+        chrome.alarms.create(ALARME_RETOMADA, { delayInMinutes: 0.1 });
+        sendLog(`Nova passada agendada (${proximaTentativa}/${MAX_RETOMADAS_AUTOMATICAS}).`);
+      } else {
+        sendLog(
+          'Cheguei ao limite de tentativas automaticas. Os casos continuam na fila: ' +
+          'resolva o que o GERID pediu e clique em Iniciar.',
+        );
+      }
+    } else if (parados.length) {
+      sendLog(`Casos que ficaram para depois: ${parados.join(', ')}.`);
     }
   } catch (erro) {
     sendLog(`Erro fatal: ${erro?.message || erro}`);

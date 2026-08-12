@@ -409,7 +409,15 @@ async function passo10ConfirmarEProtocolar(
 
   const modais = await confirmarModaisDoEnvio(page);
   if (!modais.confirmou) {
-    return recusar('Cliquei em Avançar mas nenhum modal de confirmação apareceu. Confirme na tela.');
+    // Se havia modal na tela, a frase dele vale mais do que qualquer suposição
+    // nossa: é o texto que diz por que o robô não avançou, e é o que permite
+    // escrever a regra depois — sem inventar seletor a partir de palpite.
+    return recusar(
+      modais.travou
+        ? `Cliquei em Avançar e o GERID abriu um modal que eu não sei tratar: ${modais.travou}. ` +
+          'Resolva na tela e me diga o que apareceu para eu passar a reconhecer.'
+        : 'Cliquei em Avançar mas nenhum modal de confirmação apareceu. Confirme na tela.',
+    );
   }
   console.log('[P10] confirmado no modal');
 
@@ -434,6 +442,9 @@ async function passo10ConfirmarEProtocolar(
   return recusar(
     'Confirmei o envio, mas o GERID não mostrou o número do protocolo em 60s. ' +
     (modais.ciente ? `O aviso que confirmei dizia: "${modais.ciente}". ` : '') +
+    // Um modal que continuou na tela explica os 60s de espera inteiros. Antes
+    // essa informação existia só dentro do laço e morria ali.
+    (modais.travou ? `Ficou um modal que eu não sei tratar: ${modais.travou}. ` : '') +
     'NÃO refaça o requerimento sem antes conferir na lista se ele já foi protocolado.',
   );
 }
@@ -460,11 +471,14 @@ async function passo10ConfirmarEProtocolar(
  */
 async function confirmarModaisDoEnvio(
   page: Page,
-): Promise<{ confirmou: boolean; agendamento: string; ciente: string }> {
+): Promise<{ confirmou: boolean; agendamento: string; ciente: string; travou: string }> {
   const limite = Date.now() + 20_000;
   let confirmou = false;
   let agendamento = '';
   let ciente = '';
+  // O modal que ficou na tela sem o robo saber o que fazer com ele. Guardado
+  // para a mensagem de erro: sem isto o operador so via "o protocolo nao saiu".
+  let travou = '';
 
   while (Date.now() < limite) {
     // A DECISAO mora em `decidirModalDoEnvio`, que nao clica em nada; o clique
@@ -474,8 +488,15 @@ async function confirmarModaisDoEnvio(
     const achado = await page.evaluate(() => {
       const decisao = decidirModalDoEnvio(document);
       if (decisao.tipo && decisao.confirmar) decisao.confirmar.click();
-      return { tipo: decisao.tipo, texto: decisao.texto, algumDialogo: decisao.algumDialogo };
+      return {
+        tipo: decisao.tipo,
+        texto: decisao.texto,
+        algumDialogo: decisao.algumDialogo,
+        naoReconhecido: decisao.naoReconhecido,
+      };
     });
+
+    if (achado.naoReconhecido) travou = achado.naoReconhecido;
 
     if (achado.tipo === 'atencao') confirmou = true;
     if (achado.tipo === 'agendamento') {
@@ -490,13 +511,14 @@ async function confirmarModaisDoEnvio(
       ciente = achado.texto;
     }
     if (achado.tipo) console.log('[P10] modal confirmado:', achado.tipo, '—', achado.texto);
+    if (achado.naoReconhecido) console.log('[P10] modal NAO reconhecido:', achado.naoReconhecido);
 
     // Já confirmei e a tela ficou sem modal: acabou, não há o que esperar.
     if (confirmou && !achado.tipo && !achado.algumDialogo) break;
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
 
-  return { confirmou, agendamento, ciente };
+  return { confirmou, agendamento, ciente, travou };
 }
 
 /**
