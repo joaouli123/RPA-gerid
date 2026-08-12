@@ -7,6 +7,8 @@ import {
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 import type { WASocket } from '@whiskeysockets/baileys';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { responderDesafio } from './desafio2fa';
 
 /**
@@ -65,7 +67,33 @@ interface Ponte {
    * mensagem — só sabendo quais ids saíram daqui.
    */
   enviadas: Set<string>;
+  /** Quantas reconexões seguidas falharam — dita a espera da próxima. */
+  tentativas: number;
+  /** Reconexão já marcada. Evita duas filas de retentativa correndo juntas. */
+  religarEm: ReturnType<typeof setTimeout> | null;
+  /** A sessão chegou a parear alguma vez. Sessão pareada insiste; sessão nova não. */
+  registrada: boolean;
+  /** O operador desvinculou no celular. Insistir aqui é gastar VPS à toa. */
+  desvinculado: boolean;
 }
+
+/**
+ * Espera antes de cada nova tentativa, em ms.
+ *
+ * Cresce porque o motivo mais comum de queda é a internet do servidor oscilando,
+ * e martelar o WhatsApp de 3 em 3 segundos durante uma queda longa é justamente
+ * o comportamento que faz a Meta olhar torto para um cliente não-oficial.
+ */
+const ESPERAS_RECONEXAO = [3_000, 5_000, 10_000, 20_000, 30_000, 60_000];
+
+/**
+ * Quantas vezes tentar quando a sessão AINDA não pareou.
+ *
+ * Pareada, a ponte reconecta para sempre — é isso que "sempre conectado"
+ * significa. Não pareada, insistir gera QR para uma tela que ninguém está
+ * olhando; melhor parar e esperar alguém clicar.
+ */
+const LIMITE_SEM_PAREAR = 5;
 
 // O socket precisa sobreviver ao hot reload do Next em desenvolvimento, senão
 // cada salvamento de arquivo abriria uma conexão nova com o WhatsApp.
@@ -79,11 +107,63 @@ raiz[chave] ??= {
   ultimoErro: null,
   codigoPareamento: null,
   enviadas: new Set(),
+  tentativas: 0,
+  religarEm: null,
+  registrada: false,
+  desvinculado: false,
 };
 const ponte = raiz[chave]!;
 // Uma ponte que sobreviveu ao hot reload pode ter sido criada por uma versão
-// anterior deste arquivo, sem o campo novo.
+// anterior deste arquivo, sem os campos novos.
 ponte.enviadas ??= new Set();
+ponte.tentativas ??= 0;
+ponte.religarEm ??= null;
+ponte.registrada ??= false;
+ponte.desvinculado ??= false;
+
+/** A pasta da sessão já guarda credencial? É o que separa "pareado" de "novo". */
+async function sessaoJaPareada(): Promise<boolean> {
+  return fs.access(path.join(pastaSessao(), 'creds.json')).then(
+    () => true,
+    () => false,
+  );
+}
+
+/** Marca a próxima tentativa, com espera crescente. Uma de cada vez. */
+function agendarReconexao(): void {
+  if (ponte.religarEm || ponte.desvinculado) return;
+  const espera = ESPERAS_RECONEXAO[Math.min(ponte.tentativas, ESPERAS_RECONEXAO.length - 1)]!;
+  ponte.tentativas += 1;
+  ponte.religarEm = setTimeout(() => {
+    ponte.religarEm = null;
+    void garantirConexao().catch(() => agendarReconexao());
+  }, espera);
+  // `unref` para o processo poder encerrar sem esperar este timer.
+  ponte.religarEm.unref?.();
+}
+
+/**
+ * Religa uma sessão já pareada que esteja fora do ar.
+ *
+ * Sem isto, a ponte só subia quando alguém precisava dela — ou seja, no momento
+ * em que o GERID pedia o 2FA, que é o pior momento possível para descobrir que a
+ * conexão caiu. Pior: depois de todo deploy o painel mostrava "não vinculado"
+ * mesmo com a sessão inteira salva em disco, e dava a impressão de que o
+ * pareamento tinha se perdido.
+ *
+ * Chamada a cada consulta de status, que é o que a tela de configurações já faz
+ * de segundos em segundos. Barata: sai na hora se já estiver conectada ou se já
+ * houver tentativa em andamento.
+ */
+export function manterConexaoViva(): void {
+  if (!whatsappConfigurado()) return;
+  if (ponte.conectado || ponte.conectando || ponte.religarEm || ponte.desvinculado) return;
+  void sessaoJaPareada().then((pareada) => {
+    if (!pareada) return;
+    ponte.registrada = true;
+    void garantirConexao().catch(() => agendarReconexao());
+  });
+}
 
 /**
  * Envia e anota o id, para não confundir o eco da própria mensagem com resposta
@@ -164,6 +244,10 @@ async function conectar(): Promise<void> {
   const { state, saveCreds } = await useMultiFileAuthState(pastaSessao());
   const { version } = await fetchLatestBaileysVersion();
 
+  // Credencial em disco quer dizer que este número já foi pareado um dia — a
+  // ponte passa a insistir na reconexão em vez de desistir depois de 5 quedas.
+  if (state.creds.registered) ponte.registrada = true;
+
   const socket = makeWASocket({
     version,
     auth: {
@@ -190,25 +274,42 @@ async function conectar(): Promise<void> {
       ponte.qr = null;
       ponte.codigoPareamento = null;
       ponte.ultimoErro = null;
+      // Conectou: a contagem de falhas volta a zero, senão a primeira queda
+      // depois de semanas no ar já cairia direto no intervalo de 60s.
+      ponte.tentativas = 0;
+      ponte.registrada = true;
+      ponte.desvinculado = false;
       console.log('[WhatsApp] Conectado.');
     }
     if (atualizacao.connection === 'close') {
       ponte.conectado = false;
       ponte.socket = null;
       ponte.conectando = null;
+      // QR de conexão morta não serve para nada, e deixá-lo na tela faz o
+      // operador escanear um código que o WhatsApp já descartou.
+      ponte.qr = null;
       const erroFechamento = atualizacao.lastDisconnect?.error as
         { output?: { statusCode?: number } } | undefined;
       const causa = erroFechamento?.output?.statusCode;
       // `loggedOut` = o operador desvinculou o aparelho. Reconectar em laço só
       // gastaria a VPS; é preciso ler o QR de novo.
       if (causa === DisconnectReason.loggedOut) {
+        ponte.desvinculado = true;
+        ponte.registrada = false;
         ponte.ultimoErro = 'Sessão encerrada no celular. É preciso parear de novo pelo QR code.';
+        console.log(`[WhatsApp] ${ponte.ultimoErro}`);
+        return;
+      }
+      // Sessão que nunca pareou não fica tentando para sempre: o QR só vale se
+      // alguém estiver na frente da tela, e ninguém está às 3h da manhã.
+      if (!ponte.registrada && ponte.tentativas >= LIMITE_SEM_PAREAR) {
+        ponte.ultimoErro = 'Não consegui parear. Clique em "Mostrar QR code" para tentar de novo.';
         console.log(`[WhatsApp] ${ponte.ultimoErro}`);
         return;
       }
       ponte.ultimoErro = `Conexão caiu (código ${causa ?? 'desconhecido'}). Reconectando...`;
       console.log(`[WhatsApp] ${ponte.ultimoErro}`);
-      setTimeout(() => { void garantirConexao(); }, 3_000);
+      agendarReconexao();
     }
   });
 
@@ -267,6 +368,17 @@ export function iniciarPareamento(modo: 'qr' | 'codigo'): { ok: boolean; erro?: 
 
   ponte.ultimoErro = null;
   if (modo === 'qr') ponte.codigoPareamento = null;
+
+  // Clique explícito zera a contagem: quem apertou o botão está na frente da
+  // tela agora, então nem o limite de tentativas nem o "desvinculado" de uma
+  // sessão antiga podem segurar. E se havia retentativa marcada, ela sai da
+  // frente — esperar 60s depois de clicar pareceria que o botão não funcionou.
+  ponte.tentativas = 0;
+  ponte.desvinculado = false;
+  if (ponte.religarEm) {
+    clearTimeout(ponte.religarEm);
+    ponte.religarEm = null;
+  }
 
   void (async () => {
     try {

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import QRCode from 'qrcode';
-import { iniciarPareamento, situacaoWhatsapp } from '@/lib/server/whatsapp';
+import { iniciarPareamento, manterConexaoViva, situacaoWhatsapp } from '@/lib/server/whatsapp';
 
 /**
  * Vincular o WhatsApp pelo painel.
@@ -21,6 +21,12 @@ import { iniciarPareamento, situacaoWhatsapp } from '@/lib/server/whatsapp';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
+  // Religa sozinho uma sessão pareada que esteja fora do ar. Sai na hora se já
+  // estiver conectada. É aqui porque a tela de configurações consulta esta rota
+  // em intervalo — sem isso, a ponte só subiria quando o GERID pedisse o 2FA,
+  // que é o pior momento para descobrir que a conexão caiu no deploy da manhã.
+  manterConexaoViva();
+
   const situacao = situacaoWhatsapp();
 
   // O QR vira SVG aqui, no servidor: a string crua do Baileys não é imagem, e
