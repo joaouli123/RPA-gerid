@@ -7,10 +7,30 @@ describe('GET /api/health', () => {
   it('expõe a versão implantada sem revelar configuração sensível', async () => {
     const resposta = await GET();
     expect(resposta.status).toBe(200);
-    expect(await resposta.json()).toEqual({
-      status: 'ok',
-      release: 'gerid-rpa-1.4.0',
-    });
+
+    const corpo = await resposta.json();
+    // As chaves são fechadas: esta é a única rota da API que o middleware
+    // libera sem sessão, então nada entra aqui por descuido.
+    expect(Object.keys(corpo).sort()).toEqual(['commit', 'iniciadoEm', 'release', 'status']);
+    expect(corpo.status).toBe('ok');
+    expect(corpo.release).toBe('gerid-rpa-1.4.0');
+    expect(corpo.iniciadoEm).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('diz em que commit a produção está, para não depender da memória de ninguém', async () => {
+    const anterior = process.env.RPA_COMMIT;
+    try {
+      // Sem o build arg (rodando local, por exemplo) a resposta é honesta em vez
+      // de inventar uma versão.
+      delete process.env.RPA_COMMIT;
+      expect((await (await GET()).json()).commit).toBe('desconhecido');
+
+      process.env.RPA_COMMIT = '73f03ce1234567890abcdef';
+      expect((await (await GET()).json()).commit).toBe('73f03ce12345');
+    } finally {
+      if (anterior === undefined) delete process.env.RPA_COMMIT;
+      else process.env.RPA_COMMIT = anterior;
+    }
   });
 
   it('é público para permitir a verificação externa do Coolify', async () => {
