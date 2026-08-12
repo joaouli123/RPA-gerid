@@ -1532,6 +1532,28 @@ async function processQueue(
         tentativasRetomada,
         iniciadoEm: new Date().toISOString(),
       });
+      // Caso que JA TEM protocolo e voltou so para buscar o comprovante que
+      // faltou. Aqui o robo NAO abre o formulario de requerimento: abrir seria
+      // criar um SEGUNDO pedido no nome da mesma pessoa. O numero ja e
+      // conhecido, entao ele vai direto a lista de tarefas, gera o PDF e fecha.
+      if (caso.somenteComprovante && caso.protocolo) {
+        sendLog(
+          `${caso.nome} ja esta protocolado (${caso.protocolo}); vou so buscar o comprovante que faltou.`,
+        );
+        const resultado = { status: 'sucesso', protocolo: caso.protocolo };
+        await conferirNaListaDeTarefas(caso, resultado);
+        if (!resultado.pdfBase64) {
+          // Sem PDF o caso continua protocolado — o que falta e o arquivo.
+          // Marcar erro apagaria o numero e liberaria um reprotocolo.
+          sendLog(
+            `Nao consegui o comprovante de ${caso.nome} agora. O protocolo ${caso.protocolo} ` +
+            'continua valido; tento de novo na proxima fila.',
+          );
+        }
+        await enviarResultado(apiUrl, apiToken, data.idExecucao, caso, resultado);
+        continue;
+      }
+
       sendLog(`Processando: ${caso.nome}`);
       const casoComAnexos = {
         ...caso,

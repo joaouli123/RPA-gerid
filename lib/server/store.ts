@@ -31,6 +31,7 @@ import type {
   Execucao,
   ExecucaoAtual,
   OverridesConfig,
+  ProtocoloRegistrado,
   RegistroAcaoRevisao,
 } from '@/lib/types';
 
@@ -73,6 +74,20 @@ interface Cache {
   /** Mensagem quando a leitura do Google falhou e caímos no dataset de exemplo. */
   erroFonte: string | null;
 }
+
+/**
+ * Por quanto tempo a leitura do Drive vale antes de ser refeita sozinha.
+ *
+ * Antes o cache era eterno: a pasta de um cliente novo entrava no Drive e o
+ * painel só enxergava depois que alguém clicasse em "Recarregar". Quem opera
+ * não tem como adivinhar que precisa clicar — o efeito prático era cliente
+ * parado sem ninguém perceber. Com a validade, pasta nova entra na fila
+ * sozinha. É leitura, não protocolo: reler à toa não causa dano nenhum.
+ */
+const VALIDADE_LEITURA_MS = (() => {
+  const bruto = Number(process.env.RPA_VALIDADE_LEITURA_MS ?? 3 * 60 * 1000);
+  return Number.isFinite(bruto) && bruto > 0 ? bruto : 3 * 60 * 1000;
+})();
 
 // Singleton em globalThis para sobreviver ao hot-reload do Next em dev.
 const globalStore = globalThis as unknown as {
@@ -216,8 +231,16 @@ async function criarGateways(
 // Resultado da leitura (Módulo 1)
 // ---------------------------------------------------------------------------
 
+/** A leitura em cache passou da validade? Sem `lidoEm` nunca houve leitura. */
+function leituraVencida(): boolean {
+  if (!cache.lidoEm) return true;
+  const quando = Date.parse(cache.lidoEm);
+  if (!Number.isFinite(quando)) return true;
+  return Date.now() - quando >= VALIDADE_LEITURA_MS;
+}
+
 export async function getResultado(forcar = false): Promise<ResultadoLeitura> {
-  if (cache.resultado && !forcar) return cache.resultado;
+  if (cache.resultado && !forcar && !leituraVencida()) return cache.resultado;
   const config = await getConfig();
 
   try {
@@ -458,7 +481,12 @@ export async function atualizarStatusCaso(
   atual.ultimoSinalEm = new Date().toISOString();
   caso.status = status;
   if (status === 'erro' || status === 'revisao') {
-    caso.protocolo = undefined;
+    // ⚠️ Um caso em modo só-comprovante JA ENTROU na fila com protocolo
+    // confirmado. Apagar o numero aqui faria a desduplicacao perder a chave, e
+    // na proxima rodada o robo protocolaria a mesma pessoa DE NOVO — o dano
+    // exato que a trava existe para impedir. Falhar em baixar o PDF nao apaga
+    // um requerimento que o INSS ja recebeu.
+    if (!caso.somenteComprovante) caso.protocolo = undefined;
     caso.motivoErro = motivoErro;
     if (status === 'revisao') atual.estadoGerid = 'revisao';
   } else if (status === 'sucesso') {
@@ -750,6 +778,57 @@ export async function getExecucaoAtual(): Promise<ExecucaoAtual | null> {
 }
 
 /**
+ * Todo CPF que já tem protocolo do GERID, em qualquer execução do histórico
+ * (mais a que está aberta agora). Chaveado por CPF só em dígitos, porque a
+ * planilha do escritório guarda CPF com zero à esquerda e o GERID devolve com
+ * máscara — comparar texto cru deixaria passar o mesmo cliente duas vezes.
+ *
+ * Quando o mesmo CPF aparece mais de uma vez, fica o registro MAIS ANTIGO: é
+ * o protocolo que vale, os seguintes seriam duplicidade a corrigir.
+ */
+export async function protocolosPorCpf(): Promise<Map<string, ProtocoloRegistrado>> {
+  const estado = await carregarEstado();
+  const mapa = new Map<string, ProtocoloRegistrado>();
+
+  const lotes: Array<{ dataISO: string; casos: CasoExecucao[] }> = [
+    ...estado.execucoes.map((e) => ({ dataISO: e.dataISO, casos: e.casos })),
+  ];
+  if (estado.execucaoAtual) {
+    lotes.push({ dataISO: estado.execucaoAtual.iniciadoEm, casos: estado.execucaoAtual.casos });
+  }
+
+  // 1ª passada: qual é o protocolo que VALE para cada CPF (o mais antigo).
+  for (const lote of lotes) {
+    for (const caso of lote.casos) {
+      const numero = String(caso.protocolo ?? '').trim();
+      if (!numero) continue;
+      const chave = apenasDigitos(caso.cpf);
+      if (!chave) continue;
+      const anterior = mapa.get(chave);
+      if (anterior && Date.parse(anterior.em) <= Date.parse(lote.dataISO)) continue;
+      mapa.set(chave, { cpf: caso.cpf, nome: caso.nome, protocolo: numero, em: lote.dataISO });
+    }
+  }
+
+  // 2ª passada: o comprovante desse protocolo, venha da execução que vier.
+  // Ele quase nunca sai junto — costuma chegar numa rodada POSTERIOR, no modo
+  // só-comprovante. Ler o PDF apenas do registro mais antigo faria o cliente
+  // voltar à fila para sempre, atrás de um arquivo que já está guardado.
+  // O número tem que bater: PDF de outro requerimento da mesma pessoa (um BPC
+  // negado no ano passado, por exemplo) não é o comprovante deste protocolo.
+  for (const lote of lotes) {
+    for (const caso of lote.casos) {
+      if (!caso.comprovante) continue;
+      const registro = mapa.get(apenasDigitos(caso.cpf));
+      if (!registro || registro.comprovante) continue;
+      if (String(caso.protocolo ?? '').trim() !== registro.protocolo) continue;
+      registro.comprovante = caso.comprovante;
+    }
+  }
+  return mapa;
+}
+
+/**
  * Inicia uma execucao real, consumida pela extensao no navegador autenticado
  * do operador. Nenhum caso e marcado como sucesso sem protocolo do GERID.
  */
@@ -758,17 +837,57 @@ export async function iniciarExecucao(): Promise<ExecucaoAtual> {
 
   if (estado.execucaoAtual?.status === 'rodando') return structuredClone(estado.execucaoAtual);
 
-  const resultado = await getResultado();
+  // Força reler o Drive: quem clica em "Iniciar" espera a fila de AGORA, com
+  // as pastas que entraram desde a última leitura. Ler cache aqui seria
+  // deixar cliente novo de fora sem avisar ninguém.
+  const resultado = await getResultado(true);
   garantirFonteConfiavelParaExecucao();
-  const casos: CasoExecucao[] = resultado.clientesProntos.map((c) => ({
-    cpf: c.cliente.cpf,
-    nome: c.cliente.nome,
-    status: 'pendente',
-  }));
+
+  const jaProtocolados = await protocolosPorCpf();
+  const pulados: ProtocoloRegistrado[] = [];
+  const casos: CasoExecucao[] = [];
+
+  for (const c of resultado.clientesProntos) {
+    // ⚠️ Trava de duplicidade. Um protocolo é um requerimento ABERTO no INSS
+    // em nome de uma pessoa com deficiência; refazer cria um segundo pedido
+    // que alguém depois tem que cancelar na mão. Enquanto a pasta não é
+    // movida para "Protocolado/", o Drive continua devolvendo o cliente todo
+    // dia — é aqui que ele para.
+    const registro = jaProtocolados.get(apenasDigitos(c.cliente.cpf));
+    if (registro) {
+      // Protocolado E com comprovante arquivado: acabou, sai da fila.
+      if (registro.comprovante) {
+        pulados.push(registro);
+        continue;
+      }
+      // Protocolado mas SEM o PDF. O requerimento existe, então refazer está
+      // fora de questão; o que falta é o comprovante na pasta do cliente. Volta
+      // à fila em modo só-comprovante: a extensão busca o número na lista de
+      // tarefas e nem encosta no formulário do requerimento.
+      casos.push({
+        cpf: registro.cpf,
+        nome: registro.nome,
+        status: 'pendente',
+        protocolo: registro.protocolo,
+        somenteComprovante: true,
+      });
+      continue;
+    }
+    casos.push({ cpf: c.cliente.cpf, nome: c.cliente.nome, status: 'pendente' });
+  }
 
   // Sem caso pronto não há o que protocolar — abrir o navegador à toa só
   // geraria um relatório vazio e confundiria o operador.
   if (casos.length === 0) {
+    // Distingue "não há cliente" de "todos já foram". A segunda é o estado
+    // normal de um dia sem pasta nova, e dizer "resolva as pendências" nela
+    // mandaria o operador procurar um problema que não existe.
+    if (pulados.length > 0) {
+      throw new Error(
+        `Nada a protocolar: os ${pulados.length} cliente(s) prontos já têm protocolo. ` +
+          'Pastas novas no Drive entram na fila sozinhas.',
+      );
+    }
     throw new Error(
       'Nenhum cliente está pronto para protocolar. Resolva as pendências em "Revisão manual" e recarregue os dados.',
     );
@@ -782,6 +901,7 @@ export async function iniciarExecucao(): Promise<ExecucaoAtual> {
     estadoGerid: 'aguardando_extensao',
     status: 'rodando',
     casos,
+    ...(pulados.length > 0 ? { pulados } : {}),
   };
   estado.execucaoAtual = atual;
   await persistir();
