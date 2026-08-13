@@ -8,6 +8,7 @@ import {
   nomeDoCasoNaExecucao,
 } from '@/lib/server/store';
 import { enviarComprovanteAoOperador } from '@/lib/server/whatsapp';
+import { guardarComprovantePendente } from '@/lib/server/whatsappPendentes';
 import { registrarOcorrencia } from '@/lib/server/diagnostico';
 import { revalidatePath } from 'next/cache';
 import { autorizarExtensao } from '@/lib/server/extensaoAuth';
@@ -101,28 +102,53 @@ export async function POST(req: Request) {
         //
         // É entrega, não prova: falhar aqui não muda o protocolo nem a resposta
         // da rota. Vira uma linha no aviso e a fila segue.
+        const nomeRequerente = await nomeDoCasoNaExecucao(idExecucao, cpf).catch(() => '');
+        const nomeArquivo = nomeRequerente
+          ? `${nomeRequerente} - comprovante ${String(protocolo || '').trim()}.pdf`
+          : `comprovante ${String(protocolo || '').trim()}.pdf`;
+        const observacao = confirmacao.drive
+          ? 'Salvo na pasta do cliente no Drive.'
+          : 'ATENÇÃO: não entrou no Drive do cliente. Guarde este arquivo.';
         try {
-          const nomeRequerente = await nomeDoCasoNaExecucao(idExecucao, cpf);
           const enviado = await enviarComprovanteAoOperador({
             nome: nomeRequerente || `CPF ${cpf}`,
             protocolo: String(protocolo || '').trim(),
             pdf: buffer,
-            nomeArquivo: nomeRequerente
-              ? `${nomeRequerente} - comprovante ${String(protocolo || '').trim()}.pdf`
-              : `comprovante ${String(protocolo || '').trim()}.pdf`,
-            observacao: confirmacao.drive
-              ? 'Salvo na pasta do cliente no Drive.'
-              : 'ATENÇÃO: não entrou no Drive do cliente. Guarde este arquivo.',
+            nomeArquivo,
+            observacao,
           });
           confirmacao.whatsapp = enviado.ok;
+          // Não entregou agora vira DÍVIDA, não perda. O protocolo já está
+          // feito, então nada reprocessaria este cliente — sem a fila, o PDF
+          // não seria mandado nunca mais.
+          if (!enviado.ok) {
+            await guardarComprovantePendente({
+              nome: nomeRequerente || `CPF ${cpf}`,
+              cpf,
+              protocolo: String(protocolo || '').trim(),
+              pdf: buffer,
+              nomeArquivo,
+              observacao,
+              erro: enviado.erro,
+            });
+          }
           avisoComprovante += enviado.ok
             ? ' Enviado no WhatsApp.'
-            : ` WhatsApp não recebeu: ${enviado.erro}.`;
+            : ` WhatsApp não recebeu (${enviado.erro}); vou tentar de novo sozinho.`;
         } catch (e) {
           console.error('Erro ao mandar o comprovante no WhatsApp:', e);
-          avisoComprovante += ` WhatsApp não recebeu: ${
+          await guardarComprovantePendente({
+            nome: nomeRequerente || `CPF ${cpf}`,
+            cpf,
+            protocolo: String(protocolo || '').trim(),
+            pdf: buffer,
+            nomeArquivo,
+            observacao,
+            erro: e instanceof Error ? e.message : 'erro desconhecido',
+          });
+          avisoComprovante += ` WhatsApp não recebeu (${
             e instanceof Error ? e.message : 'erro desconhecido'
-          }.`;
+          }); vou tentar de novo sozinho.`;
         }
       }
     }
@@ -132,16 +158,20 @@ export async function POST(req: Request) {
     // "PROTOCOLADO" e segue a vida, e semanas depois falta o PDF na pasta do
     // cliente sem ninguém saber desde quando. Fica registrado com nome e data.
     //
-    // O Drive barrado por falta de cota da service account fica DE FORA: é
-    // limitação conhecida e aceita pelo escritório, que acontece em todo
-    // protocolo. Registrá-la aqui poria cinco linhas idênticas por dia no
-    // Diagnóstico e enterraria as variações de erro que a tela existe para
-    // achar. O aviso continua indo para o painel e para o WhatsApp — o que
-    // muda é só o que conta como novidade.
+    // Duas coisas ficam DE FORA desta contagem, por motivos opostos:
+    //
+    // O Drive barrado por falta de cota da service account é limitação
+    // conhecida e aceita pelo escritório, que acontece em todo protocolo.
+    // Registrá-la poria cinco linhas idênticas por dia no Diagnóstico e
+    // enterraria as variações de erro que a tela existe para achar.
+    //
+    // O WhatsApp fica de fora porque falhar aqui não é mais o fim: a entrega
+    // virou dívida em disco e volta a ser tentada a cada ronda. Quem registra a
+    // ocorrência é a fila, se e quando desistir — anotar agora acusaria uma
+    // perda que provavelmente vai se resolver sozinha em cinco minutos.
     const faltou = [
       confirmacao.painel ? null : 'painel',
       confirmacao.drive || driveLimitacaoConhecida ? null : 'Drive do cliente',
-      confirmacao.whatsapp ? null : 'WhatsApp',
     ].filter(Boolean);
     if (status === 'sucesso' && pdfBase64 && faltou.length > 0) {
       await registrarOcorrencia({

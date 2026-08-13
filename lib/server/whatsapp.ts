@@ -608,7 +608,47 @@ async function conectar(): Promise<void> {
   });
 }
 
-/** Sobe a conexão se ainda não existir. Chamadas simultâneas compartilham a mesma. */
+/**
+ * Quanto esperar a conexão ficar de fato ABERTA antes de desistir da tentativa.
+ *
+ * Dez segundos porque quem espera do outro lado é a rota de status, e a
+ * extensão está parada esperando ela responder para seguir a fila. O que não
+ * couber aqui não se perde: vira pendência e volta no próximo pulso.
+ */
+const ESPERA_ABERTURA_MS = 10_000;
+
+/**
+ * Espera o aperto de mão terminar.
+ *
+ * `conectar()` termina quando o socket foi CRIADO, não quando ele abriu — a
+ * conexão com o WhatsApp acontece depois, por eventos. Então `await
+ * garantirConexao()` nunca significou "está conectado", e quem mandava mensagem
+ * logo em seguida estava escrevendo num socket ainda fechado. O Baileys chama
+ * isso de "Connection Closed".
+ *
+ * Não é hipótese: em 13/08/2026 dois comprovantes protocolados não chegaram no
+ * celular do operador exatamente assim, com a ponte pareada e o log dizendo
+ * "Conectado" um minuto antes.
+ */
+async function esperarConexaoAberta(limite = ESPERA_ABERTURA_MS): Promise<boolean> {
+  const fim = Date.now() + limite;
+  while (!ponte.conectado && Date.now() < fim) {
+    // Desvincular é decisão de quem está com o celular; esperar não resolve.
+    if (ponte.desvinculado) return false;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return ponte.conectado;
+}
+
+/**
+ * Sobe a conexão se ainda não existir. Chamadas simultâneas compartilham a mesma.
+ *
+ * Volta assim que o socket EXISTE, e não quando ele abre — de propósito. Quem
+ * pareia precisa disso: `iniciarPareamento` tem que responder na hora para o
+ * painel não estourar o tempo do proxy, e o QR aparece depois, por evento. Quem
+ * precisa de conexão aberta é só quem vai enviar, e é lá que a espera está
+ * (ver `entregar`).
+ */
 export async function garantirConexao(): Promise<void> {
   if (ponte.socket && ponte.conectado) return;
   ponte.conectando ??= conectar().finally(() => { ponte.conectando = null; });
@@ -625,16 +665,63 @@ export async function garantirConexao(): Promise<void> {
  * chegava até quem podia agir.
  */
 export async function avisarOperador(texto: string): Promise<{ ok: boolean; erro?: string }> {
-  try {
-    await garantirConexao();
-    if (!ponte.socket) return { ok: false, erro: 'A ponte do WhatsApp não está conectada.' };
-    await enviarTexto(ponte.socket, texto);
-    return { ok: true };
-  } catch (erro) {
-    ponte.ultimoErro = erro instanceof Error ? erro.message : String(erro);
-    console.log(`[WhatsApp] Não consegui avisar o operador: ${ponte.ultimoErro}`);
-    return { ok: false, erro: ponte.ultimoErro };
+  return entregar({ text: texto });
+}
+
+/**
+ * Espera entre uma tentativa de entrega e a seguinte.
+ *
+ * Duas tentativas, não dez: quem chama é a rota de status, e a extensão está
+ * parada esperando a resposta para seguir para o próximo cliente. Uma queda que
+ * não volta em poucos segundos não volta em vinte — para essa existe a
+ * pendência persistente, que tenta de novo sem prender ninguém.
+ */
+const ESPERAS_ENTRE_ENVIOS = [2_000];
+
+/**
+ * Entrega uma mensagem, e tenta de novo quando o socket cai no meio.
+ *
+ * Duas coisas erravam aqui, e as duas terminavam do mesmo jeito — mensagem que
+ * o operador nunca recebeu, sem nada quebrado à vista:
+ *
+ * 1. A checagem era `if (!ponte.socket)`, ou seja, "existe um objeto socket?".
+ *    Existir não é estar aberto. Socket em pleno aperto de mão passava por essa
+ *    porta e o envio estourava logo depois.
+ * 2. Uma tentativa só. A ponte pode estar MARCADA como conectada e o socket já
+ *    ter morrido do outro lado — o Baileys só descobre isso no envio. Como o
+ *    protocolo já estava feito e registrado, nada reprocessava o caso, e o PDF
+ *    não era mandado nunca mais.
+ *
+ * Por isso a falha agora derruba a marca de conectado antes de tentar de novo:
+ * sem isso a segunda tentativa reusaria o mesmo socket morto e falharia igual.
+ */
+async function entregar(
+  conteudo: Parameters<WASocket['sendMessage']>[1],
+): Promise<{ ok: boolean; erro?: string }> {
+  let ultimo = 'A ponte do WhatsApp não está conectada.';
+
+  for (let tentativa = 0; tentativa <= ESPERAS_ENTRE_ENVIOS.length; tentativa++) {
+    try {
+      await garantirConexao();
+      // A porta era `if (!ponte.socket)` — "existe um objeto socket?". Existir
+      // não é estar aberto, e era exatamente por essa fresta que passava o
+      // envio que estourava em "Connection Closed" logo depois.
+      if (!(await esperarConexaoAberta()) || !ponte.socket) throw new Error(ultimo);
+      await enviar(ponte.socket, conteudo);
+      return { ok: true };
+    } catch (erro) {
+      ultimo = erro instanceof Error ? erro.message : String(erro);
+      ponte.ultimoErro = ultimo;
+      // O socket mentiu sobre estar vivo. Derrubar a marca aqui é o que faz a
+      // próxima volta reconectar de verdade, em vez de reusar o cadáver.
+      ponte.conectado = false;
+      console.log(`[WhatsApp] Tentativa ${tentativa + 1} de entrega falhou: ${ultimo}`);
+      const espera = ESPERAS_ENTRE_ENVIOS[tentativa];
+      if (espera) await new Promise((resolve) => setTimeout(resolve, espera));
+    }
   }
+
+  return { ok: false, erro: ultimo };
 }
 
 /**
@@ -660,30 +747,20 @@ export async function enviarComprovanteAoOperador(opcoes: {
   /** O que dizer sobre o Drive — normalmente por que ele NÃO chegou lá. */
   observacao?: string;
 }): Promise<{ ok: boolean; erro?: string }> {
-  try {
-    await garantirConexao();
-    if (!ponte.socket) return { ok: false, erro: 'A ponte do WhatsApp não está conectada.' };
+  const linhas = [
+    `✅ ${opcoes.nome}`,
+    `Protocolo ${opcoes.protocolo}`,
+    opcoes.observacao?.trim(),
+  ].filter(Boolean);
 
-    const linhas = [
-      `✅ ${opcoes.nome}`,
-      `Protocolo ${opcoes.protocolo}`,
-      opcoes.observacao?.trim(),
-    ].filter(Boolean);
-
-    await enviar(ponte.socket, {
-      document: Buffer.from(opcoes.pdf),
-      mimetype: 'application/pdf',
-      fileName: opcoes.nomeArquivo.endsWith('.pdf')
-        ? opcoes.nomeArquivo
-        : `${opcoes.nomeArquivo}.pdf`,
-      caption: linhas.join('\n'),
-    });
-    return { ok: true };
-  } catch (erro) {
-    ponte.ultimoErro = erro instanceof Error ? erro.message : String(erro);
-    console.log(`[WhatsApp] Não consegui enviar o comprovante: ${ponte.ultimoErro}`);
-    return { ok: false, erro: ponte.ultimoErro };
-  }
+  return entregar({
+    document: Buffer.from(opcoes.pdf),
+    mimetype: 'application/pdf',
+    fileName: opcoes.nomeArquivo.endsWith('.pdf')
+      ? opcoes.nomeArquivo
+      : `${opcoes.nomeArquivo}.pdf`,
+    caption: linhas.join('\n'),
+  });
 }
 
 /**

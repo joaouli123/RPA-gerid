@@ -8,6 +8,7 @@ import {
 import { classificarDocumentos } from '@/src/domain/validacaoDocs';
 import { apenasDigitos } from '@/src/domain/texto';
 import { autorizarExtensao } from '@/lib/server/extensaoAuth';
+import { reenviarPendentes } from '@/lib/server/whatsappPendentes';
 
 // Permite chamadas do navegador (CORS) caso a extensão chame diretamente
 const corsHeaders = {
@@ -26,6 +27,13 @@ export async function GET(req: Request) {
     if (!auth.ok) {
       return NextResponse.json({ sucesso: false, erro: auth.erro }, { status: 401, headers: corsHeaders });
     }
+    // A ronda da extensão bate nesta rota de cinco em cinco minutos, haja
+    // trabalho ou não — é o único pulso regular que este servidor tem. É por
+    // ele que o comprovante que o WhatsApp derrubou volta a ser tentado, sem
+    // depender de alguém perceber a falta. Sem `await`: a fila da extensão não
+    // pode ficar esperando o WhatsApp voltar.
+    void reenviarPendentes();
+
     const atual = await getExecucaoAtual();
 
     // Consultar a fila nunca pode iniciar um protocolo. A extensão chama esta
