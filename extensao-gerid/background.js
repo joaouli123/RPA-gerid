@@ -1406,6 +1406,24 @@ async function buscarLinhasNaLista(tabId, cpf, diasParaTras = JANELA_CURTA_DIAS)
 
       const assinatura = () => lerLinhas().map((l) => l.protocolo).join(',');
       const antes = assinatura();
+
+      // Provar que o GERID RESPONDEU, e nao so que o resultado mudou.
+      //
+      // A assinatura sozinha nao serve para isso, e o caso em que ela falha e
+      // justamente o mais comum: pessoa sem nenhum requerimento, tabela vazia
+      // antes do clique e vazia depois. Assinatura '' dos dois lados, "nada
+      // mudou" — e a consulta que funcionou perfeitamente passaria por consulta
+      // que nao respondeu.
+      //
+      // O que separa os dois casos e o REDESENHO: respondendo, a tabela e
+      // repintada (nem que seja para escrever "Nenhum registro encontrado");
+      // com o POST recusado, ninguem toca nela. Mutacao e sinal de resposta
+      // mesmo quando o conteudo final e identico ao anterior.
+      const tabela = document.querySelector('#tableConsultarTarefasEC');
+      let redesenhou = false;
+      const observador = tabela && new MutationObserver(() => { redesenhou = true; });
+      observador?.observe(tabela, { childList: true, subtree: true, characterData: true });
+
       buscar.click();
 
       // A tabela precisa RESPONDER ao clique antes de qualquer leitura. Sem
@@ -1431,29 +1449,34 @@ async function buscarLinhasNaLista(tabId, cpf, diasParaTras = JANELA_CURTA_DIAS)
       // nada" e "o GERID nao respondeu". Quem le so as linhas ve zero nos dois
       // casos e conclui "pode protocolar" — no segundo, isso e um chute com
       // nome de resposta, e o preco de errar e um requerimento duplicado.
-      if (filtradas) return { linhas: filtradas, buscaConfirmada: true };
+      if (filtradas) {
+        observador?.disconnect();
+        return { linhas: filtradas, buscaConfirmada: true };
+      }
 
       // O filtro pode nao ter pegado. Em vez de desistir, aproveita o que esta
       // na tela — a linha certa continua sendo a que tem este CPF. Linha com o
       // CPF pedido e prova de que a busca chegou ao servidor.
       const naTela = lerLinhas().filter((l) => l.cpf === cpfDigitos);
       if (naTela.length) {
+        observador?.disconnect();
         return {
           linhas: naTela,
           buscaConfirmada: true,
           aviso: 'O filtro de CPF nao pegou; li a linha direto da tabela.',
         };
       }
+      observador?.disconnect();
       // Aqui, e so aqui, o periodo importa: "nao achei" sem dizer em que janela
       // procurei convida a ler como "esta pessoa nunca teve requerimento".
-      const mudou = antes !== assinatura();
+      const respondeu = redesenhou || antes !== assinatura();
       return {
         linhas: [],
-        buscaConfirmada: mudou,
+        buscaConfirmada: respondeu,
         aviso: juntar(
-          mudou
+          respondeu
             ? 'A lista do GERID nao trouxe nenhuma linha para este CPF.'
-            : 'A lista nao mudou depois do Buscar; pode nao ter filtrado.',
+            : 'A tabela nao se mexeu depois do Buscar; a consulta nao respondeu.',
           periodoDaTela(),
         ),
       };
