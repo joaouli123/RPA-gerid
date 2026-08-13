@@ -49,6 +49,8 @@ export async function POST(req: Request) {
     // para o operador ver no log se o comprovante chegou aos DOIS lugares, em
     // vez de supor que chegou.
     const confirmacao = { painel: false, drive: false, whatsapp: false, aviso: '' };
+    // O Drive recusou pela falta de cota que ja conhecemos, e nao por algo novo.
+    let driveLimitacaoConhecida = false;
     if (status === 'sucesso' && pdfBase64) {
       let buffer: Buffer | null = null;
       let origem: { destino: 'drive' | 'local'; referencia: string } | null = null;
@@ -59,6 +61,7 @@ export async function POST(req: Request) {
         const salvo = await arquivarComprovante(cpf, buffer);
         origem = { destino: salvo.destino, referencia: salvo.referencia };
         confirmacao.drive = salvo.destino === 'drive';
+        driveLimitacaoConhecida = Boolean(salvo.limitacaoConhecida);
         avisoComprovante = salvo.aviso
           ? `Comprovante: ${salvo.aviso}`
           : `Comprovante salvo no Drive do cliente (${salvo.referencia}).`;
@@ -128,12 +131,19 @@ export async function POST(req: Request) {
     // mas é exatamente o tipo de falha que passa despercebida: o operador vê
     // "PROTOCOLADO" e segue a vida, e semanas depois falta o PDF na pasta do
     // cliente sem ninguém saber desde quando. Fica registrado com nome e data.
-    if (status === 'sucesso' && pdfBase64 && !(confirmacao.painel && confirmacao.drive)) {
-      const faltou = [
-        confirmacao.painel ? null : 'painel',
-        confirmacao.drive ? null : 'Drive do cliente',
-        confirmacao.whatsapp ? null : 'WhatsApp',
-      ].filter(Boolean);
+    //
+    // O Drive barrado por falta de cota da service account fica DE FORA: é
+    // limitação conhecida e aceita pelo escritório, que acontece em todo
+    // protocolo. Registrá-la aqui poria cinco linhas idênticas por dia no
+    // Diagnóstico e enterraria as variações de erro que a tela existe para
+    // achar. O aviso continua indo para o painel e para o WhatsApp — o que
+    // muda é só o que conta como novidade.
+    const faltou = [
+      confirmacao.painel ? null : 'painel',
+      confirmacao.drive || driveLimitacaoConhecida ? null : 'Drive do cliente',
+      confirmacao.whatsapp ? null : 'WhatsApp',
+    ].filter(Boolean);
+    if (status === 'sucesso' && pdfBase64 && faltou.length > 0) {
       await registrarOcorrencia({
         origem: 'servidor',
         etapa: 'comprovante',

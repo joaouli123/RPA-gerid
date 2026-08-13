@@ -23,6 +23,15 @@ export interface ComprovanteSalvo {
   referencia: string;
   /** Preenchido quando não deu para salvar no Drive. */
   aviso?: string;
+  /**
+   * A falha é a limitação de cota já conhecida, não uma novidade.
+   *
+   * Existe para o Diagnóstico saber a diferença. Esta falha acontece em TODO
+   * protocolo enquanto o escritório não migrar de credencial, então tratá-la
+   * como ocorrência nova encheria a tela de linhas idênticas e enterraria as
+   * variações de erro que ela existe para revelar.
+   */
+  limitacaoConhecida?: boolean;
 }
 
 export interface OpcoesComprovante {
@@ -63,6 +72,7 @@ export async function salvarComprovante(
       return {
         destino: 'local',
         referencia,
+        limitacaoConhecida: semCota,
         aviso: semCota
           ? 'A service account não tem cota de armazenamento e não pode criar arquivos no Drive. ' +
             'O comprovante ficou salvo localmente — ver docs/serviceaccount-cota.md.'
