@@ -947,6 +947,41 @@ async function limparAbaParaProximoCaso(tabId) {
 }
 
 /**
+ * Deixa a aba em condicao de atender o PROXIMO cliente. Devolve a aba a usar
+ * dali em diante, ou null quando nem trocar de aba resolveu.
+ *
+ * ⚠️ So pode ser chamado onde ja se sabe que NAO ha requerimento em voo: caso
+ * que falhou (a essa altura o GERID ja foi consultado e disse que nao existe) ou
+ * pedido que o portal RECUSOU. Nos dois, o que sobrou na tela e formulario pela
+ * metade e jogar fora nao perde protocolo nenhum.
+ *
+ * A aba nova existe porque parar a fila inteira era caro demais para o que
+ * estava em jogo. Uma tela emperrada — modal de bloqueio por cima do passo 2,
+ * por exemplo — fazia o robo desistir dos outros clientes do dia, que nem
+ * chegavam a ser tentados. Aba nova nasce limpa e nao herda o que travou a
+ * antiga; a fila so para se ate isso falhar.
+ */
+async function abaProntaParaProximoCaso(aba) {
+  if (await limparAbaParaProximoCaso(aba.id).catch(() => false)) return aba;
+
+  const etapa = await etapaDaAba(aba.id).catch(() => null);
+  try {
+    const nova = await chrome.tabs.create({ url: URL_REQUERIMENTOS_GERID, active: true });
+    await aguardarAbaPronta(nova.id);
+    // Fechar a antiga DEPOIS de a nova estar de pe: se ela fosse a ultima aba
+    // da janela, fechar primeiro levaria a janela junto.
+    await chrome.tabs.remove(aba.id).catch(() => {});
+    sendLog(
+      `O GERID ficou preso em ${etapa || 'tela desconhecida'} e nao voltou ao inicio. ` +
+      'Abri uma aba nova do GERID e sigo com o proximo cliente.',
+    );
+    return nova;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * "A pagina recarregou" ou "o requerimento ENTROU e o GERID mudou de tela"?
  *
  * Sao indistinguiveis pelo erro: nos dois casos o script que estava rodando
@@ -1110,23 +1145,48 @@ async function abrirAbaTarefas() {
   throw new Error('A lista de tarefas do GERID nao carregou a tempo.');
 }
 
-/** Dois meses para tras, em dd/mm/aaaa — o comeco do periodo da consulta. */
-function dataInicialDaConsulta(agora = Date.now()) {
-  // Em dias, nao em meses: subtrair mes de uma data dia 31 escorrega para o mes
-  // seguinte (31/03 menos 2 meses vira 03/03). 62 dias nao tem esse problema e
-  // a consulta nao precisa de precisao de calendario, precisa de janela curta.
-  const d = new Date(agora - 62 * 24 * 60 * 60 * 1000);
+/**
+ * Janela padrao da consulta: dois meses, o teto pedido pelo operador.
+ *
+ * Em DIAS, e nao em meses, porque subtrair mes de uma data dia 31 escorrega
+ * para o mes seguinte (31/03 menos dois meses vira 03/03). A consulta nao
+ * precisa de precisao de calendario, precisa de janela curta.
+ */
+const JANELA_CURTA_DIAS = 62;
+
+/**
+ * A janela da SEGUNDA tentativa: ~5 meses, logo abaixo do teto de 6 do GERID.
+ *
+ * A curta responde rapido e cobre o caso comum — protocolo de hoje,
+ * requerimento aberto ha pouco. So que ela nao sabe a diferenca entre "nao
+ * existe" e "e mais velho que a janela", e ha exatamente duas perguntas em que
+ * confundir as duas custa caro:
+ *
+ * - "posso protocolar?" — errar abre um pedido em DUPLICATA no nome de uma
+ *   pessoa real. Foi o que aconteceu com a FABIA: a consulta voltou vazia, o
+ *   robo abriu o formulario e quem barrou foi o proprio portal, no passo 2.
+ * - "cade o comprovante deste protocolo?" — errar deixa o cliente voltando a
+ *   fila todo dia em modo so-comprovante, atras de um PDF que a consulta nunca
+ *   alcanca. Um laco que nao termina sozinho.
+ *
+ * Nessas duas, e so nessas, vale pagar a segunda consulta.
+ */
+const JANELA_LARGA_DIAS = 150;
+
+/** Comeco do periodo da consulta, em dd/mm/aaaa. */
+function dataInicialDaConsulta(diasParaTras = JANELA_CURTA_DIAS, agora = Date.now()) {
+  const d = new Date(agora - diasParaTras * 24 * 60 * 60 * 1000);
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
 /** Filtra a lista por CPF e devolve as linhas encontradas. */
-async function buscarLinhasNaLista(tabId, cpf) {
+async function buscarLinhasNaLista(tabId, cpf, diasParaTras = JANELA_CURTA_DIAS) {
   const saida = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    args: [String(cpf || '').replace(/\D/g, ''), dataInicialDaConsulta()],
+    args: [String(cpf || '').replace(/\D/g, ''), dataInicialDaConsulta(diasParaTras)],
     func: async (cpfDigitos, DATA_INICIAL) => {
       const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
       const dig = (v) => (v || '').replace(/\D/g, '');
@@ -1162,7 +1222,7 @@ async function buscarLinhasNaLista(tabId, cpf) {
       preencher(campo, cpfDigitos);
       await dormir(400);
 
-      // "Atualizada em (Inicial)": janela curta, de dois meses.
+      // "Atualizada em (Inicial)": a janela que quem chamou escolheu.
       //
       // Aqui eu forcava 01/01/2015, para a consulta nao esconder requerimento
       // antigo. O proprio GERID derrubou a ideia: "O intervalo entre as datas
@@ -1171,11 +1231,9 @@ async function buscarLinhasNaLista(tabId, cpf) {
       // para nao perder resposta passou a perder TODAS, que e o pior resultado
       // possivel numa consulta cuja funcao e nao protocolar em duplicata.
       //
-      // Dois meses e o teto pedido pelo operador e cobre o que esta consulta
-      // realmente procura: protocolo recem-criado e requerimento aberto ha
-      // pouco. O que o codigo nao pode fazer e confundir "nao esta na janela"
-      // com "nunca existiu" — por isso a data entra no aviso quando a busca
-      // volta vazia, em vez de sumir do relato.
+      // O que o codigo nao pode fazer e confundir "nao esta na janela" com
+      // "nunca existiu" — por isso a data entra no aviso quando a busca volta
+      // vazia, e por isso quem chama pode repetir a consulta mais longe.
       const campoData = document.querySelector('#filtro-entidade-conveniada-data-inicial');
       if (campoData) {
         preencher(campoData, DATA_INICIAL);
@@ -1205,8 +1263,18 @@ async function buscarLinhasNaLista(tabId, cpf) {
           protocoladoEm: c[4], unidade: c[5], situacao: c[6], atualizadoEm: c[7],
         }));
 
-      const antes = lerLinhas().map((l) => l.protocolo).join(',');
+      const assinatura = () => lerLinhas().map((l) => l.protocolo).join(',');
+      const antes = assinatura();
       buscar.click();
+
+      // A tabela precisa RESPONDER ao clique antes de qualquer leitura. Sem
+      // isto a segunda consulta — a de janela maior — aceitaria na hora o
+      // resultado da primeira, que continua na tela e ja passa em todos os
+      // testes abaixo: mesmo CPF, linhas de verdade. A pergunta "e mais velho
+      // que a janela?" voltaria a mesma resposta errada, so que mais devagar.
+      // Quando as duas janelas trazem exatamente as mesmas linhas isto expira
+      // sem fazer mal: o resultado ja e o certo, custou seis segundos.
+      await esperar(() => assinatura() !== antes, 6000);
 
       // A busca vai ao servidor. So aceita quando a tabela inteira for do CPF
       // pedido: enquanto vier linha de outra pessoa, o resultado ainda e o antigo.
@@ -1230,7 +1298,7 @@ async function buscarLinhasNaLista(tabId, cpf) {
       return {
         linhas: [],
         aviso: juntar(
-          antes === lerLinhas().map((l) => l.protocolo).join(',')
+          antes === assinatura()
             ? 'A lista nao mudou depois do Buscar; pode nao ter filtrado.'
             : 'A lista do GERID nao trouxe nenhuma linha para este CPF.',
           periodoDaTela(),
@@ -1239,6 +1307,21 @@ async function buscarLinhasNaLista(tabId, cpf) {
     },
   });
   return saida[0]?.result || { erro: 'A lista de tarefas nao respondeu.' };
+}
+
+/**
+ * A mesma consulta, de novo, olhando mais longe.
+ *
+ * Segunda consulta e caro e por isso ela e explicita: quem chama precisa dizer
+ * POR QUE a janela curta nao serviu, e essa frase vai para o log. Assim o
+ * operador ve a pergunta antes da resposta, em vez de encontrar duas buscas
+ * identicas seguidas e ter que adivinhar qual valeu.
+ */
+async function buscarMaisLonge(tabId, cpf, porque) {
+  sendLog(
+    `${porque} Vou repetir a consulta olhando ${Math.round(JANELA_LARGA_DIAS / 30)} meses para tras.`,
+  );
+  return buscarLinhasNaLista(tabId, cpf, JANELA_LARGA_DIAS);
 }
 
 /**
@@ -1700,7 +1783,7 @@ async function conferirNaListaDeTarefas(caso, resultado) {
     }
     if (busca.aviso) sendLog(`Lista de tarefas: ${busca.aviso}`);
 
-    const linhas = busca.linhas || [];
+    let linhas = busca.linhas || [];
     const hoje = dataDeHojeBR();
     // Sem numero em maos, a regra e "so linha de HOJE" — um BPC do ano passado
     // nao pode ser apresentado como trabalho desta rodada.
@@ -1709,12 +1792,29 @@ async function conferirNaListaDeTarefas(caso, resultado) {
     // Ai a linha de outro dia deixa de ser coincidencia e passa a ser a resposta
     // da pergunta: e ela que tem o numero e o comprovante que faltam.
     const portalDisseQueJaExiste = !jaTem && indicioDeRequerimentoExistente(resultado.erro);
-    const escolhida = jaTem
-      ? linhas.find((l) => l.protocolo === jaTem)
-      : linhas.find((l) => l.protocoladoEm === hoje)
+    const escolher = (candidatas) => (jaTem
+      ? candidatas.find((l) => l.protocolo === jaTem)
+      : candidatas.find((l) => l.protocoladoEm === hoje)
         || (portalDisseQueJaExiste
-          ? linhas.find((l) => ehMesmoServicoDoRobo(l.servico) && situacaoEmAberto(l.situacao))
-          : undefined);
+          ? candidatas.find((l) => ehMesmoServicoDoRobo(l.servico) && situacaoEmAberto(l.situacao))
+          : undefined));
+    let escolhida = escolher(linhas);
+
+    // O numero existe e a janela curta nao alcancou a linha dele. Este e o unico
+    // ponto da consulta em que "nao achei" tem resposta conhecida — quem disse o
+    // numero foi o proprio GERID. Sem esta segunda pergunta o caso terminava
+    // aqui: protocolado, sem PDF, e voltando a fila em modo so-comprovante todo
+    // dia para bater na mesma janela e falhar igual. Laco que nao acaba sozinho.
+    if (!escolhida && jaTem) {
+      const larga = await buscarMaisLonge(
+        tabId, caso.cpf, `O protocolo ${jaTem} nao apareceu na janela curta.`,
+      );
+      if (!larga.erro) {
+        if (larga.aviso) sendLog(`Lista de tarefas: ${larga.aviso}`);
+        linhas = larga.linhas || [];
+        escolhida = escolher(linhas);
+      }
+    }
     if (escolhida && portalDisseQueJaExiste && escolhida.protocoladoEm !== hoje) {
       sendLog(
         `O GERID recusou refazer o requerimento de ${caso.nome} e a consulta mostra ` +
@@ -1839,10 +1939,29 @@ async function verificarSeJaProtocolado(caso) {
     if (busca.erro) return { erro: busca.erro };
     if (busca.aviso) sendLog(`Consulta do GERID: ${busca.aviso}`);
 
-    const linhas = busca.linhas || [];
-    const aberto = linhas.find(
+    const emAberto = (candidatas) => candidatas.find(
       (l) => ehMesmoServicoDoRobo(l.servico) && situacaoEmAberto(l.situacao),
     );
+    let linhas = busca.linhas || [];
+    let aberto = emAberto(linhas);
+
+    // "Nada em aberto nos ultimos dois meses" NAO e "pode protocolar". Um BPC
+    // aberto ha quatro meses cai fora da janela e continua impedindo o pedido
+    // novo — e quem descobre passa a ser o portal, no passo 2, com o formulario
+    // ja preenchido. Foi assim que a FABIA chegou ate a tela de bloqueio.
+    //
+    // Esta e a pergunta mais cara de errar do robo inteiro: liberar por engano
+    // significa abrir um segundo requerimento no nome de uma pessoa real. Vale
+    // a segunda consulta antes de dizer "pode".
+    if (!aberto) {
+      const larga = await buscarMaisLonge(
+        tabId, caso.cpf, `Nada em aberto para ${caso.nome} na janela curta.`,
+      );
+      if (larga.erro) return { erro: larga.erro };
+      if (larga.aviso) sendLog(`Consulta do GERID: ${larga.aviso}`);
+      linhas = larga.linhas || [];
+      aberto = emAberto(linhas);
+    }
     if (!aberto) {
       sendLog(
         `Consulta do GERID: ${caso.nome} nao tem BPC em andamento` +
@@ -2390,17 +2509,18 @@ async function processQueue(
         sendLog(`${caso.nome} ficou para depois: ${resultado.erro}`);
 
         // A tela precisa voltar a um ponto de partida antes do proximo cliente.
-        // Se nao voltar, ai sim para tudo: preencher por cima de requerimento
-        // alheio e a unica coisa pior do que nao preencher.
-        if (!(await limparAbaParaProximoCaso(aba.id).catch(() => false))) {
-          const etapa = await etapaDaAba(aba.id);
+        // Se nao voltar nem em aba nova, ai sim para tudo: preencher por cima de
+        // requerimento alheio e a unica coisa pior do que nao preencher.
+        const proxima = await abaProntaParaProximoCaso(aba);
+        if (!proxima) {
           sendLog(
-            `Parei a fila: o GERID ficou em ${etapa || 'tela desconhecida'} e nao consegui voltar ` +
-            'ao inicio com seguranca. Resolva na tela e clique em Iniciar.',
+            'Parei a fila: nao consegui devolver o GERID a uma tela inicial, nem abrindo ' +
+            'uma aba nova. Resolva na tela e clique em Iniciar.',
           );
           interrompida = true;
           break;
         }
+        aba = proxima;
         continue;
       }
       // Grave a parada local antes da chamada ao servidor. Se a rede cair
@@ -2434,15 +2554,16 @@ async function processQueue(
             `${caso.nome} ja tinha o pedido ${resultado.protocolo} em aberto; nao refiz. ` +
             'Voltando a tela ao inicio para o proximo.',
           );
-          if (!(await limparAbaParaProximoCaso(aba.id).catch(() => false))) {
-            const etapa = await etapaDaAba(aba.id);
+          const proxima = await abaProntaParaProximoCaso(aba);
+          if (!proxima) {
             sendLog(
-              `Parei a fila: o GERID ficou em ${etapa || 'tela desconhecida'} e nao consegui ` +
-              'voltar ao inicio com seguranca. Resolva na tela e clique em Iniciar.',
+              'Parei a fila: nao consegui devolver o GERID a uma tela inicial, nem abrindo ' +
+              'uma aba nova. Resolva na tela e clique em Iniciar.',
             );
             interrompida = true;
             break;
           }
+          aba = proxima;
           continue;
         }
         sendLog(`${caso.nome}: PROTOCOLADO — ${resultado.protocolo}`);

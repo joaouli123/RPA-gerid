@@ -36,6 +36,8 @@ describe('extensao Gerid - pedido ja em aberto', () => {
     // pergunta de antes de preencher e a conferência de depois — um stub que
     // devolve sempre a mesma coisa não sabe representar isso.
     const consultas: Record<string, number> = {};
+    /** Data inicial de cada busca, por CPF — é o que revela a janela usada. */
+    const janelas: Record<string, string[]> = {};
 
     const chrome = {
       runtime: {
@@ -68,6 +70,9 @@ describe('extensao Gerid - pedido ja em aberto', () => {
       scripting: {
         executeScript: async (opcoes: any) => {
           const arg = opcoes.args?.[0];
+          if (typeof arg === 'string' && /^\d{11}$/.test(arg)) {
+            (janelas[arg] ??= []).push(opcoes.args?.[1]);
+          }
 
           // O caso indo para o GERID: o robô estoura sem número na mão, e o
           // ÚNICO vestígio do protocolo é a frase da recusa.
@@ -116,10 +121,12 @@ describe('extensao Gerid - pedido ja em aberto', () => {
           }
           if (arg === '22222222222') {
             consultas[arg] = (consultas[arg] ?? 0) + 1;
-            // Este ainda NÃO tem requerimento: a consulta de antes vem vazia e
-            // o robô segue para o formulário. A linha só passa a existir depois
-            // que o pedido entra — é o que a segunda chamada devolve.
-            if (consultas[arg] === 1) return [{ result: { linhas: [] } }];
+            // Este ainda NÃO tem requerimento: TODA consulta feita antes do
+            // formulário vem vazia — inclusive a segunda, de janela maior. Duas
+            // buscas com segundos de diferença não podem discordar uma da
+            // outra, e o gatilho aqui é o formulário ter rodado, não a contagem
+            // de chamadas: a linha só passa a existir depois que o pedido entra.
+            if (!casosExecutados.includes(arg)) return [{ result: { linhas: [] } }];
             return [{
               result: {
                 linhas: [{
@@ -228,6 +235,15 @@ describe('extensao Gerid - pedido ja em aberto', () => {
     // 3) E seguiu para o próximo caso em vez de parar a fila.
     expect(casosExecutados).toEqual(['11111111111', '22222222222']);
     expect(statusEnviados.find((s) => s.cpf === '22222222222')).toMatchObject({ status: 'sucesso' });
+
+    // 4) Consulta vazia na janela curta NÃO encerra a pergunta: a segunda olha
+    // mais para trás, com data inicial diferente. Sem isso, requerimento aberto
+    // há mais de dois meses passa batido na conferência de antes — e o robô
+    // abre um segundo pedido no nome de quem já tem um. Foi assim que a recusa
+    // "pedido X ainda está em aberto" virou a única defesa que sobrou.
+    const datas = janelas['22222222222'] ?? [];
+    expect(datas.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(datas.slice(0, 2)).size, 'as duas buscas usaram a mesma janela').toBe(2);
 
     // A aba da lista de tarefas não fica aberta atrás do operador.
     expect(abasFechadas).toContain(abaTarefas.id);
