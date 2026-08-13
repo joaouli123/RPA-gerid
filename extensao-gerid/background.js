@@ -1110,23 +1110,24 @@ async function abrirAbaTarefas() {
   throw new Error('A lista de tarefas do GERID nao carregou a tempo.');
 }
 
-/**
- * Comeco do periodo da consulta.
- *
- * O GERID exige "Atualizada em (Inicial)" e preenche sozinho. A data aqui e
- * deliberadamente antiga: a pergunta que a consulta responde e "ESTE CPF ja tem
- * requerimento?", e essa pergunta nao tem recorte de periodo. Nao e chute de
- * seletor — e valor de filtro, escolhido para nao esconder resposta.
- */
-const DATA_CONSULTA_INICIAL = '01/01/2015';
+/** Dois meses para tras, em dd/mm/aaaa — o comeco do periodo da consulta. */
+function dataInicialDaConsulta(agora = Date.now()) {
+  // Em dias, nao em meses: subtrair mes de uma data dia 31 escorrega para o mes
+  // seguinte (31/03 menos 2 meses vira 03/03). 62 dias nao tem esse problema e
+  // a consulta nao precisa de precisao de calendario, precisa de janela curta.
+  const d = new Date(agora - 62 * 24 * 60 * 60 * 1000);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
 
 /** Filtra a lista por CPF e devolve as linhas encontradas. */
 async function buscarLinhasNaLista(tabId, cpf) {
   const saida = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    args: [String(cpf || '').replace(/\D/g, ''), DATA_CONSULTA_INICIAL],
-    func: async (cpfDigitos, DATA_MAIS_ANTIGA) => {
+    args: [String(cpf || '').replace(/\D/g, ''), dataInicialDaConsulta()],
+    func: async (cpfDigitos, DATA_INICIAL) => {
       const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
       const dig = (v) => (v || '').replace(/\D/g, '');
       const norm = (v) => (v || '').replace(/\s+/g, ' ').trim();
@@ -1161,27 +1162,31 @@ async function buscarLinhasNaLista(tabId, cpf) {
       preencher(campo, cpfDigitos);
       await dormir(400);
 
-      // "Atualizada em (Inicial)" e um filtro OBRIGATORIO que ja vem preenchido.
-      // Enquanto ninguem mexia nele, a consulta so enxergava o periodo que o
-      // GERID escolheu sozinho — protocolo mais antigo que isso simplesmente nao
-      // aparecia, e o robo concluia "nao ha requerimento" para quem tinha um.
-      // Era essa a "possivel filtro de periodo" que o codigo ja desconfiava.
-      let avisoData = '';
-      const dataInicial = document.querySelector('#filtro-entidade-conveniada-data-inicial');
-      if (dataInicial) {
-        const original = dataInicial.value;
-        preencher(dataInicial, DATA_MAIS_ANTIGA);
+      // "Atualizada em (Inicial)": janela curta, de dois meses.
+      //
+      // Aqui eu forcava 01/01/2015, para a consulta nao esconder requerimento
+      // antigo. O proprio GERID derrubou a ideia: "O intervalo entre as datas
+      // nao pode ultrapassar 6 meses". Com o periodo largo a busca era RECUSADA
+      // e a tabela voltava "Nenhum registro encontrado" — o filtro que existia
+      // para nao perder resposta passou a perder TODAS, que e o pior resultado
+      // possivel numa consulta cuja funcao e nao protocolar em duplicata.
+      //
+      // Dois meses e o teto pedido pelo operador e cobre o que esta consulta
+      // realmente procura: protocolo recem-criado e requerimento aberto ha
+      // pouco. O que o codigo nao pode fazer e confundir "nao esta na janela"
+      // com "nunca existiu" — por isso a data entra no aviso quando a busca
+      // volta vazia, em vez de sumir do relato.
+      const campoData = document.querySelector('#filtro-entidade-conveniada-data-inicial');
+      if (campoData) {
+        preencher(campoData, DATA_INICIAL);
         await dormir(300);
-        if (dig(dataInicial.value) !== dig(DATA_MAIS_ANTIGA)) {
-          // Campo mascarado que recusou o valor. Nao insiste: buscar com o
-          // periodo estreito ainda serve, desde que o log diga qual periodo foi.
-          avisoData =
-            `Nao consegui abrir o periodo da consulta (o campo continuou em "${norm(original)}"). ` +
-            'Requerimento anterior a essa data pode nao aparecer.';
-        }
-      } else {
-        avisoData = 'Nao achei o filtro de data da consulta; usei o periodo que estava na tela.';
       }
+      const periodoDaTela = () => {
+        const desde = norm(
+          document.querySelector('#filtro-entidade-conveniada-data-inicial')?.value || '',
+        );
+        return desde ? `A consulta olhou de ${desde} para ca.` : '';
+      };
 
       // Ha DOIS botoes "Buscar" na tela (Requerimentos e Cumprimento de
       // Exigencia). O escopo #requerimento e o que separa um do outro.
@@ -1212,24 +1217,23 @@ async function buscarLinhasNaLista(tabId, cpf) {
         return linhas;
       }, 25000);
       const juntar = (...partes) => partes.filter(Boolean).join(' ');
-      if (filtradas) return { linhas: filtradas, aviso: avisoData };
+      if (filtradas) return { linhas: filtradas };
 
       // O filtro pode nao ter pegado. Em vez de desistir, aproveita o que esta
       // na tela — a linha certa continua sendo a que tem este CPF.
       const naTela = lerLinhas().filter((l) => l.cpf === cpfDigitos);
       if (naTela.length) {
-        return {
-          linhas: naTela,
-          aviso: juntar('O filtro de CPF nao pegou; li a linha direto da tabela.', avisoData),
-        };
+        return { linhas: naTela, aviso: 'O filtro de CPF nao pegou; li a linha direto da tabela.' };
       }
+      // Aqui, e so aqui, o periodo importa: "nao achei" sem dizer em que janela
+      // procurei convida a ler como "esta pessoa nunca teve requerimento".
       return {
         linhas: [],
         aviso: juntar(
           antes === lerLinhas().map((l) => l.protocolo).join(',')
             ? 'A lista nao mudou depois do Buscar; pode nao ter filtrado.'
             : 'A lista do GERID nao trouxe nenhuma linha para este CPF.',
-          avisoData,
+          periodoDaTela(),
         ),
       };
     },
