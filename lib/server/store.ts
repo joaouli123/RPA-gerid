@@ -923,7 +923,33 @@ export async function protocoloDoCpf(cpf: string): Promise<ProtocoloDoCliente | 
 export async function iniciarExecucao(): Promise<ExecucaoAtual> {
   const estado = await carregarEstado();
 
-  if (estado.execucaoAtual?.status === 'rodando') return structuredClone(estado.execucaoAtual);
+  const emAndamento = estado.execucaoAtual;
+  if (emAndamento?.status === 'rodando') {
+    // Ainda há trabalho: devolve a MESMA execução. Duas filas abertas ao mesmo
+    // tempo entregariam o mesmo cliente para dois lugares e protocolariam em
+    // duplicata.
+    const restaTrabalho = emAndamento.casos.some(
+      (c) => c.status === 'pendente' || c.status === 'processando',
+    );
+    if (restaTrabalho) return structuredClone(emAndamento);
+
+    // Nada pendente e o status ainda é 'rodando': isto não é fila em andamento,
+    // é fila que acabou e ninguém fechou. Acontece quando o último caso dá erro
+    // e a extensão para ali — o `finalizarExecucao` nunca é chamado.
+    //
+    // Enquanto ela ficava aberta, era ELA que voltava daqui a cada clique em
+    // Iniciar: o Drive nunca era relido, cliente novo nunca entrava na fila, e a
+    // extensão recebia `casos: []` com um `idExecucao` válido. Na tela isso vira
+    // "Aguardando confirmação no GERID: 0", parado para sempre — com o painel
+    // mostrando os clientes prontos ao lado, porque o painel lê o Drive e a fila
+    // lia a execução morta.
+    //
+    // Fechar aqui não perde nada: todo caso já tem status final e vai para o
+    // histórico. Quem errou volta na fila nova (erro não é protocolo); quem foi
+    // protocolado de verdade continua barrado pela trava de duplicidade abaixo,
+    // que olha o protocolo registrado e não o status da execução.
+    await finalizarExecucao(emAndamento.id);
+  }
 
   // Força reler o Drive: quem clica em "Iniciar" espera a fila de AGORA, com
   // as pastas que entraram desde a última leitura. Ler cache aqui seria

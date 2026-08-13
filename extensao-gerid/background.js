@@ -10,6 +10,15 @@ const ALARME_RETOMADA = 'retomarExecucaoGerid';
 const ALARME_AUTENTICACAO = 'aguardarAutenticacaoGerid';
 const ALARME_CONFIRMACAO = 'verificarConfirmacaoGerid';
 const MAX_RETOMADAS_AUTOMATICAS = 3;
+/**
+ * Ate quando esperar a tela mostrar o protocolo antes de desistir.
+ *
+ * Existe porque a espera nao tinha fim: o alarme reagendava a cada 6 segundos e,
+ * se a aba nao soubesse dizer em que etapa estava, ninguem nunca soltava o
+ * cadeado. Dez minutos e muito mais do que confirmar um requerimento leva, e
+ * bem menos do que "para sempre".
+ */
+const LIMITE_ESPERA_CONFIRMACAO_MS = 10 * 60 * 1000;
 const MAX_LOGS = 80;
 
 const EstadoAutenticacao = {
@@ -139,6 +148,19 @@ async function atualizarEstadoAutenticacao(estado, mensagem, tabId) {
   await chrome.action?.setBadgeText?.({ text: autenticado ? 'OK' : '!' });
   chrome.runtime.sendMessage({ action: 'auth_state', ...registro }).catch(() => {});
   return registro;
+}
+
+/**
+ * O estado de autenticacao que estava salvo ANTES desta atualizacao de aba.
+ *
+ * Serve para separar "acabou de logar" de "ja estava logado e mudou de tela".
+ * O listener de `tabs.onUpdated` dispara em toda pagina do PAT que termina de
+ * carregar, e durante uma fila em andamento sao dezenas — sem essa comparacao,
+ * "iniciar depois do login" viraria "iniciar a cada clique".
+ */
+async function estadoAutenticacaoSalvo() {
+  const salvo = await chrome.storage.local.get([CHAVE_ESTADO_AUTENTICACAO]).catch(() => ({}));
+  return salvo?.[CHAVE_ESTADO_AUTENTICACAO]?.estado || null;
 }
 
 async function avisarAutenticacaoNecessaria() {
@@ -1995,6 +2017,29 @@ async function verificarConfirmacaoPendente(tabIdPreferido) {
         return true;
       }
 
+      // A etapa tambem vem `null` quando a aba simplesmente nao sabe responder:
+      // content script fora do ar, ou uma tela que nem e do wizard — a lista de
+      // tarefas, por exemplo, que e onde o operador cai depois de logar. Nesse
+      // caso o `if` acima nao pega, e sem um prazo isto vira espera infinita: o
+      // alarme reagenda, o popup mostra "Aguardando confirmacao: 0" e NENHUMA
+      // fila nova consegue comecar, porque `verificarConfirmacaoPendente`
+      // responde `true` e corta o caminho de todo mundo.
+      const desde = Number(ativa.aguardandoDesde) || Date.now();
+      if (Date.now() - desde > LIMITE_ESPERA_CONFIRMACAO_MS) {
+        await limparExecucaoAtiva();
+        sendLog(
+          `Esperei ${Math.round(LIMITE_ESPERA_CONFIRMACAO_MS / 60000)} minutos pela confirmacao de ` +
+          `${ativa.nomeAtual || 'cliente atual'} e a tela nunca mostrou o numero do protocolo, ` +
+          'entao parei de esperar. CONFIRA no GERID se esse requerimento ja foi protocolado ANTES ' +
+          'de rodar a fila de novo.',
+        );
+        chrome.runtime.sendMessage({ action: 'finished' }).catch(() => {});
+        return true;
+      }
+      if (!ativa.aguardandoDesde) {
+        await salvarExecucaoAtiva({ ...ativa, aguardandoDesde: desde });
+      }
+
       await enviarHeartbeat(
         dados.apiUrl,
         dados.apiToken,
@@ -2493,6 +2538,66 @@ async function retomarExecucaoPersistida() {
     ativa.geridTabId,
     Number(ativa.tentativasRetomada) || 0,
   );
+}
+
+/**
+ * Login concluido e nada pendente: prepara a fila e comeca, sem pedir clique.
+ *
+ * Era exatamente aqui que a automacao parava. `retomarExecucaoPersistida()` so
+ * retoma o que ja existia; depois de um login novo nao existe execucao nenhuma,
+ * entao ela voltava calada e o robo ficava esperando alguem abrir o popup e
+ * clicar em "Preparar e iniciar" — com a sessao do GERID recem-autenticada,
+ * sem fazer nada. Autenticar E o pedido para trabalhar: ninguem passa pelo
+ * SafeID e pelo codigo de 6 digitos por acaso.
+ *
+ * `iniciarSeVazia = true` e o mesmo caminho do botao. O `modoTeste` continua
+ * sendo o do operador (e continua valendo `true` quando ninguem escolheu),
+ * porque quem decide entre a fila inteira e um caso so e a chave do popup — o
+ * fato de ter logado nao muda essa escolha.
+ */
+async function iniciarFilaAposLogin(tabId) {
+  if (isRunning) return;
+
+  const { apiUrl, apiToken } = await credenciaisPainel();
+  if (!apiUrl || !apiToken) {
+    sendLog(
+      'Sessao do GERID pronta, mas a extensao nao tem a chave do painel guardada. '
+      + 'Abra a extensao e conecte ao painel para eu iniciar sozinho.',
+    );
+    return;
+  }
+
+  const salvo = await chrome.storage.local.get(['modoTeste']).catch(() => ({}));
+  const modoTeste = salvo?.modoTeste !== false;
+
+  isRunning = true;
+  sendLog(modoTeste
+    ? 'Autenticado. Iniciando sozinho em MODO TESTE (so o primeiro caso da fila).'
+    : 'Autenticado. Iniciando a fila sozinho.');
+  await processQueue(apiUrl, apiToken, modoTeste, tabId, 0, true);
+}
+
+/**
+ * Tudo que acontece quando a sessao do GERID fica pronta, na ordem certa.
+ *
+ * A ordem importa e nao e arbitraria: um protocolo esperando confirmacao vem
+ * antes de tudo (registrar o que ja foi feito, antes de fazer mais), depois a
+ * execucao que ficou pela metade, e so quando nao ha nem uma nem outra e que
+ * vale abrir fila nova. Trocar a ordem protocolaria por cima de um caso ainda
+ * aberto.
+ */
+async function aoAutenticar(tabId, anterior) {
+  if (await verificarConfirmacaoPendente(tabId)) return;
+
+  await retomarExecucaoPersistida();
+  if (isRunning) return;
+
+  // Ja estava autenticado antes desta pagina: isto e navegacao dentro do GERID,
+  // nao um login. Sem esta linha, terminar a fila e abrir qualquer tela do PAT
+  // mandaria preparar uma fila nova.
+  if (anterior === EstadoAutenticacao.AUTENTICADO) return;
+
+  await iniciarFilaAposLogin(tabId);
 }
 
 chrome.runtime.onMessage.addListener((request) => {
