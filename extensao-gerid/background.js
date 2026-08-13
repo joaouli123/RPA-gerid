@@ -365,7 +365,16 @@ async function pedirAutorizacaoNoCelular(tabId, apiUrl, apiToken) {
         // Ela fica na MESMA url do GERID, entao sem olhar o conteudo o robo
         // conclui "precisa autenticar" quando na verdade o Dataprev e que nao
         // respondeu — e manda o operador procurar SafeID que nunca vai chegar.
-        if (document.querySelector('#main-frame-error')) return 'site_fora';
+        // O codigo do erro vai junto de proposito: "nao carregou" tem causas
+        // que pedem acoes OPOSTAS do operador — esperar o Dataprev voltar, ou
+        // limpar o cache do proprio Chrome. Chutar uma delas custa a ele ficar
+        // parado esperando o que nao vem.
+        if (document.querySelector('#main-frame-error')) {
+          const codigo = String(document.querySelector('.error-code')?.textContent || '')
+            .trim()
+            .toUpperCase();
+          return codigo ? `site_fora:${codigo}` : 'site_fora';
+        }
         const botao = document.querySelector('#botaoCertificadoDigital');
         if (!botao || botao.disabled || !botao.offsetParent) return 'sem_botao';
         // Ja existe uma solicitacao no celular esperando resposta: clicar de
@@ -388,10 +397,21 @@ async function pedirAutorizacaoNoCelular(tabId, apiUrl, apiToken) {
     sendLog('Pedi o certificado digital: autorize no SafeID do seu celular. A fila retoma sozinha.');
   } else if (resultado === 'ja_aguardando') {
     sendLog('Ja existe uma solicitacao do SafeID no seu celular. Autorize por la.');
-  } else if (resultado === 'site_fora') {
+  } else if (resultado.startsWith('site_fora')) {
+    const codigo = resultado.split(':')[1] || '';
+    // ERR_NAME_NOT_RESOLVED e o DNS do proprio computador, nao o Dataprev. E o
+    // que acontece na autenticacao por certificado, que sai da porta 443 e vai
+    // para :8443: o Chrome guarda o endereco que falhou e insiste no erro. Da
+    // fora, o sintoma e a tela piscar e voltar para o login — o CAS nao tem
+    // para onde mandar. Limpar o cache resolve; esperar o site voltar, nao.
+    const cacheDeDns = codigo === 'ERR_NAME_NOT_RESOLVED';
     sendLog(
-      'O GERID (Dataprev) nao respondeu — o site esta fora do ar ou instavel. '
-      + 'Nao e login nem sessao: nao adianta autenticar. A fila tenta de novo sozinha.',
+      cacheDeDns
+        ? 'O Chrome nao resolveu o endereco do GERID (ERR_NAME_NOT_RESOLVED) — costuma ser '
+          + 'cache de DNS depois que a VPN oscila, nao o site fora do ar. Se a tela piscar e '
+          + 'voltar para o login, limpe o cache do navegador e tente de novo.'
+        : `O GERID (Dataprev) nao respondeu${codigo ? ` (${codigo})` : ''} — o site esta fora do ar `
+          + 'ou instavel. Nao e login nem sessao: nao adianta autenticar. A fila tenta de novo sozinha.',
     );
   }
 }
