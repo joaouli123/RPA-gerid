@@ -21,18 +21,24 @@ import { responderDesafio } from './desafio2fa';
  * A semente do autenticador continua só no celular dele. O robô nunca gera
  * código — ele só digita o que o humano mandou, como um teclado remoto.
  *
- * Funciona de dois jeitos:
- *   - chip separado: o robô manda para o número do operador (duas contas);
- *   - MESMO número: a ponte pareia o próprio celular do operador e conversa na
- *     "Mensagem para mim mesmo" dele. Não precisa de segundo chip, e o aviso
- *     chega na conversa que ele já tem aberta.
+ * Funciona de UM jeito só: a ponte pareia o celular do próprio operador e fala
+ * na conversa dele consigo mesmo ("Mensagem para mim mesmo"). O destino não vem
+ * de configuração — é a própria conta que escaneou o QR.
  *
- * ⚠️ Baileys é cliente não-oficial: a Meta pode banir o número pareado. Com chip
- * separado, um banimento custa um chip. Com o número principal do escritório,
- * custa a linha que atende os clientes. É uma escolha de risco, não de código.
+ * ⚠️ Isso é decisão de risco, não preferência de código. Baileys é cliente
+ * não-oficial, e o comportamento que faz a Meta banir um número é ele mandar
+ * mensagem para TERCEIROS. Conversa consigo mesmo não tem terceiro: não há
+ * destinatário para reclamar, nem padrão de disparo para detectar. Existiu aqui
+ * um modo de "chip separado", em que o robô mandava do número A para o número
+ * B; ele funcionava e era exatamente o que expunha a linha do escritório. Saiu.
+ *
+ * `RPA_WHATSAPP_NUMERO` continua existindo, mas mudou de papel: não é mais o
+ * destino, é o número que se ESPERA encontrar pareado. Serve de conferência —
+ * se o QR foi lido pelo celular errado, isso aparece em vez de virar mensagem
+ * silenciosa no aparelho de outra pessoa.
  */
 
-/** Só aceita mensagem deste número. Formato: só dígitos, com DDI. Ex.: 5511999999999. */
+/** O número que se espera ver pareado. Só dígitos, com DDI. Ex.: 5511999999999. */
 const numeroAutorizado = () => (process.env.RPA_WHATSAPP_NUMERO ?? '').replace(/\D/g, '');
 
 /**
@@ -56,48 +62,79 @@ function usuarioDoJid(jid: string | null | undefined): string {
 }
 
 /**
- * O JID canônico do operador, PERGUNTADO ao WhatsApp — nunca montado no chute.
+ * O mesmo número, escrito dos dois jeitos que o Brasil usa?
  *
- * Isto já foi `${numero}@s.whatsapp.net`, e o custo foi alto: o WhatsApp guarda
- * celular brasileiro de DDD >= 31 SEM o nono dígito. O log do próprio servidor
- * mostra isso na conta pareada — `myPN: 554199077637`, doze dígitos. Então o
- * número (41) 98703-8339 mora lá como `554187038339`, e a mensagem endereçada a
- * `5541987038339@s.whatsapp.net` ia para um destinatário que não existe.
+ * Celular brasileiro ganhou um nono dígito, e o WhatsApp guarda os de DDD >= 31
+ * SEM ele. Está no log do próprio servidor: a conta pareada aparece como
+ * `myPN: 554199077637` — doze dígitos. Então `5541987038339` (o que a pessoa
+ * digita) e `554187038339` (o que o WhatsApp guarda) são a MESMA linha, e
+ * comparar por igualdade crua acusaria divergência onde não há.
  *
- * O pior não foi errar o endereço: foi errar em silêncio. `sendMessage` aceita
- * qualquer JID e não reclama, então o servidor respondia "avisei o operador",
- * a extensão anunciava "pedi o codigo no seu WhatsApp", e o celular não tocava.
- * Todo mundo achando que tinha feito a sua parte.
- *
- * `onWhatsApp` devolve o endereço que o WhatsApp reconhece e diz se a conta
- * existe. Quando não existe, isto ESTOURA — quem falha alto vira erro na tela
- * do operador ("digite o código você mesmo") em vez de virar espera muda.
+ * Exportado porque errar aqui é caro nos dois sentidos: apertado demais, o
+ * operador vê "celular errado" tendo pareado o certo; frouxo demais, o robô
+ * aceita 6 dígitos de quem não devia.
  */
-async function jidDoOperador(socket: WASocket): Promise<string> {
-  const numero = numeroAutorizado();
-  if (ponte.jidOperador && usuarioDoJid(ponte.jidOperador)) return ponte.jidOperador;
+export function mesmoNumero(a: string, b: string): boolean {
+  const x = a.replace(/\D/g, '');
+  const y = b.replace(/\D/g, '');
+  if (!x || !y) return false;
+  if (x === y) return true;
+  // Só vale para celular brasileiro: DDI 55 + DDD de 2 dígitos + 8 ou 9 locais.
+  const semNove = (n: string) => (
+    /^55\d{2}9\d{8}$/.test(n) ? `${n.slice(0, 4)}${n.slice(5)}` : n
+  );
+  return semNove(x) === semNove(y);
+}
 
-  const achados = await socket.onWhatsApp(numero).catch(() => undefined);
-  const encontrado = achados?.find((c) => c.exists);
-  if (!encontrado?.jid) {
+/**
+ * Para onde o aviso vai: a PRÓPRIA conta pareada. Sempre.
+ *
+ * Não existe destino configurável. Quem escaneou o QR é o destinatário, e a
+ * conversa é a dele consigo mesmo — o arranjo que não produz mensagem para
+ * terceiro e, por isso, não parece disparo automatizado para a Meta.
+ *
+ * O endereço vem de `socket.user.id`, que é o que o WhatsApp diz ser esta
+ * conta. Isto já foi montado à mão como `${RPA_WHATSAPP_NUMERO}@s.whatsapp.net`
+ * e custou caro duas vezes. Primeiro pelo formato: com o nono dígito, o JID não
+ * existia, e `sendMessage` aceita qualquer endereço sem reclamar — o servidor
+ * respondia "avisei o operador", a extensão anunciava "pedi o codigo no seu
+ * WhatsApp", e o celular não tocava. Depois pelo destinatário: se o `.env`
+ * apontasse para outro número (era o caso — `.env` num, pareado noutro), o robô
+ * mandava mensagem de uma linha para outra, que é justamente o padrão que faz a
+ * Meta banir número em cliente não-oficial.
+ */
+function jidDoOperador(socket: WASocket): string {
+  if (ponte.jidOperador) return ponte.jidOperador;
+
+  const meu = usuarioDoJid(socket.user?.id);
+  if (!meu) {
     throw new Error(
-      `O número ${numero} não tem conta de WhatsApp (ou o WhatsApp não respondeu a consulta). `
-      + 'Confira RPA_WHATSAPP_NUMERO: precisa de DDI + DDD + número.',
+      'A ponte do WhatsApp ainda não sabe qual conta está pareada. '
+      + 'Se o problema persistir, pareie de novo pelo QR em Configurações.',
     );
   }
 
-  ponte.jidOperador = encontrado.jid;
-  // O que o WhatsApp devolveu é o endereço bom; o que está no .env é o que o
-  // humano digitou. Os dois valem para RECONHECER uma resposta, porque a
-  // mensagem que chega pode vir com qualquer um dos dois formatos.
-  ponte.usuariosOperador.add(usuarioDoJid(encontrado.jid));
-  ponte.usuariosOperador.add(numero);
-  if (usuarioDoJid(encontrado.jid) !== numero) {
-    console.log(
-      `[WhatsApp] O WhatsApp conhece ${numero} como ${usuarioDoJid(encontrado.jid)}. Usando o dele.`,
-    );
+  ponte.jidOperador = `${meu}@s.whatsapp.net`;
+  // Quem pode responder os 6 dígitos é a conta pareada — ninguém mais. Numa
+  // conversa consigo mesmo não há outro participante, então este conjunto tem
+  // um dono só, e é assim que deve ser: este teste é o que decide de quem o
+  // robô aceita um código para entrar no GERID.
+  ponte.usuariosOperador.add(meu);
+  const lid = usuarioDoJid(socket.user?.lid);
+  if (lid) ponte.usuariosOperador.add(lid);
+
+  // Conferência, não endereçamento. O `.env` diz qual celular deveria ter lido
+  // o QR; se foi outro, o aviso vai para o aparelho pareado (é o único destino
+  // seguro) e a divergência precisa aparecer — senão o operador fica olhando um
+  // telefone enquanto a mensagem chega no outro.
+  const esperado = numeroAutorizado();
+  if (esperado && !mesmoNumero(esperado, meu)) {
+    ponte.ultimoErro = `O QR foi lido pelo celular ${meu}, mas RPA_WHATSAPP_NUMERO diz ${esperado}. `
+      + 'O aviso do 2FA vai para o aparelho que pareou. Pareie pelo celular certo ou corrija a variável.';
+    console.log(`[WhatsApp] ${ponte.ultimoErro}`);
   }
-  return encontrado.jid;
+
+  return ponte.jidOperador;
 }
 
 interface Ponte {
@@ -280,7 +317,7 @@ export async function manterConexaoViva(): Promise<void> {
  * cresce para sempre num processo que fica meses no ar é vazamento.
  */
 async function enviarTexto(socket: WASocket, texto: string): Promise<void> {
-  const enviada = await socket.sendMessage(await jidDoOperador(socket), { text: texto });
+  const enviada = await socket.sendMessage(jidDoOperador(socket), { text: texto });
   const id = enviada?.key?.id;
   if (!id) return;
   ponte.enviadas.add(id);
@@ -350,10 +387,10 @@ async function tratarMensagem(socket: WASocket, mensagem: {
   };
   message?: Parameters<typeof textoDaMensagem>[0]['message'];
 }) {
-  // Garante que o conjunto de autorizados já tem o endereço canônico. Sem isto,
-  // uma resposta que chegue ANTES do primeiro envio (o operador respondendo a
-  // uma mensagem antiga) seria comparada contra um conjunto vazio.
-  await jidDoOperador(socket).catch(() => undefined);
+  // Garante que o conjunto de autorizados já tem o endereço da conta pareada.
+  // Sem isto, uma resposta que chegue ANTES do primeiro envio (o operador
+  // respondendo a uma mensagem antiga) seria comparada contra conjunto vazio.
+  try { jidDoOperador(socket); } catch { /* sem conta pareada: nada a aceitar */ }
   if (!ehRespostaDoOperador(mensagem.key, ponte.usuariosOperador, ponte.enviadas)) return;
 
   // Aprendido do próprio WhatsApp: se a mensagem veio endereçada por `@lid` e o
@@ -616,7 +653,11 @@ export function situacaoWhatsapp(): {
   numeroMascarado: string;
   ultimoErro: string | null;
 } {
-  const numero = numeroAutorizado();
+  // O número da conta PAREADA, com o do `.env` como reserva enquanto ninguém
+  // pareou. É para lá que o aviso vai, então é ele que a tela deve mostrar —
+  // exibir o do `.env` quando os dois divergem seria apontar para o telefone
+  // errado justamente na hora em que a pessoa precisa saber onde olhar.
+  const numero = usuarioDoJid(ponte.socket?.user?.id) || numeroAutorizado();
   return {
     configurado: whatsappConfigurado(),
     conectado: ponte.conectado,

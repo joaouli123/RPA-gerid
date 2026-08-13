@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ehRespostaDoOperador } from '../lib/server/whatsapp';
+import { ehRespostaDoOperador, mesmoNumero } from '../lib/server/whatsapp';
 
 /**
  * Quem pode entregar os 6 dígitos do 2FA.
@@ -93,5 +93,40 @@ describe('whatsapp - conversa do numero consigo mesmo', () => {
         new Set(),
       ),
     ).toBe(false);
+  });
+});
+
+/**
+ * O nono dígito do celular brasileiro.
+ *
+ * O WhatsApp guarda números de DDD >= 31 SEM ele — a conta pareada aparece no
+ * log do servidor com doze dígitos. Então o que a pessoa digita no `.env` e o
+ * que o WhatsApp devolve são a mesma linha escrita de dois jeitos, e a
+ * conferência "pareou o celular certo?" precisa saber disso. Apertada demais,
+ * acusa celular errado tendo pareado o certo; frouxa demais, deixa passar
+ * pareamento de outra pessoa.
+ */
+describe('whatsapp - nono digito', () => {
+  it('reconhece o mesmo celular com e sem o nono digito', () => {
+    expect(mesmoNumero('5541987038339', '554187038339')).toBe(true);
+    expect(mesmoNumero('554187038339', '5541987038339')).toBe(true);
+    expect(mesmoNumero('5541987038339', '5541987038339')).toBe(true);
+    // Com máscara também: o que vem do `.env` pode vir formatado.
+    expect(mesmoNumero('+55 (41) 98703-8339', '554187038339')).toBe(true);
+  });
+
+  it('nao confunde celulares diferentes', () => {
+    expect(mesmoNumero('5541987038339', '5541999077637')).toBe(false);
+    // Um dígito de diferença continua sendo outra pessoa.
+    expect(mesmoNumero('5541987038339', '5541987038330')).toBe(false);
+    // Mesmo número local, DDD diferente.
+    expect(mesmoNumero('5541987038339', '5511987038339')).toBe(false);
+    expect(mesmoNumero('', '554187038339')).toBe(false);
+  });
+
+  it('nao aplica a regra do nono digito fora do celular brasileiro', () => {
+    // `19...` não é DDI 55; tirar um "9" do meio de um número estrangeiro
+    // inventaria uma coincidência que não existe.
+    expect(mesmoNumero('19419870383', '1419870383')).toBe(false);
   });
 });
