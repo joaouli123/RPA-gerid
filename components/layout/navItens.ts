@@ -12,5 +12,6 @@ export const navItens: ItemNav[] = [
   { href: '/execucao', rotulo: 'Execução', icone: 'execucao' },
   { href: '/revisao', rotulo: 'Revisão', icone: 'revisao' },
   { href: '/relatorios', rotulo: 'Relatórios', icone: 'relatorios' },
+  { href: '/diagnostico', rotulo: 'Diagnóstico', icone: 'alerta' },
   { href: '/configuracoes', rotulo: 'Configurações', icone: 'config' },
 ];

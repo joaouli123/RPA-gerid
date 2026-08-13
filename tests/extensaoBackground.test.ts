@@ -262,11 +262,15 @@ describe('extensão Gerid — service worker', () => {
       listener({ action: 'start', apiUrl: 'https://rpa.teste', apiToken: 'segredo', modoTeste: true });
     }
 
+    // Espera o alarme de RETOMADA por nome, e nao "o primeiro alarme que
+    // aparecer": a ronda continua e armada assim que o service worker carrega,
+    // entao ela sempre chega antes e a espera terminava com a retomada ainda
+    // por criar.
     const limiteAlarme = Date.now() + 2_000;
-    while (alarmesCriados.length === 0 && Date.now() < limiteAlarme) {
+    while (!alarmesCriados.includes('retomarExecucaoGerid') && Date.now() < limiteAlarme) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    expect(alarmesCriados).toEqual(['retomarExecucaoGerid']);
+    expect(alarmesCriados).toContain('retomarExecucaoGerid');
     expect(storage.execucaoAtivaGerid).toBeDefined();
 
     aoAlarme?.({ name: 'retomarExecucaoGerid' });

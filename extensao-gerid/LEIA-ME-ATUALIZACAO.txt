@@ -26,6 +26,28 @@ O nome da pasta nao acompanha a versao de proposito: extensao sem compactacao
 tem o ID derivado do caminho, e o pareamento com o painel esta guardado por ID.
 Renomear a pasta apagaria a chave e obrigaria a parear tudo de novo.
 
+O ROBO NAO ESPERA MAIS QUE ALGUEM CLIQUE
+
+De cinco em cinco minutos a extensao olha sozinha se apareceu pasta nova no
+Drive. Se apareceu, ela protocola; se nao apareceu, ela espera calada e olha de
+novo daqui a cinco. Nao ha botao a apertar de manha: basta deixar o navegador
+aberto com a aba do GERID.
+
+- Cinco minutos porque o escritorio faz da ordem de cinco protocolos por dia.
+  Uma pasta nova esperar no maximo cinco minutos nao atrasa ninguem, e bater no
+  GERID dezenas de vezes por hora para nao achar nada e o tipo de insistencia
+  que acorda o antiabuso da Dataprev.
+- "Nao ha nada para protocolar" NAO e erro. O aviso aparece uma vez no log e
+  nao se repete a cada volta — senao as mais de cem voltas do dia empurrariam
+  para fora as linhas do protocolo que deu certo de manha.
+- Sessao caida nao encerra o dia. A ronda volta, encontra a fila parada e
+  recomeca dali; a autenticacao e pedida quando existe trabalho de verdade
+  esperando, nao num dia parado.
+- Comprovante que nao subiu vira trabalho pendente: na volta seguinte o robo
+  busca so o comprovante, sem refazer o requerimento.
+- Tudo que falhar fica escrito na tela Diagnostico do painel, com data, hora e
+  nome do cliente, para corrigir depois.
+
 O QUE O ROBO FAZ SOZINHO
 
 - Monta a fila pela propria extensao e segue de um cliente para o outro.

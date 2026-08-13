@@ -6,10 +6,23 @@ const CHAVE_ESTADO_AUTENTICACAO = 'estadoAutenticacaoGerid';
 const CHAVE_ULTIMO_AVISO_AUTENTICACAO = 'ultimoAvisoAutenticacaoGerid';
 const CHAVE_ULTIMO_CERTIFICADO = 'ultimoPedidoCertificadoGerid';
 const CHAVE_LOGS = 'logsGerid';
+const CHAVE_ULTIMO_RELATO_RONDA = 'ultimoRelatoRondaGerid';
 const ALARME_RETOMADA = 'retomarExecucaoGerid';
 const ALARME_AUTENTICACAO = 'aguardarAutenticacaoGerid';
 const ALARME_CONFIRMACAO = 'verificarConfirmacaoGerid';
+const ALARME_RONDA = 'rondaContinuaGerid';
 const MAX_RETOMADAS_AUTOMATICAS = 3;
+/**
+ * De quanto em quanto tempo o robo olha se apareceu trabalho novo.
+ *
+ * Cinco minutos porque e o intervalo que some na operacao: o escritorio faz da
+ * ordem de 5 protocolos por dia, entao uma pasta nova esperar no maximo cinco
+ * minutos nao atrasa ninguem. Mais curto que isso seria bater no Drive e no
+ * GERID dezenas de vezes por hora para nao encontrar nada — e insistencia
+ * automatizada contra sistema do INSS e exatamente o que acorda o antiabuso da
+ * Dataprev. Mais longo faria o operador achar que o robo morreu.
+ */
+const RONDA_MINUTOS = 5;
 /**
  * Ate quando esperar a tela mostrar o protocolo antes de desistir.
  *
@@ -508,7 +521,14 @@ async function lerJsonResposta(resposta, mensagemPadrao) {
     throw new Error(`${mensagemPadrao} O servidor retornou uma resposta invalida (HTTP ${resposta.status}).`);
   }
   if (!resposta.ok) {
-    throw new Error(dados.erro || dados.mensagem || `${mensagemPadrao} (HTTP ${resposta.status}).`);
+    const erro = new Error(dados.erro || dados.mensagem || `${mensagemPadrao} (HTTP ${resposta.status}).`);
+    // O status e o codigo sobrevivem ao `throw`. Sem isso, quem chama so tem o
+    // TEXTO da mensagem para decidir o que fazer — e "nada a protocolar hoje"
+    // ficaria indistinguivel de "o servidor caiu", que e a diferenca entre
+    // esperar em paz e acender um alarme.
+    erro.status = resposta.status;
+    if (dados.codigo) erro.codigo = dados.codigo;
+    throw erro;
   }
   return dados;
 }
@@ -657,44 +677,115 @@ async function buscarFila(apiUrl, apiToken) {
  * reenfileirar, nao mexer, ou cadastrar pasta nova. Juntar as tres num texto so
  * mandaria o operador procurar no lugar errado.
  */
-function relatarFilaVazia(data) {
+function relatarFilaVazia(data, silencioso = false) {
   const parados = Array.isArray(data?.parados) ? data.parados : [];
   const pulados = Array.isArray(data?.pulados) ? data.pulados : [];
+  const linhas = [];
 
   if (parados.length) {
-    sendLog(
-      `Nada pendente, mas ${parados.length} caso(s) travaram e estao esperando voce:`,
-    );
+    linhas.push(`Nada pendente, mas ${parados.length} caso(s) travaram e estao esperando voce:`);
     for (const c of parados) {
       const motivo = c.status === 'revisao' ? 'revisao manual' : c.motivoErro || 'erro';
-      sendLog(`  - ${c.nome}: ${motivo}`);
+      linhas.push(`  - ${c.nome}: ${motivo}`);
     }
-    sendLog('Abra Execucao no painel e clique em Reenfileirar para tentar de novo.');
+    linhas.push('Abra Execucao no painel e clique em Reenfileirar para tentar de novo.');
   }
 
   if (pulados.length) {
     // Nao e falha: e a trava que impede abrir um segundo requerimento no nome
     // da mesma pessoa. O numero vai junto para o operador poder conferir no
     // GERID se o protocolo atribuido e mesmo daquele cliente.
-    sendLog(`${pulados.length} cliente(s) fora da fila por ja terem protocolo:`);
-    for (const p of pulados) sendLog(`  - ${p.nome}: protocolo ${p.protocolo}`);
+    linhas.push(`${pulados.length} cliente(s) fora da fila por ja terem protocolo:`);
+    for (const p of pulados) linhas.push(`  - ${p.nome}: protocolo ${p.protocolo}`);
   }
 
-  if (!parados.length && !pulados.length) {
-    sendLog('Nao ha casos pendentes na fila.');
+  if (!linhas.length) linhas.push('Nao ha casos pendentes na fila.');
+
+  // Na ronda isto e a resposta NORMAL, repetida a cada cinco minutos. Vai por
+  // `relatarRonda`, que so escreve quando o texto muda.
+  if (silencioso) return relatarRonda(linhas.join('\n'));
+  for (const linha of linhas) sendLog(linha);
+  return Promise.resolve();
+}
+
+/**
+ * Diz algo UMA vez por mudanca, e nao uma vez por ronda.
+ *
+ * A ronda roda a cada cinco minutos, para sempre. Num dia sem pasta nova sao
+ * mais de cem passadas e todas tem a mesma coisa verdadeira a dizer: nao ha o
+ * que protocolar. Repetir isso cem vezes nao informa nada e ainda empurra para
+ * fora do historico (MAX_LOGS = 80) as linhas que importam — as do protocolo
+ * que deu certo de manha. Entao so a MUDANCA de situacao vira log.
+ *
+ * O marcador e limpo por `esquecerRelatoDaRonda()` sempre que o robo realmente
+ * trabalha, para que a volta ao repouso seja anunciada de novo em vez de ficar
+ * escondida atras do texto identico de horas antes.
+ */
+async function relatarRonda(mensagem) {
+  const salvo = await chrome.storage.local.get([CHAVE_ULTIMO_RELATO_RONDA]).catch(() => ({}));
+  if (salvo?.[CHAVE_ULTIMO_RELATO_RONDA] === mensagem) return;
+  await chrome.storage.local.set({ [CHAVE_ULTIMO_RELATO_RONDA]: mensagem }).catch(() => undefined);
+  sendLog(mensagem);
+}
+
+function esquecerRelatoDaRonda() {
+  return chrome.storage.local.remove(CHAVE_ULTIMO_RELATO_RONDA).catch(() => undefined);
+}
+
+/**
+ * Conta ao servidor o que deu errado, para alguem poder corrigir depois.
+ *
+ * O log da extensao cabe 80 linhas e vive so nesta maquina. O robo trabalha o
+ * dia inteiro sem ninguem olhando, entao e certo que as situacoes novas — a
+ * tela que mudou, o PDF que nao baixou — aconteçam quando nao ha ninguem na
+ * frente do computador. Sem esta linha, na quinta-feira nao existe mais nenhum
+ * registro do que quebrou na terca.
+ *
+ * Engole o proprio erro de proposito: e chamado de dentro de um `catch`, e uma
+ * falha ao anotar o problema nao pode virar um segundo problema por cima.
+ */
+async function registrarErroNoPainel(apiUrl, apiToken, dados) {
+  if (!apiUrl || !apiToken) return;
+  try {
+    await buscarComTimeout(
+      apiUrl.replace(/\/$/, '') + '/api/ext/erro',
+      {
+        method: 'POST',
+        headers: headersAutorizacao(apiToken, true),
+        body: JSON.stringify(dados),
+      },
+      10_000,
+    );
+  } catch {
+    // Sem rede para o painel nao ha o que fazer aqui. O log local ja tem a linha.
   }
 }
 
+/**
+ * Devolve `{ semTrabalho: true }` quando nao ha o que protocolar agora.
+ *
+ * Nao ter cliente novo NAO e erro — e o estado normal da maior parte do dia. O
+ * servidor recusa com 422 nos dois casos, e antes disso virava excecao: a ronda
+ * cairia no `catch` de erro fatal a cada cinco minutos, gastaria as tentativas
+ * de retomada e encheria o log de alarme falso num dia em que nada aconteceu.
+ */
 async function prepararFila(apiUrl, apiToken) {
-  const resposta = await buscarComTimeout(apiUrl.replace(/\/$/, '') + '/api/ext/iniciar', {
-    method: 'POST',
-    headers: headersAutorizacao(apiToken, true),
-  });
-  const dados = await lerJsonResposta(resposta, 'Nao foi possivel preparar a fila.');
-  if (!dados.sucesso) {
-    throw new Error(dados.erro || 'Nao foi possivel preparar a fila.');
+  try {
+    const resposta = await buscarComTimeout(apiUrl.replace(/\/$/, '') + '/api/ext/iniciar', {
+      method: 'POST',
+      headers: headersAutorizacao(apiToken, true),
+    });
+    const dados = await lerJsonResposta(resposta, 'Nao foi possivel preparar a fila.');
+    if (!dados.sucesso) {
+      throw new Error(dados.erro || 'Nao foi possivel preparar a fila.');
+    }
+    return dados;
+  } catch (erro) {
+    if (erro?.codigo === 'sem_trabalho') {
+      return { semTrabalho: true, motivo: erro.message || 'Nada a protocolar agora.' };
+    }
+    throw erro;
   }
-  return dados;
 }
 
 async function autenticacaoNecessaria(tabId) {
@@ -2270,11 +2361,12 @@ async function processQueue(
   tabIdPreferido,
   tentativasRetomada = 0,
   iniciarSeVazia = false,
+  { silencioso = false } = {},
 ) {
   let manterExecucaoPendente = false;
   try {
     if (!apiToken) throw new Error('A chave da extensão não foi informada.');
-    sendLog('Iniciando processamento...');
+    if (!silencioso) sendLog('Iniciando processamento...');
     let data = await buscarFila(apiUrl, apiToken);
 
     // Pausa pedida no painel: nem abre o GERID. A execucao continua viva e os
@@ -2284,26 +2376,47 @@ async function processQueue(
     // A checagem vem ANTES de `prepararFila`: com a fila pausada o servidor
     // devolve `casos: []`, o que parecia "fila vazia" e fazia um clique em
     // Iniciar mandar preparar fila nova — furando justamente a pausa.
+    const avisarPausa = () => (silencioso
+      ? relatarRonda('Fila PAUSADA no painel. Clique em Retomar fila no painel para continuar.')
+      : Promise.resolve(
+        sendLog('Fila PAUSADA no painel. Clique em Retomar fila no painel para continuar.'),
+      ));
     if (data.pausada) {
-      sendLog('Fila PAUSADA no painel. Clique em Retomar fila no painel para continuar.');
+      await avisarPausa();
       return;
     }
 
     if ((!data.idExecucao || data.casos.length === 0) && iniciarSeVazia) {
-      sendLog('Preparando a fila no servidor...');
-      await prepararFila(apiUrl, apiToken);
+      if (!silencioso) sendLog('Preparando a fila no servidor...');
+      const preparo = await prepararFila(apiUrl, apiToken);
+      // Dia sem pasta nova: o robo fica esperando, e e so isso que aconteceu.
+      // Quem clicou no botao recebe a resposta na hora; a ronda so registra
+      // quando o motivo muda.
+      if (preparo?.semTrabalho) {
+        if (silencioso) await relatarRonda(preparo.motivo);
+        else sendLog(preparo.motivo);
+        return;
+      }
       data = await buscarFila(apiUrl, apiToken);
       if (data.pausada) {
-        sendLog('Fila PAUSADA no painel. Clique em Retomar fila no painel para continuar.');
+        await avisarPausa();
         return;
       }
     }
 
     const casos = modoTeste ? data.casos.slice(0, 1) : data.casos;
     if (casos.length === 0 || !data.idExecucao) {
-      relatarFilaVazia(data);
+      await relatarFilaVazia(data, silencioso);
       return;
     }
+
+    // Daqui para baixo ha trabalho de verdade. O robo volta a falar por
+    // completo: as linhas seguintes sao sobre um requerimento em nome de uma
+    // pessoa, e nenhuma delas pode ser engolida por ser parecida com a de
+    // ontem. Esquecer o relato tambem faz a proxima volta ao repouso ser
+    // anunciada em vez de silenciada.
+    silencioso = false;
+    await esquecerRelatoDaRonda();
 
     let aba;
     try {
@@ -2326,6 +2439,11 @@ async function processQueue(
       );
       await enviarHeartbeat(apiUrl, apiToken, data.idExecucao, 'erro', 'Acesso suspenso pela Dataprev.')
         .catch(() => undefined);
+      await registrarErroNoPainel(apiUrl, apiToken, {
+        etapa: 'antiabuso',
+        mensagem: 'A Dataprev suspendeu o acesso a este computador.',
+        detalhe: bloqueio.ocorrencia ? `Ocorrencia Dataprev ${bloqueio.ocorrencia}` : '',
+      });
       await limparExecucaoAtiva().catch(() => undefined);
       return;
     }
@@ -2657,6 +2775,15 @@ async function processQueue(
     }
   } catch (erro) {
     sendLog(`Erro fatal: ${erro?.message || erro}`);
+    // Antes de qualquer retomada: e este registro que sobrevive ao dia e
+    // permite corrigir a causa depois. O reagendamento abaixo so tenta de novo
+    // — se o motivo nao ficar escrito em algum lugar, tentar de novo e tudo o
+    // que este robo vai saber fazer para sempre.
+    await registrarErroNoPainel(apiUrl, apiToken, {
+      etapa: 'fila',
+      mensagem: String(erro?.message || erro),
+      detalhe: String(erro?.stack || '').slice(0, 3000),
+    });
     const salvo = await chrome.storage.local.get([CHAVE_EXECUCAO_ATIVA]).catch(() => ({}));
     const ativa = salvo[CHAVE_EXECUCAO_ATIVA];
     if (ativa?.idExecucao) {
@@ -2764,6 +2891,75 @@ async function aoAutenticar(tabId, anterior) {
   await iniciarFilaAposLogin(tabId);
 }
 
+/**
+ * A ronda: de cinco em cinco minutos, para sempre, o robo olha se ha trabalho.
+ *
+ * E o que transforma a extensao de "ferramenta que alguem aciona" em processo
+ * continuo. O navegador fica aberto o dia inteiro, e o robo sozinho: le o
+ * Drive de novo (pasta que entrou hoje entra na fila; pasta que sumiu porque
+ * foi protocolada nao volta), protocola o que apareceu, busca o comprovante,
+ * manda no WhatsApp e volta a esperar.
+ *
+ * A ORDEM aqui e deliberada e nao pode ser trocada:
+ *
+ * 1. Ja esta trabalhando -> sai. Duas passadas ao mesmo tempo entregariam o
+ *    mesmo cliente duas vezes, e duas vezes significa dois requerimentos
+ *    abertos no INSS no nome da mesma pessoa.
+ * 2. Execucao pela metade -> retoma ELA. Terminar o que ficou aberto vem antes
+ *    de abrir fila nova, senao o caso do meio fica orfao.
+ * 3. So entao procura trabalho novo.
+ *
+ * A autenticacao nao e verificada antes: quem descobre que a sessao caiu e o
+ * `processQueue`, e ele so chega la depois de saber que existe alguem para
+ * protocolar. Fazer o contrario mandaria o operador passar pelo SafeID e pelo
+ * codigo de 6 digitos num dia em que nao havia nada a fazer.
+ *
+ * Esta e tambem a rede de seguranca externa: `ALARME_RETOMADA` tenta de novo
+ * rapido e desiste depois de MAX_RETOMADAS_AUTOMATICAS, e ate agora era ai que
+ * o robo parava de vez ate alguem clicar. A ronda pega o que sobrou — devagar,
+ * sem laco quente, mas sem fim.
+ */
+async function rondaContinua() {
+  if (isRunning) return;
+
+  const { apiUrl, apiToken } = await credenciaisPainel();
+  if (!apiUrl || !apiToken) {
+    await relatarRonda(
+      'A extensao nao tem a chave do painel guardada, entao nao consigo procurar '
+      + 'trabalho sozinho. Abra o painel do RPA uma vez para reconectar.',
+    );
+    return;
+  }
+
+  await retomarExecucaoPersistida();
+  if (isRunning) return;
+
+  const salvo = await chrome.storage.local.get(['modoTeste']).catch(() => ({}));
+  const modoTeste = salvo?.modoTeste !== false;
+
+  isRunning = true;
+  try {
+    await processQueue(apiUrl, apiToken, modoTeste, undefined, 0, true, { silencioso: true });
+  } catch (erro) {
+    isRunning = false;
+    await relatarRonda(`A ronda falhou: ${erro?.message || erro}`);
+  }
+}
+
+/**
+ * Liga a ronda. Chamado em todo caminho de entrada porque o service worker do
+ * MV3 morre sozinho e ninguem avisa; recriar um alarme que ja existe apenas o
+ * substitui, entao chamar demais nao custa nada e chamar de menos custa o dia.
+ */
+function armarRonda() {
+  chrome.alarms?.create?.(ALARME_RONDA, {
+    periodInMinutes: RONDA_MINUTOS,
+    // Um minuto de folga na largada: no arranque do Chrome as abas ainda estao
+    // carregando e a sessao do GERID pode nem ter sido restaurada.
+    delayInMinutes: 1,
+  });
+}
+
 chrome.runtime.onMessage.addListener((request) => {
   if (request.action === 'start') {
     if (isRunning) {
@@ -2821,18 +3017,28 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  armarRonda();
   void sincronizarAutorizacaoDoPainel();
   void retomarExecucaoPersistida();
 });
 chrome.runtime.onInstalled?.addListener(() => {
+  armarRonda();
   void sincronizarAutorizacaoDoPainel();
   void retomarExecucaoPersistida();
 });
+// Fora de qualquer listener, de proposito: isto roda toda vez que o service
+// worker acorda, inclusive nas vezes em que nem onStartup nem onInstalled
+// disparam (que sao a maioria — o MV3 desliga o worker por inatividade e o
+// religa no proximo evento). Sem esta linha, a ronda existiria so nos dois
+// momentos em que ninguem precisa dela.
+armarRonda();
 chrome.alarms?.onAlarm.addListener((alarme) => {
   if (alarme.name === ALARME_CONFIRMACAO) {
     void verificarConfirmacaoPendente();
   } else if (alarme.name === ALARME_RETOMADA || alarme.name === ALARME_AUTENTICACAO) {
     void retomarExecucaoPersistida();
+  } else if (alarme.name === ALARME_RONDA) {
+    void rondaContinua();
   }
 });
 

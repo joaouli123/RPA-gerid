@@ -26,9 +26,25 @@ export async function POST(req: Request) {
       { status: 202, headers: corsHeaders },
     );
   } catch (erro) {
+    const mensagem = erro instanceof Error ? erro.message : 'Nao foi possivel preparar a fila.';
     return NextResponse.json(
-      { sucesso: false, erro: erro instanceof Error ? erro.message : 'Nao foi possivel preparar a fila.' },
+      // `codigo` existe por causa da ronda: a extensão chama esta rota a cada
+      // cinco minutos, para sempre, e na maioria das vezes a resposta certa é
+      // "não há nada para fazer agora". Isso é o repouso normal de um dia sem
+      // pasta nova, não uma falha — sem um código para distinguir, a extensão
+      // só teria o texto da mensagem e trataria o dia inteiro como erro.
+      { sucesso: false, codigo: classificar(mensagem), erro: mensagem },
       { status: 422, headers: corsHeaders },
     );
   }
+}
+
+/**
+ * `iniciarExecucao` recusa por dois motivos que NÃO são defeito: todo mundo já
+ * tem protocolo, ou ninguém está pronto ainda. Qualquer outra recusa (fonte de
+ * dados não confiável, Drive fora do ar) é problema de verdade e continua
+ * chegando como `falha` para acender o alerta.
+ */
+function classificar(mensagem: string): 'sem_trabalho' | 'falha' {
+  return /^Nada a protocolar|^Nenhum cliente est/.test(mensagem) ? 'sem_trabalho' : 'falha';
 }

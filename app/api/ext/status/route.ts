@@ -8,6 +8,7 @@ import {
   nomeDoCasoNaExecucao,
 } from '@/lib/server/store';
 import { enviarComprovanteAoOperador } from '@/lib/server/whatsapp';
+import { registrarOcorrencia } from '@/lib/server/diagnostico';
 import { revalidatePath } from 'next/cache';
 import { autorizarExtensao } from '@/lib/server/extensaoAuth';
 
@@ -121,6 +122,38 @@ export async function POST(req: Request) {
           }.`;
         }
       }
+    }
+
+    // O protocolo saiu e as entregas do comprovante não. Isso não desfaz nada,
+    // mas é exatamente o tipo de falha que passa despercebida: o operador vê
+    // "PROTOCOLADO" e segue a vida, e semanas depois falta o PDF na pasta do
+    // cliente sem ninguém saber desde quando. Fica registrado com nome e data.
+    if (status === 'sucesso' && pdfBase64 && !(confirmacao.painel && confirmacao.drive)) {
+      const faltou = [
+        confirmacao.painel ? null : 'painel',
+        confirmacao.drive ? null : 'Drive do cliente',
+        confirmacao.whatsapp ? null : 'WhatsApp',
+      ].filter(Boolean);
+      await registrarOcorrencia({
+        origem: 'servidor',
+        etapa: 'comprovante',
+        mensagem: `Comprovante do protocolo ${protocolo} não chegou em: ${faltou.join(', ')}.`,
+        cpf,
+        nome: await nomeDoCasoNaExecucao(idExecucao, cpf),
+        detalhe: avisoComprovante,
+      });
+    }
+    // Erro de caso também vira ocorrência. O status do caso já mostra isso no
+    // painel da execução, mas a execução fecha e vai para o histórico; o que
+    // precisamos para corrigir a causa é a série completa, de todos os dias.
+    if (status === 'erro') {
+      await registrarOcorrencia({
+        origem: 'extensao',
+        etapa: 'caso',
+        mensagem: String(motivoErro || 'Erro sem motivo informado.'),
+        cpf,
+        nome: await nomeDoCasoNaExecucao(idExecucao, cpf),
+      });
     }
 
     await atualizarStatusCaso(
