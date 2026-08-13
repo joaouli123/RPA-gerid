@@ -198,6 +198,8 @@ describe('extensao Gerid - pedido ja em aberto', () => {
       Uint8Array,
       btoa: (valor: string) => Buffer.from(valor, 'binary').toString('base64'),
       console,
+      // `URL` e global no service worker MV3; o sandbox precisa oferecer o mesmo.
+      URL,
       setTimeout,
       clearTimeout,
       Date,

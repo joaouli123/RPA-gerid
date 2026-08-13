@@ -43,11 +43,41 @@ function sendLog(message) {
   }).catch(() => undefined);
 }
 
+/**
+ * O host da url, sem porta — ou string vazia se nao for url.
+ *
+ * Existe porque comparar url com `includes('://host/')` quebra em porta
+ * explicita: o CAS do GERID atende em `geridinss.dataprev.gov.br:8443`, que NAO
+ * contem `geridinss.dataprev.gov.br/`. O efeito era mudo e caro: a aba do login
+ * era classificada como SEM_ABA, e o ramo que pede o codigo de 6 digitos no
+ * WhatsApp nunca rodava. Ninguem pedia nada, e a leitura obvia era "o WhatsApp
+ * nao funciona" — quando o problema era uma comparacao de texto.
+ */
+function hostDaUrl(url) {
+  try {
+    return new URL(String(url || '')).hostname;
+  } catch {
+    return '';
+  }
+}
+
+function ehHostGerid(url) {
+  return hostDaUrl(url) === 'geridinss.dataprev.gov.br';
+}
+
+function ehHostPat(url) {
+  return hostDaUrl(url) === 'atendimento.inss.gov.br';
+}
+
 function estadoDaAba(tab) {
   const url = String(tab?.url || '');
-  if (url.includes('://geridinss.dataprev.gov.br/')) return EstadoAutenticacao.NECESSARIA;
-  if (url.includes('://atendimento.inss.gov.br/')) {
-    if (/^https?:\/\/atendimento\.inss\.gov\.br\/(tarefas|requerimentos)(?:[/?#]|$)/i.test(url)) {
+  if (ehHostGerid(url)) return EstadoAutenticacao.NECESSARIA;
+  if (ehHostPat(url)) {
+    // O caminho — nao a url inteira. Pelo mesmo motivo do host: porta, query e
+    // fragmento nao podem decidir se a sessao esta valida.
+    let caminho = '';
+    try { caminho = new URL(url).pathname; } catch { caminho = ''; }
+    if (/^\/(tarefas|requerimentos)(?:\/|$)/i.test(caminho)) {
       return EstadoAutenticacao.AUTENTICADO;
     }
     return EstadoAutenticacao.NECESSARIA;
@@ -55,8 +85,50 @@ function estadoDaAba(tab) {
   return EstadoAutenticacao.SEM_ABA;
 }
 
+/**
+ * A tela "Solucao de Protecao de Sistemas" da Dataprev.
+ *
+ * Ela vem na MESMA url do INSS, com HTTP 200, entao nada no nivel de rede
+ * denuncia o bloqueio: para o robo e uma pagina como outra qualquer, e ele
+ * seguiria tentando. Insistir contra antiabuso e como ele confirma que do
+ * outro lado tem um robo — o recuo aqui nao e educacao, e autopreservacao do
+ * acesso do escritorio.
+ *
+ * Nada neste caminho tenta disfarcar nada. Ele para, registra a ocorrencia e
+ * devolve a decisao para uma pessoa.
+ */
+async function bloqueioAntiabuso(tabId) {
+  if (!tabId) return null;
+  try {
+    const saida = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const texto = String(document.body?.innerText || '').toLowerCase();
+        // Sem acento no trecho procurado: "solucao"/"solução" e "protecao"/
+        // "proteção" mudam conforme a fonte, e normalizar a pagina inteira a
+        // cada verificacao sairia caro para nada.
+        const bloqueado = texto.includes('prote')
+          && texto.includes('de sistemas')
+          && texto.includes('considerada suspeita');
+        if (!bloqueado) return null;
+        // O numero no rodape e a identificacao da ocorrencia — e a unica coisa
+        // que a Dataprev reconhece se alguem precisar reclamar depois.
+        const ocorrencia = (document.body.innerText.match(/\b\d{12,}\b/) || [''])[0];
+        return { bloqueado: true, ocorrencia };
+      },
+    });
+    // Confere a FORMA da resposta, nao so se veio algo. Esta funcao decide
+    // parar a fila inteira; um `true` solto vindo de outro caminho — ou de um
+    // executeScript que respondeu qualquer coisa — nao pode ter esse poder.
+    const r = saida?.[0]?.result;
+    return r && typeof r === 'object' && r.bloqueado === true ? r : null;
+  } catch {
+    return null;
+  }
+}
+
 function abaDoPortalPat(tab) {
-  return String(tab?.url || '').includes('://atendimento.inss.gov.br/');
+  return ehHostPat(tab?.url);
 }
 
 async function atualizarEstadoAutenticacao(estado, mensagem, tabId) {
@@ -236,7 +308,18 @@ async function pedirAutorizacaoNoCelular(tabId, apiUrl, apiToken) {
   const salvo = await chrome.storage.local.get([CHAVE_ULTIMO_CERTIFICADO]);
   // A notificacao do SafeID vale ~3 min. Clicar de novo antes disso derruba a
   // solicitacao que ja esta no celular do titular e enche o aparelho de push.
-  if (Date.now() - Number(salvo[CHAVE_ULTIMO_CERTIFICADO] || 0) < 3 * 60 * 1000) return;
+  //
+  // Isto saia CALADO, e o silencio era o pior dos dois mundos: o operador via a
+  // tela de login parada, o botao intocado e nenhuma linha no log — a leitura
+  // obvia e "a extensao nao tentou". Ela tentou; ela se conteve. Agora diz.
+  const desde = Date.now() - Number(salvo[CHAVE_ULTIMO_CERTIFICADO] || 0);
+  if (desde < 3 * 60 * 1000) {
+    sendLog(
+      `Ja pedi o certificado ha ${Math.round(desde / 1000)}s e a solicitacao ainda vale. `
+      + 'Autorize no SafeID do celular. Para forcar um novo pedido, clique em Abrir autenticacao.',
+    );
+    return;
+  }
 
   let resultado = '';
   try {
@@ -436,7 +519,7 @@ async function abrirAutenticacao() {
 
 async function aguardarAbaPronta(tabId, timeoutMs = 20_000) {
   const atual = await chrome.tabs.get(tabId);
-  if (atual.status === 'complete' && atual.url?.includes('://atendimento.inss.gov.br/')) return atual;
+  if (atual.status === 'complete' && ehHostPat(atual.url)) return atual;
 
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -445,7 +528,7 @@ async function aguardarAbaPronta(tabId, timeoutMs = 20_000) {
     }, timeoutMs);
     const aoAtualizar = (id, info, tab) => {
       if (id !== tabId) return;
-      if (info.status === 'complete' && tab.url?.includes('://atendimento.inss.gov.br/')) {
+      if (info.status === 'complete' && ehHostPat(tab.url)) {
         clearTimeout(timeout);
         chrome.tabs.onUpdated.removeListener(aoAtualizar);
         resolve(tab);
@@ -2035,6 +2118,24 @@ async function processQueue(
       aba = await abrirAutenticacao();
     }
 
+    // ANTES de qualquer coisa na aba. A tela de bloqueio da Dataprev responde
+    // 200 e mora na url do INSS, entao os testes abaixo a leriam como "sessao
+    // caiu" e mandariam autenticar de novo — mais navegacao automatizada em
+    // cima de quem acabou de dizer que a navegacao esta suspeita.
+    const bloqueio = await bloqueioAntiabuso(aba?.id);
+    if (bloqueio) {
+      sendLog(
+        'A Dataprev suspendeu o acesso a este computador ("Solucao de Protecao de Sistemas"'
+        + (bloqueio.ocorrencia ? `, ocorrencia ${bloqueio.ocorrencia}` : '')
+        + '). Parei a fila: insistir agora so piora. Espere o bloqueio cair, acesse uma vez '
+        + 'na mao para conferir, e reinicie a fila depois.',
+      );
+      await enviarHeartbeat(apiUrl, apiToken, data.idExecucao, 'erro', 'Acesso suspenso pela Dataprev.')
+        .catch(() => undefined);
+      await limparExecucaoAtiva().catch(() => undefined);
+      return;
+    }
+
     if (aba?.id && abaDoPortalPat(aba)) {
       await resolverBloqueiosPortal(aba.id);
       aba = await chrome.tabs.get(aba.id);
@@ -2419,7 +2520,14 @@ chrome.runtime.onMessage.addListener((request) => {
       });
   }
   if (request.action === 'open_auth') {
-    void abrirAutenticacao();
+    // Clique humano em "Abrir autenticacao" e intencao explicita, e intencao
+    // explicita vence o debounce de 3 minutos: quem apertou o botao esta
+    // dizendo que a solicitacao anterior nao chegou ou ja morreu. Quem clica
+    // efetivamente e o listener de tabs.onUpdated, quando a pagina de login
+    // terminar de carregar — aqui so tiramos a trava do caminho dele.
+    void chrome.storage.local.remove(CHAVE_ULTIMO_CERTIFICADO)
+      .catch(() => undefined)
+      .then(() => abrirAutenticacao());
   }
 });
 
