@@ -47,10 +47,12 @@ export async function POST(req: Request) {
   );
 
   // Sem o aviso o operador não tem como saber que precisa agir, e o robô ficaria
-  // em polling até o desafio expirar. Melhor falhar agora, dizendo o motivo.
-  if (!avisou) {
+  // em polling até o desafio expirar. Melhor falhar agora, dizendo o motivo —
+  // o motivo de verdade, vindo da ponte, e não uma frase genérica que serve
+  // para tudo e não ajuda em nada.
+  if (!avisou.ok) {
     return NextResponse.json(
-      { sucesso: false, erro: 'Não consegui falar com o WhatsApp do operador.' },
+      { sucesso: false, erro: `Não consegui falar com o WhatsApp do operador. ${avisou.erro ?? ''}`.trim() },
       { status: 502, headers: corsHeaders },
     );
   }

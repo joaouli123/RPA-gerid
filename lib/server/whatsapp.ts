@@ -45,8 +45,59 @@ export function whatsappConfigurado(): boolean {
   return numeroAutorizado().length >= 12;
 }
 
-function jidDoOperador(): string {
-  return `${numeroAutorizado()}@s.whatsapp.net`;
+/**
+ * Só os dígitos do "user" de um JID.
+ *
+ * `5541999999999@s.whatsapp.net` -> `5541999999999`
+ * `5541999999999:88@s.whatsapp.net` -> `5541999999999` (o `:88` é o aparelho)
+ */
+function usuarioDoJid(jid: string | null | undefined): string {
+  return String(jid || '').split('@')[0]!.split(':')[0]!.replace(/\D/g, '');
+}
+
+/**
+ * O JID canônico do operador, PERGUNTADO ao WhatsApp — nunca montado no chute.
+ *
+ * Isto já foi `${numero}@s.whatsapp.net`, e o custo foi alto: o WhatsApp guarda
+ * celular brasileiro de DDD >= 31 SEM o nono dígito. O log do próprio servidor
+ * mostra isso na conta pareada — `myPN: 554199077637`, doze dígitos. Então o
+ * número (41) 98703-8339 mora lá como `554187038339`, e a mensagem endereçada a
+ * `5541987038339@s.whatsapp.net` ia para um destinatário que não existe.
+ *
+ * O pior não foi errar o endereço: foi errar em silêncio. `sendMessage` aceita
+ * qualquer JID e não reclama, então o servidor respondia "avisei o operador",
+ * a extensão anunciava "pedi o codigo no seu WhatsApp", e o celular não tocava.
+ * Todo mundo achando que tinha feito a sua parte.
+ *
+ * `onWhatsApp` devolve o endereço que o WhatsApp reconhece e diz se a conta
+ * existe. Quando não existe, isto ESTOURA — quem falha alto vira erro na tela
+ * do operador ("digite o código você mesmo") em vez de virar espera muda.
+ */
+async function jidDoOperador(socket: WASocket): Promise<string> {
+  const numero = numeroAutorizado();
+  if (ponte.jidOperador && usuarioDoJid(ponte.jidOperador)) return ponte.jidOperador;
+
+  const achados = await socket.onWhatsApp(numero).catch(() => undefined);
+  const encontrado = achados?.find((c) => c.exists);
+  if (!encontrado?.jid) {
+    throw new Error(
+      `O número ${numero} não tem conta de WhatsApp (ou o WhatsApp não respondeu a consulta). `
+      + 'Confira RPA_WHATSAPP_NUMERO: precisa de DDI + DDD + número.',
+    );
+  }
+
+  ponte.jidOperador = encontrado.jid;
+  // O que o WhatsApp devolveu é o endereço bom; o que está no .env é o que o
+  // humano digitou. Os dois valem para RECONHECER uma resposta, porque a
+  // mensagem que chega pode vir com qualquer um dos dois formatos.
+  ponte.usuariosOperador.add(usuarioDoJid(encontrado.jid));
+  ponte.usuariosOperador.add(numero);
+  if (usuarioDoJid(encontrado.jid) !== numero) {
+    console.log(
+      `[WhatsApp] O WhatsApp conhece ${numero} como ${usuarioDoJid(encontrado.jid)}. Usando o dele.`,
+    );
+  }
+  return encontrado.jid;
 }
 
 interface Ponte {
@@ -81,6 +132,19 @@ interface Ponte {
    * o QR que a conexão nova acabou de publicar.
    */
   geracao: number;
+  /**
+   * JID canônico do operador, como o WhatsApp o conhece. Resolvido uma vez por
+   * conexão (ver `jidDoOperador`) e zerado a cada socket novo — se a sessão
+   * trocou de conta pareada, o endereço resolvido pela anterior não vale mais.
+   */
+  jidOperador: string | null;
+  /**
+   * Todos os "users" que contam como sendo o operador: o do `.env`, o que o
+   * WhatsApp devolveu, e o `@lid` dele quando aparecer. Existe porque a mesma
+   * pessoa chega com endereços diferentes conforme o caminho da mensagem, e
+   * quem responde os 6 dígitos precisa ser reconhecido em todos eles.
+   */
+  usuariosOperador: Set<string>;
 }
 
 /**
@@ -127,6 +191,8 @@ raiz[chave] ??= {
   registrada: false,
   desvinculado: false,
   geracao: 0,
+  jidOperador: null,
+  usuariosOperador: new Set(),
 };
 const ponte = raiz[chave]!;
 // Uma ponte que sobreviveu ao hot reload pode ter sido criada por uma versão
@@ -137,6 +203,8 @@ ponte.religarEm ??= null;
 ponte.registrada ??= false;
 ponte.desvinculado ??= false;
 ponte.geracao ??= 0;
+ponte.jidOperador ??= null;
+ponte.usuariosOperador ??= new Set();
 
 /**
  * A pasta da sessão guarda uma credencial que REALMENTE pareou?
@@ -212,7 +280,7 @@ export async function manterConexaoViva(): Promise<void> {
  * cresce para sempre num processo que fica meses no ar é vazamento.
  */
 async function enviarTexto(socket: WASocket, texto: string): Promise<void> {
-  const enviada = await socket.sendMessage(jidDoOperador(), { text: texto });
+  const enviada = await socket.sendMessage(await jidDoOperador(socket), { text: texto });
   const id = enviada?.key?.id;
   if (!id) return;
   ponte.enviadas.add(id);
@@ -240,13 +308,30 @@ function textoDaMensagem(mensagem: {
  * dois casos são silenciosos, então ficam presos em teste.
  */
 export function ehRespostaDoOperador(
-  key: { remoteJid?: string | null; fromMe?: boolean | null; id?: string | null },
-  jidEsperado: string,
+  key: {
+    remoteJid?: string | null;
+    remoteJidAlt?: string | null;
+    fromMe?: boolean | null;
+    id?: string | null;
+  },
+  usuariosAutorizados: Set<string>,
   enviadasPeloRobo: Set<string>,
 ): boolean {
   // Um JID de grupo termina em @g.us. Só conversa direta com o número
   // autorizado vale — em grupo qualquer participante poderia responder.
-  if (key.remoteJid !== jidEsperado) return false;
+  if (String(key.remoteJid || '').endsWith('@g.us')) return false;
+
+  // Comparar a string inteira do JID não serve mais. A mesma pessoa chega ora
+  // como `numero@s.whatsapp.net`, ora como `numero:88@s.whatsapp.net` (o sufixo
+  // é o aparelho), ora como `id@lid` no endereçamento novo do WhatsApp — e aí o
+  // número real vem no `remoteJidAlt`. Igualdade crua descartava a resposta do
+  // operador em silêncio, que é o modo de falhar mais caro que existe aqui.
+  //
+  // O que NÃO se afrouxa: o número precisa bater. Este teste é o que decide de
+  // quem o robô aceita 6 dígitos para entrar no GERID; um `@lid` que não se
+  // resolve em número conhecido não passa.
+  const candidatos = [usuarioDoJid(key.remoteJid), usuarioDoJid(key.remoteJidAlt)];
+  if (!candidatos.some((u) => u && usuariosAutorizados.has(u))) return false;
   // Aqui NÃO se descarta por `fromMe`. Quando o robô usa o mesmo número do
   // operador, a conversa é a dele consigo mesmo, e tudo que ele digita vem
   // marcado como "minha mensagem" — jogar fora por isso cortaria justamente a
@@ -257,10 +342,25 @@ export function ehRespostaDoOperador(
 }
 
 async function tratarMensagem(socket: WASocket, mensagem: {
-  key: { remoteJid?: string | null; fromMe?: boolean | null; id?: string | null };
+  key: {
+    remoteJid?: string | null;
+    remoteJidAlt?: string | null;
+    fromMe?: boolean | null;
+    id?: string | null;
+  };
   message?: Parameters<typeof textoDaMensagem>[0]['message'];
 }) {
-  if (!ehRespostaDoOperador(mensagem.key, jidDoOperador(), ponte.enviadas)) return;
+  // Garante que o conjunto de autorizados já tem o endereço canônico. Sem isto,
+  // uma resposta que chegue ANTES do primeiro envio (o operador respondendo a
+  // uma mensagem antiga) seria comparada contra um conjunto vazio.
+  await jidDoOperador(socket).catch(() => undefined);
+  if (!ehRespostaDoOperador(mensagem.key, ponte.usuariosOperador, ponte.enviadas)) return;
+
+  // Aprendido do próprio WhatsApp: se a mensagem veio endereçada por `@lid` e o
+  // `remoteJidAlt` provou ser o número autorizado, esse `@lid` é o operador. A
+  // associação não é adivinhada — veio no mesmo pacote.
+  const lid = String(mensagem.key.remoteJid || '');
+  if (lid.endsWith('@lid') && usuarioDoJid(lid)) ponte.usuariosOperador.add(usuarioDoJid(lid));
 
   const texto = textoDaMensagem({ message: mensagem.message });
   const digitos = texto.match(/\b(\d{6})\b/);
@@ -309,6 +409,10 @@ async function conectar(): Promise<void> {
   const geracao = ++ponte.geracao;
   ponte.socket = null;
   ponte.conectado = false;
+  // O endereço canônico foi resolvido POR uma conexão; conexão nova pode estar
+  // pareada com outra conta. Guardar o endereço antigo mandaria a mensagem para
+  // o destinatário de ontem — e de novo sem erro nenhum aparecendo.
+  ponte.jidOperador = null;
   try {
     anterior?.end(undefined);
   } catch {
@@ -432,17 +536,28 @@ export async function garantirConexao(): Promise<void> {
   await ponte.conectando;
 }
 
-export async function avisarOperador(texto: string): Promise<boolean> {
-  if (!whatsappConfigurado()) return false;
+/**
+ * Devolve o MOTIVO da falha, não só um `false`.
+ *
+ * A rota do 2FA respondia sempre "Não consegui falar com o WhatsApp do
+ * operador", e essa frase cabe em causas muito diferentes — número inexistente,
+ * sessão caída, servidor sem internet. O operador lia a mesma linha para todas
+ * e não tinha o que fazer com ela. A causa já existia aqui dentro; só não
+ * chegava até quem podia agir.
+ */
+export async function avisarOperador(texto: string): Promise<{ ok: boolean; erro?: string }> {
+  if (!whatsappConfigurado()) {
+    return { ok: false, erro: 'RPA_WHATSAPP_NUMERO não configurado no servidor.' };
+  }
   try {
     await garantirConexao();
-    if (!ponte.socket) return false;
+    if (!ponte.socket) return { ok: false, erro: 'A ponte do WhatsApp não está conectada.' };
     await enviarTexto(ponte.socket, texto);
-    return true;
+    return { ok: true };
   } catch (erro) {
     ponte.ultimoErro = erro instanceof Error ? erro.message : String(erro);
     console.log(`[WhatsApp] Não consegui avisar o operador: ${ponte.ultimoErro}`);
-    return false;
+    return { ok: false, erro: ponte.ultimoErro };
   }
 }
 

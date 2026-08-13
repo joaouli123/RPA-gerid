@@ -11,41 +11,85 @@ import { ehRespostaDoOperador } from '../lib/server/whatsapp';
  * digita — os dois com `fromMe: true` e o mesmo destinatário. Quem descartar
  * por `fromMe` derruba a resposta e o login nunca completa; quem aceitar tudo
  * faz o robô responder ao próprio eco.
+ *
+ * A comparação é pelo NÚMERO, não pela string do JID: a mesma pessoa chega ora
+ * como `numero@s.whatsapp.net`, ora com sufixo de aparelho (`numero:88@...`),
+ * ora pelo endereçamento novo `@lid` — e nesse caso o número real vem no
+ * `remoteJidAlt`. Igualdade crua descartava a resposta em silêncio.
  */
-const OPERADOR = '5511999999999@s.whatsapp.net';
+const NUMERO = '5511999999999';
+const OPERADOR = `${NUMERO}@s.whatsapp.net`;
+const autorizados = () => new Set([NUMERO]);
 
 describe('whatsapp - conversa do numero consigo mesmo', () => {
   it('aceita a resposta do operador na conversa dele consigo mesmo', () => {
     // fromMe = true porque é ele digitando no proprio chat. Isso é a resposta.
     const enviadas = new Set(['ROBO-1']);
     expect(
-      ehRespostaDoOperador({ remoteJid: OPERADOR, fromMe: true, id: 'HUMANO-1' }, OPERADOR, enviadas),
+      ehRespostaDoOperador({ remoteJid: OPERADOR, fromMe: true, id: 'HUMANO-1' }, autorizados(), enviadas),
     ).toBe(true);
   });
 
   it('ignora o eco da mensagem que o proprio robo mandou', () => {
     const enviadas = new Set(['ROBO-1']);
     expect(
-      ehRespostaDoOperador({ remoteJid: OPERADOR, fromMe: true, id: 'ROBO-1' }, OPERADOR, enviadas),
+      ehRespostaDoOperador({ remoteJid: OPERADOR, fromMe: true, id: 'ROBO-1' }, autorizados(), enviadas),
     ).toBe(false);
   });
 
   it('aceita a resposta vinda de chip separado', () => {
     // Arranjo de dois números: a mensagem do operador chega com fromMe = false.
     expect(
-      ehRespostaDoOperador({ remoteJid: OPERADOR, fromMe: false, id: 'X' }, OPERADOR, new Set()),
+      ehRespostaDoOperador({ remoteJid: OPERADOR, fromMe: false, id: 'X' }, autorizados(), new Set()),
     ).toBe(true);
+  });
+
+  it('aceita o mesmo numero com sufixo de aparelho', () => {
+    // O `:88` identifica QUAL aparelho da conta mandou. É a mesma pessoa.
+    expect(
+      ehRespostaDoOperador(
+        { remoteJid: `${NUMERO}:88@s.whatsapp.net`, fromMe: false, id: 'X' },
+        autorizados(),
+        new Set(),
+      ),
+    ).toBe(true);
+  });
+
+  it('aceita mensagem endereçada por @lid quando o alt prova o numero', () => {
+    // Endereçamento novo do WhatsApp: o `remoteJid` é um id opaco e o número
+    // autorizado vem no `remoteJidAlt`, no mesmo pacote.
+    expect(
+      ehRespostaDoOperador(
+        { remoteJid: '106846589309017@lid', remoteJidAlt: OPERADOR, fromMe: false, id: 'X' },
+        autorizados(),
+        new Set(),
+      ),
+    ).toBe(true);
+  });
+
+  it('recusa @lid que nao se resolve em numero conhecido', () => {
+    // Sem o `remoteJidAlt` não há como saber de quem é. Aceitar "porque veio por
+    // @lid" seria aceitar 6 dígitos de qualquer um para entrar no GERID.
+    expect(
+      ehRespostaDoOperador(
+        { remoteJid: '999999999999@lid', fromMe: false, id: 'X' },
+        autorizados(),
+        new Set(),
+      ),
+    ).toBe(false);
   });
 
   it('recusa qualquer outro numero e qualquer grupo', () => {
     const outro = '5511888888888@s.whatsapp.net';
-    expect(ehRespostaDoOperador({ remoteJid: outro, fromMe: false, id: 'X' }, OPERADOR, new Set()))
+    expect(ehRespostaDoOperador({ remoteJid: outro, fromMe: false, id: 'X' }, autorizados(), new Set()))
       .toBe(false);
     // Em grupo qualquer participante poderia mandar 6 dígitos e entrar no GERID.
+    // Recusado mesmo que o alt aponte para o operador: a mensagem foi para um
+    // grupo, e num grupo a plateia é outra.
     expect(
       ehRespostaDoOperador(
-        { remoteJid: '12345-67890@g.us', fromMe: false, id: 'X' },
-        OPERADOR,
+        { remoteJid: '12345-67890@g.us', remoteJidAlt: OPERADOR, fromMe: false, id: 'X' },
+        autorizados(),
         new Set(),
       ),
     ).toBe(false);
