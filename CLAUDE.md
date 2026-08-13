@@ -151,7 +151,11 @@ cliente; sem CPF duplicado. Detalhes e exemplos em `docs/schema-planilha.md`.
 - **Documentação do grupo familiar vai num arquivo só**, junto com os documentos pessoais.
 - **Comprovante** salvo na pasta do cliente com o nome `comprovante protocolo`; depois a pasta do
   cliente é movida para `Protocolado/` (ambos configuráveis em `posProtocolo`).
-- **Volume:** 10–14 protocolos/dia hoje (1 pessoa dedicada); meta de chegar a ~50/dia.
+- **Volume: ~5 protocolos/dia** (corrigido pelo cliente em 2026-08-13; o briefing de julho
+  dizia 10–14/dia com meta de ~50/dia, e isso está errado). O número não é decorativo:
+  foi ele que fixou a ronda contínua da extensão em 5 minutos. Intervalo mais curto seria
+  bater no GERID dezenas de vezes por hora sem achar nada — a insistência que acorda o
+  antiabuso da Dataprev. E descarta volume como causa quando um bloqueio aparece.
 - **A pasta atual é ambiente de TESTE**, não a base real do escritório. O caso do Antônio já foi
   protocolado de verdade — não reprotocolar.
 - **Service account:** o cliente não tem o JSON da conta existente; criamos uma nova
