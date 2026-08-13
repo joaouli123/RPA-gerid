@@ -56,7 +56,9 @@ vi.mock('@whiskeysockets/baileys', () => {
  * hot reload do Next, então `resetModules` sozinho não a apaga.
  */
 async function pontoZero() {
-  process.env.RPA_WHATSAPP_NUMERO = '5511999999999';
+  // Sem número de configuração: quem parear define tudo. Se algum dia voltar a
+  // existir variável de número, este teste continua passando sem ela — e é isso
+  // que se quer dizer aqui.
   process.env.RPA_WHATSAPP_SESSAO = '.data/whatsapp-inexistente-de-teste';
   sockets.length = 0;
   delete (globalThis as Record<symbol, unknown>)[Symbol.for('rpa-gerid.whatsapp')];

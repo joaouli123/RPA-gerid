@@ -32,24 +32,23 @@ import { responderDesafio } from './desafio2fa';
  * um modo de "chip separado", em que o robô mandava do número A para o número
  * B; ele funcionava e era exatamente o que expunha a linha do escritório. Saiu.
  *
- * `RPA_WHATSAPP_NUMERO` continua existindo, mas mudou de papel: não é mais o
- * destino, é o número que se ESPERA encontrar pareado. Serve de conferência —
- * se o QR foi lido pelo celular errado, isso aparece em vez de virar mensagem
- * silenciosa no aparelho de outra pessoa.
+ * Não existe número em configuração nenhuma. Existiu `RPA_WHATSAPP_NUMERO`:
+ * primeiro como destino, depois como conferência ("qual celular deveria ter
+ * pareado"). As duas versões erraram pelo mesmo motivo — o número certo é o do
+ * celular que está na mão de quem pareia, e ele já se apresenta no pareamento.
+ * Como conferência, a variável ainda acusava divergência entre dois aparelhos do
+ * MESMO dono: aviso falso, do tipo que ensina a ignorar aviso. Quem escaneia o
+ * QR define destino e remetente, e não há terceira parte para configurar.
+ *
+ * A conferência que sobra é a tela mostrar o número PAREADO, lido da sessão. É
+ * melhor que a variável: não desatualiza, porque vem de quem está conectado.
  */
-
-/** O número que se espera ver pareado. Só dígitos, com DDI. Ex.: 5511999999999. */
-const numeroAutorizado = () => (process.env.RPA_WHATSAPP_NUMERO ?? '').replace(/\D/g, '');
 
 /**
  * Pasta da sessão pareada. Sobrevive a restart — sem ela, o QR code teria que
  * ser lido de novo a cada deploy. NÃO versionar: é credencial.
  */
 const pastaSessao = () => process.env.RPA_WHATSAPP_SESSAO?.trim() || '.data/whatsapp';
-
-export function whatsappConfigurado(): boolean {
-  return numeroAutorizado().length >= 12;
-}
 
 /**
  * Só os dígitos do "user" de um JID.
@@ -62,28 +61,26 @@ function usuarioDoJid(jid: string | null | undefined): string {
 }
 
 /**
- * O mesmo número, escrito dos dois jeitos que o Brasil usa?
+ * O mesmo celular, escrito dos dois jeitos que o Brasil usa.
  *
- * Celular brasileiro ganhou um nono dígito, e o WhatsApp guarda os de DDD >= 31
- * SEM ele. Está no log do próprio servidor: a conta pareada aparece como
- * `myPN: 554199077637` — doze dígitos. Então `5541987038339` (o que a pessoa
- * digita) e `554187038339` (o que o WhatsApp guarda) são a MESMA linha, e
- * comparar por igualdade crua acusaria divergência onde não há.
+ * O celular brasileiro ganhou um nono dígito e o WhatsApp guarda os de DDD >= 31
+ * SEM ele: no log do servidor a conta pareada aparece como `myPN: 554199077637`,
+ * doze dígitos. Então `5541999077637` e `554199077637` são a MESMA linha, e uma
+ * comparação crua trataria a mesma pessoa como duas.
  *
- * Exportado porque errar aqui é caro nos dois sentidos: apertado demais, o
- * operador vê "celular errado" tendo pareado o certo; frouxo demais, o robô
- * aceita 6 dígitos de quem não devia.
+ * Guardar as duas formas na hora de cadastrar quem pode responder é melhor do
+ * que afrouxar a comparação depois. A comparação frouxa pegaria também o `@lid`,
+ * que é um id opaco e não um telefone — tirar "o nono dígito" de um id
+ * inventaria uma coincidência. Aqui a regra só toca o que tem cara de celular
+ * brasileiro, e só é chamada com o número que o próprio WhatsApp diz ser a conta.
  */
-export function mesmoNumero(a: string, b: string): boolean {
-  const x = a.replace(/\D/g, '');
-  const y = b.replace(/\D/g, '');
-  if (!x || !y) return false;
-  if (x === y) return true;
-  // Só vale para celular brasileiro: DDI 55 + DDD de 2 dígitos + 8 ou 9 locais.
-  const semNove = (n: string) => (
-    /^55\d{2}9\d{8}$/.test(n) ? `${n.slice(0, 4)}${n.slice(5)}` : n
-  );
-  return semNove(x) === semNove(y);
+export function variantesDoNumero(numero: string): string[] {
+  const n = numero.replace(/\D/g, '');
+  if (!n) return [];
+  // DDI 55 + DDD de 2 dígitos + 8 locais (falta o nono) ou + 9 locais (tem).
+  const comNove = /^55\d{2}\d{8}$/.test(n) ? `${n.slice(0, 4)}9${n.slice(4)}` : null;
+  const semNove = /^55\d{2}9\d{8}$/.test(n) ? `${n.slice(0, 4)}${n.slice(5)}` : null;
+  return [...new Set([n, comNove, semNove].filter((x): x is string => !!x))];
 }
 
 /**
@@ -119,20 +116,14 @@ function jidDoOperador(socket: WASocket): string {
   // conversa consigo mesmo não há outro participante, então este conjunto tem
   // um dono só, e é assim que deve ser: este teste é o que decide de quem o
   // robô aceita um código para entrar no GERID.
-  ponte.usuariosOperador.add(meu);
+  // As duas formas do mesmo celular (com e sem o nono dígito). O WhatsApp diz
+  // "esta conta é X" no `user.id` e pode endereçar a mensagem que volta na outra
+  // forma; cadastrar as duas evita descartar a resposta do próprio dono.
+  for (const forma of variantesDoNumero(meu)) ponte.usuariosOperador.add(forma);
+  // O `@lid` entra cru: é id opaco, não telefone. Não passa pela regra do nono
+  // dígito, que só faz sentido para número de celular.
   const lid = usuarioDoJid(socket.user?.lid);
   if (lid) ponte.usuariosOperador.add(lid);
-
-  // Conferência, não endereçamento. O `.env` diz qual celular deveria ter lido
-  // o QR; se foi outro, o aviso vai para o aparelho pareado (é o único destino
-  // seguro) e a divergência precisa aparecer — senão o operador fica olhando um
-  // telefone enquanto a mensagem chega no outro.
-  const esperado = numeroAutorizado();
-  if (esperado && !mesmoNumero(esperado, meu)) {
-    ponte.ultimoErro = `O QR foi lido pelo celular ${meu}, mas RPA_WHATSAPP_NUMERO diz ${esperado}. `
-      + 'O aviso do 2FA vai para o aparelho que pareou. Pareie pelo celular certo ou corrija a variável.';
-    console.log(`[WhatsApp] ${ponte.ultimoErro}`);
-  }
 
   return ponte.jidOperador;
 }
@@ -304,7 +295,6 @@ function agendarReconexao(): void {
  * esperada — essa demora, e a resposta não pode esperar por ela.
  */
 export async function manterConexaoViva(): Promise<void> {
-  if (!whatsappConfigurado()) return;
   if (ponte.conectado || ponte.conectando || ponte.religarEm || ponte.desvinculado) return;
   if (!(await sessaoJaPareada())) return;
   ponte.registrada = true;
@@ -567,7 +557,6 @@ async function conectar(): Promise<void> {
 
 /** Sobe a conexão se ainda não existir. Chamadas simultâneas compartilham a mesma. */
 export async function garantirConexao(): Promise<void> {
-  if (!whatsappConfigurado()) throw new Error('RPA_WHATSAPP_NUMERO não configurado.');
   if (ponte.socket && ponte.conectado) return;
   ponte.conectando ??= conectar().finally(() => { ponte.conectando = null; });
   await ponte.conectando;
@@ -583,9 +572,6 @@ export async function garantirConexao(): Promise<void> {
  * chegava até quem podia agir.
  */
 export async function avisarOperador(texto: string): Promise<{ ok: boolean; erro?: string }> {
-  if (!whatsappConfigurado()) {
-    return { ok: false, erro: 'RPA_WHATSAPP_NUMERO não configurado no servidor.' };
-  }
   try {
     await garantirConexao();
     if (!ponte.socket) return { ok: false, erro: 'A ponte do WhatsApp não está conectada.' };
@@ -616,9 +602,6 @@ export async function avisarOperador(texto: string): Promise<{ ok: boolean; erro
  * caminho que sempre funciona.
  */
 export function iniciarPareamento(): { ok: boolean; erro?: string } {
-  if (!whatsappConfigurado()) {
-    return { ok: false, erro: 'RPA_WHATSAPP_NUMERO não configurado no servidor.' };
-  }
   if (ponte.conectado) return { ok: true };
 
   ponte.ultimoErro = null;
@@ -644,7 +627,6 @@ export function iniciarPareamento(): { ok: boolean; erro?: string } {
 }
 
 export function situacaoWhatsapp(): {
-  configurado: boolean;
   conectado: boolean;
   precisaParear: boolean;
   pareado: boolean;
@@ -653,13 +635,12 @@ export function situacaoWhatsapp(): {
   numeroMascarado: string;
   ultimoErro: string | null;
 } {
-  // O número da conta PAREADA, com o do `.env` como reserva enquanto ninguém
-  // pareou. É para lá que o aviso vai, então é ele que a tela deve mostrar —
-  // exibir o do `.env` quando os dois divergem seria apontar para o telefone
-  // errado justamente na hora em que a pessoa precisa saber onde olhar.
-  const numero = usuarioDoJid(ponte.socket?.user?.id) || numeroAutorizado();
+  // O número da conta PAREADA, e só ele. É para lá que o aviso vai, então é ele
+  // que a tela deve mostrar. Havia aqui um `|| numeroAutorizado()` de reserva: a
+  // tela apontava para o telefone do `.env` justamente quando ele NÃO era o
+  // pareado, ou seja, mentia na única hora em que o dado importava.
+  const numero = usuarioDoJid(ponte.socket?.user?.id);
   return {
-    configurado: whatsappConfigurado(),
     conectado: ponte.conectado,
     // Cair não é o mesmo que estar solto. `precisaParear` agora quer dizer
     // "precisa de alguém com o celular na frente da tela": uma sessão já pareada

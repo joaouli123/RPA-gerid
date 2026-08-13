@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { autorizarExtensao } from '@/lib/server/extensaoAuth';
 import { abrirDesafio, consumirCodigo, situacaoDesafio } from '@/lib/server/desafio2fa';
-import { avisarOperador, whatsappConfigurado } from '@/lib/server/whatsapp';
+import { avisarOperador } from '@/lib/server/whatsapp';
 
 /**
  * Ponte entre o robô travado na tela dos 6 dígitos e o celular do operador.
@@ -30,13 +30,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ sucesso: false, erro: auth.erro }, { status: 401, headers: corsHeaders });
   }
 
-  if (!whatsappConfigurado()) {
-    return NextResponse.json(
-      { sucesso: false, erro: 'RPA_WHATSAPP_NUMERO não configurado no servidor.' },
-      { status: 503, headers: corsHeaders },
-    );
-  }
-
+  // Não há o que conferir antes de tentar: o WhatsApp está pronto se alguém
+  // pareou um celular, e quem sabe disso é a ponte. `avisarOperador` devolve o
+  // motivo real — um teste a mais aqui só repetiria a resposta dela.
   const desafio = abrirDesafio();
   const avisou = await avisarOperador(
     '🔐 O GERID pediu autenticação.\n\n'

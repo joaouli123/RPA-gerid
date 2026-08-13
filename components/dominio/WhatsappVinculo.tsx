@@ -11,13 +11,13 @@ import { Botao } from '@/components/ui/Botao';
  * celular, e ter dois caminhos para a mesma coisa só dava chance de o operador
  * escolher o mais lento. Com o celular na mão, apontar a câmera resolve.
  *
- * Vale parear o MESMO número que o escritório já usa. Aí o robô conversa na
- * "Mensagem para mim mesmo" do operador: o aviso e o código ficam na conversa
- * dele com ele mesmo, sem precisar de um segundo chip.
+ * O celular que ler o QR é o que vai receber o aviso: o robô fala na "Mensagem
+ * para mim mesmo" dessa conta. Não há campo de destino em lugar nenhum, e é de
+ * propósito — mandar mensagem para terceiro é o que faz a Meta banir número em
+ * cliente não-oficial. Trocar de aparelho é trocar o QR, e mais nada.
  */
 
 interface Situacao {
-  configurado: boolean;
   conectado: boolean;
   /** Falta alguém com o celular na frente da tela. Sessão caída NÃO conta. */
   precisaParear: boolean;
@@ -77,7 +77,7 @@ export function WhatsappVinculo() {
   }, []);
 
   useEffect(() => {
-    if (!situacao?.configurado || situacao.conectado) return;
+    if (!situacao || situacao.conectado) return;
     // `precisaParear` já exclui a sessão que só caiu e está voltando — pedir QR
     // ali derrubaria a credencial boa que está em disco.
     if (!situacao.precisaParear) return;
@@ -104,18 +104,6 @@ export function WhatsappVinculo() {
   }
 
   if (!situacao) return null;
-
-  if (!situacao.configurado) {
-    return (
-      <Card className="p-4">
-        <h3 className="font-semibold">WhatsApp do 2FA</h3>
-        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Falta definir <code className="font-mono">RPA_WHATSAPP_NUMERO</code> no servidor
-          (só dígitos, com DDI — ex.: 5584999999999). O número não fica no código.
-        </p>
-      </Card>
-    );
-  }
 
   if (situacao.conectado) {
     return (

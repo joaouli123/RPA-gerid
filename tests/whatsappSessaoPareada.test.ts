@@ -41,7 +41,6 @@ async function carregarComCredencial(creds: Record<string, unknown> | null) {
   if (creds) {
     await writeFile(path.join(pasta, 'creds.json'), JSON.stringify(creds), 'utf8');
   }
-  process.env.RPA_WHATSAPP_NUMERO = '5511999999999';
   process.env.RPA_WHATSAPP_SESSAO = pasta;
 
   delete (globalThis as Record<symbol, unknown>)[Symbol.for('rpa-gerid.whatsapp')];

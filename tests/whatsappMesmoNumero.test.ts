@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ehRespostaDoOperador, mesmoNumero } from '../lib/server/whatsapp';
+import { ehRespostaDoOperador, variantesDoNumero } from '../lib/server/whatsapp';
 
 /**
  * Quem pode entregar os 6 dígitos do 2FA.
@@ -100,33 +100,49 @@ describe('whatsapp - conversa do numero consigo mesmo', () => {
  * O nono dígito do celular brasileiro.
  *
  * O WhatsApp guarda números de DDD >= 31 SEM ele — a conta pareada aparece no
- * log do servidor com doze dígitos. Então o que a pessoa digita no `.env` e o
- * que o WhatsApp devolve são a mesma linha escrita de dois jeitos, e a
- * conferência "pareou o celular certo?" precisa saber disso. Apertada demais,
- * acusa celular errado tendo pareado o certo; frouxa demais, deixa passar
- * pareamento de outra pessoa.
+ * log do servidor com doze dígitos. Como a mesma pessoa pode chegar nas duas
+ * formas, quem pode responder os 6 dígitos é cadastrado nas duas de uma vez.
+ *
+ * Cadastrar as duas formas é diferente de comparar frouxo: aqui a regra só toca
+ * o número da conta pareada, nunca o `@lid`, que é id opaco. É por isso que ela
+ * mora na entrada do conjunto, e não no teste de pertencimento.
  */
 describe('whatsapp - nono digito', () => {
-  it('reconhece o mesmo celular com e sem o nono digito', () => {
-    expect(mesmoNumero('5541987038339', '554187038339')).toBe(true);
-    expect(mesmoNumero('554187038339', '5541987038339')).toBe(true);
-    expect(mesmoNumero('5541987038339', '5541987038339')).toBe(true);
-    // Com máscara também: o que vem do `.env` pode vir formatado.
-    expect(mesmoNumero('+55 (41) 98703-8339', '554187038339')).toBe(true);
+  it('cadastra as duas formas do mesmo celular', () => {
+    expect(variantesDoNumero('5541999077637').sort())
+      .toEqual(['554199077637', '5541999077637']);
+    expect(variantesDoNumero('554199077637').sort())
+      .toEqual(['554199077637', '5541999077637']);
+    // Com máscara também: o número pode chegar formatado.
+    expect(variantesDoNumero('+55 (41) 99907-7637')).toContain('554199077637');
   });
 
-  it('nao confunde celulares diferentes', () => {
-    expect(mesmoNumero('5541987038339', '5541999077637')).toBe(false);
-    // Um dígito de diferença continua sendo outra pessoa.
-    expect(mesmoNumero('5541987038339', '5541987038330')).toBe(false);
-    // Mesmo número local, DDD diferente.
-    expect(mesmoNumero('5541987038339', '5511987038339')).toBe(false);
-    expect(mesmoNumero('', '554187038339')).toBe(false);
+  it('a resposta vale nas duas formas, e so para quem pareou', () => {
+    const pareado = new Set(variantesDoNumero('5541999077637'));
+    // O WhatsApp diz "esta conta é a de 13 dígitos" e endereça a mensagem que
+    // volta com 12. Descartar aqui mataria o 2FA em silêncio.
+    expect(
+      ehRespostaDoOperador(
+        { remoteJid: '554199077637@s.whatsapp.net', fromMe: true, id: 'HUMANO' },
+        pareado,
+        new Set(),
+      ),
+    ).toBe(true);
+    // Vizinho de número não entra junto: um dígito de diferença é outra pessoa.
+    expect(
+      ehRespostaDoOperador(
+        { remoteJid: '554199077630@s.whatsapp.net', fromMe: false, id: 'X' },
+        pareado,
+        new Set(),
+      ),
+    ).toBe(false);
   });
 
-  it('nao aplica a regra do nono digito fora do celular brasileiro', () => {
-    // `19...` não é DDI 55; tirar um "9" do meio de um número estrangeiro
-    // inventaria uma coincidência que não existe.
-    expect(mesmoNumero('19419870383', '1419870383')).toBe(false);
+  it('nao mexe no que nao e celular brasileiro', () => {
+    // Fora de DDI 55 + DDD, tirar ou pôr um "9" no meio inventaria um número que
+    // pertence a outra pessoa. Fixo de 8 dígitos e id opaco ficam intactos.
+    expect(variantesDoNumero('194198703830')).toEqual(['194198703830']);
+    expect(variantesDoNumero('106846589309017')).toEqual(['106846589309017']);
+    expect(variantesDoNumero('')).toEqual([]);
   });
 });
