@@ -133,7 +133,10 @@ describe('extensão Gerid — service worker', () => {
       cpf: '12345678901',
       status: 'revisao',
     });
-    const execucaoCaso = scriptsExecutados.find((execucao) => execucao.args?.length === 1);
+    // A chamada do caso se reconhece pelo FORMATO do argumento, não por ter
+    // argumento: a conferência de build do content script também passa um, e
+    // "tem args" pegava ela primeiro, que roda antes.
+    const execucaoCaso = scriptsExecutados.find((execucao) => execucao.args?.[0]?.cpf);
     expect(execucaoCaso).toMatchObject({ target: { tabId: 77 }, world: 'MAIN' });
     expect(scriptsExecutados.some(
       (execucao) => execucao.world === 'MAIN' && execucao.files?.includes('content.js'),
@@ -195,7 +198,11 @@ describe('extensão Gerid — service worker', () => {
       },
       scripting: {
         executeScript: async (opcoes: any) => {
-          if (!opcoes.args) return [{ result: true }];
+          // Só a chamada que leva um CASO é tentativa de preenchimento. As de
+          // infraestrutura (conferir o build do content script, ler a etapa da
+          // tela) também levam argumento, e contá-las como tentativa fazia o
+          // robô "falhar" em passos que nem eram dele.
+          if (!opcoes.args?.[0]?.cpf) return [{ result: true }];
           tentativasDePreenchimento++;
           if (tentativasDePreenchimento <= 2) {
             return [{ result: {

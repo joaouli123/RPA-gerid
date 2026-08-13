@@ -720,10 +720,25 @@ async function obterEstadoNaAba(tabId) {
   return resultado[0]?.result || { etapa: 'desconhecido', modal: null };
 }
 
+/**
+ * O build do content.js que este background espera encontrar na aba.
+ *
+ * A conferencia e por VERSAO, e nao por "tem content script ai?", porque aba
+ * aberta antes da atualizacao continua com o content.js ANTIGO carregado — e
+ * ele responde a tudo normalmente, so que com o codigo de ontem.
+ *
+ * ⚠️ Tem que ser igual ao CONTENT_BUILD_ID de src/index.ts (e do content.js
+ * gerado). Se divergir, a comparacao falha SEMPRE e o content.js e reinjetado a
+ * cada chamada — o guard para de guardar e vira so trabalho repetido. O teste
+ * `extensaoBuildContent` quebra se os dois sairem de sincronia.
+ */
+const BUILD_CONTENT_ESPERADO = '1.6.0-20260812.29';
+
 async function garantirContentScript(tabId) {
   const verificacaoIsolada = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.6.0-20260811.1',
+    args: [BUILD_CONTENT_ESPERADO],
+    func: (esperado) => window.__GERID_RPA_CONTENT_BUILD__ === esperado,
   });
   if (!verificacaoIsolada[0]?.result) {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
@@ -732,7 +747,8 @@ async function garantirContentScript(tabId) {
   const verificacaoPrincipal = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: () => window.__GERID_RPA_CONTENT_BUILD__ === '1.6.0-20260811.1',
+    args: [BUILD_CONTENT_ESPERADO],
+    func: (esperado) => window.__GERID_RPA_CONTENT_BUILD__ === esperado,
   });
   if (!verificacaoPrincipal[0]?.result) {
     await chrome.scripting.executeScript({
@@ -2802,7 +2818,10 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   const estado = estadoDaAba({ ...tab, url: info.url || tab.url });
   if (estado === EstadoAutenticacao.NECESSARIA) {
     if (abaDoPortalPat({ ...tab, url: info.url || tab.url }) && info.status === 'complete') {
-      void atualizarEstadoAutenticacao(
+      // O estado anterior e lido ANTES de qualquer gravacao: a primeira coisa
+      // que este ramo faz e salvar NECESSARIA, e depois disso nao ha mais como
+      // saber se o operador acabou de logar ou so trocou de tela.
+      void estadoAutenticacaoSalvo().then((anterior) => atualizarEstadoAutenticacao(
         estado,
         'Concluindo autorizacao de abrangencia e papel no PAT.',
         tabId,
@@ -2815,8 +2834,8 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
             'Sessao do GERID pronta.',
             tabId,
           );
-          await retomarExecucaoPersistida();
-        });
+          await aoAutenticar(tabId, anterior);
+        }));
       return;
     }
     // Pedir o certificado vivia SO dentro do laco da fila. Com a fila vazia — ou
@@ -2842,11 +2861,11 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
     return;
   }
   if (estado === EstadoAutenticacao.AUTENTICADO && info.status === 'complete') {
-    void atualizarEstadoAutenticacao(estado, 'Sessao do GERID pronta.', tabId)
-      .then(() => verificarConfirmacaoPendente(tabId))
-      .then((aguardandoConfirmacao) => {
-        if (!aguardandoConfirmacao) return retomarExecucaoPersistida();
-      });
+    void estadoAutenticacaoSalvo().then((anterior) => atualizarEstadoAutenticacao(
+      estado,
+      'Sessao do GERID pronta.',
+      tabId,
+    ).then(() => aoAutenticar(tabId, anterior)));
   }
 });
 void retomarExecucaoPersistida();

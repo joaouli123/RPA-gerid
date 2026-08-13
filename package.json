@@ -21,7 +21,8 @@
     "restaurar": "tsx scripts/restaurarPlanilha.ts",
     "snapshot": "tsx scripts/snapshotPlanilha.ts",
     "restaurar:snapshot": "tsx scripts/restaurarSnapshot.ts",
-    "senha:hash": "tsx scripts/gerarSenha.ts"
+    "senha:hash": "tsx scripts/gerarSenha.ts",
+    "extensao:publicar": "node scripts/publicar-extensao.mjs"
   },
   "dependencies": {
     "@googleapis/drive": "^8.14.0",

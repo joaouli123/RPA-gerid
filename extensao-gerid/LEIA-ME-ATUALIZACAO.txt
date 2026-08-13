@@ -1,55 +1,62 @@
-GERID RPA AUTOMATOR - VERSAO ESTAVEL 1.6.0
+GERID RPA AUTOMATOR
 
-PRINCIPAIS GARANTIAS
+A versao que vale e a que aparece no popup da extensao, nao a que estiver escrita
+aqui nem o nome da pasta.
 
-- prepara a fila diretamente pela extensao;
-- preserva e retoma a fila durante SafeID, MFA, reinicio do Chrome e atualizacao;
-- seleciona automaticamente abrangencia e papel no LOGIN - PAT;
-- confirma somente o aviso informativo do certificado A3;
-- nunca confirma o requerimento final no lugar do operador;
-- preenche os selects pelo onChange real do componente React/Redux do GERID;
-- reconhece corretamente rotulos visuais duplicados por acessibilidade;
-- preenche parentesco e estado civil de cada integrante pelo CPF da linha;
-- limita Adicionar e Fechar ao modal de contatos e confirma cada inclusao na tabela;
-- nao usa a permissao chrome.debugger nem disputa o controle do navegador;
-- reconhece explicitamente autenticacao, lista, passos 1 a 10 e comprovante;
-- valida a mudanca real de etapa depois de cada comando;
-- identifica perguntas obrigatorias novas e para com diagnostico seguro;
-- agrupa varios arquivos da mesma categoria sem substituir anexos;
-- valida os limites de 5 MB por arquivo e 50 MB no conjunto;
-- aguarda a validacao de cada etapa antes de avancar;
-- mantem os ultimos 80 eventos para diagnostico, mesmo com o popup fechado;
-- preserva o caso e agenda nova tentativa em falhas de rede ou reinicio;
-- registra sucesso somente depois de encontrar um protocolo real na tela;
-- bloqueia a execucao se a origem Google estiver indisponivel ou em demonstracao.
+COMO ATUALIZAR (LEIA ANTES DE RECARREGAR)
 
-INSTALACAO PELA CHROME WEB STORE
+A extensao esta instalada como "sem compactacao" (unpacked). Isso quer dizer:
 
-1. Instale a extensao pela ficha privada ou nao listada fornecida pela organizacao.
-2. Entre normalmente no painel da organizacao.
-3. A autorizacao da extensao e sincronizada automaticamente pela sessao do painel.
-4. Atualizacoes futuras sao instaladas automaticamente e preservam a configuracao.
+- NAO existe atualizacao automatica. Nada chega sozinho.
+- Recarregar em chrome://extensions so reveza os arquivos QUE ESTIVEREM NA PASTA
+  carregada. Se o codigo novo estiver em outro lugar, recarregar nao faz nada —
+  e o Chrome continua mostrando a versao antiga sem reclamar de nada.
 
-PRIMEIRA VALIDACAO
+Por isso a atualizacao tem dois passos, nesta ordem:
+
+1. No repositorio:  pnpm extensao:publicar
+   (copia extensao-gerid/ para a pasta que o Chrome carrega e imprime o caminho)
+2. Em chrome://extensions, clique em Recarregar na extensao.
+3. Abra o popup e confira se a versao mudou. Se nao mudou, o passo 1 publicou
+   numa pasta diferente da que o Chrome carrega — compare com o caminho que
+   aparece embaixo do nome da extensao, em "Carregada de", e rode de novo com
+   RPA_EXTENSAO_DESTINO=<caminho certo>.
+
+O nome da pasta nao acompanha a versao de proposito: extensao sem compactacao
+tem o ID derivado do caminho, e o pareamento com o painel esta guardado por ID.
+Renomear a pasta apagaria a chave e obrigaria a parear tudo de novo.
+
+O QUE O ROBO FAZ SOZINHO
+
+- Monta a fila pela propria extensao e segue de um cliente para o outro.
+- Antes de preencher, consulta o GERID para ver se o CPF ja tem pedido em aberto.
+  Sao duas consultas: uma de dois meses e, se ela nao responder, outra de cinco.
+  Requerimento antigo demais para a primeira janela ainda impede um pedido novo.
+- Preenche as etapas, anexa os documentos e PROTOCOLA.
+- Confirma os avisos e modais do caminho, inclusive o do certificado A3.
+- Gera e baixa o comprovante na hora, e sobe para o Drive do cliente e o painel.
+- Se o GERID recusar porque ja existe pedido aberto, ele NAO refaz o
+  requerimento: aproveita o numero que o proprio portal citou e vai buscar so o
+  comprovante.
+- Sessao expirada pausa a fila; ela retoma sozinha depois da autenticacao.
+- Tela travada nao para mais o dia: o robo troca de aba e segue para o proximo.
+
+O QUE CONTINUA SENDO SEU
+
+- SafeID, MFA e senha sao do titular. A extensao nao digita senha.
+- Ela nunca clica em "Reiniciar Dispositivo MFA".
+- Um caso so vira sucesso quando o GERID devolve um numero de protocolo real.
+
+PRIMEIRA VALIDACAO DEPOIS DE UMA ATUALIZACAO
 
 1. Deixe "Testar somente o primeiro caso da fila" marcado.
-2. Clique em "Preparar e iniciar".
-3. Autorize o certificado no SafeID e informe o MFA quando solicitado.
-4. Revise todos os dados e anexos na tela Confirmar do GERID.
-5. Confirme manualmente.
-6. Verifique no painel se o protocolo real foi registrado.
-
-OPERACAO
-
-- Depois da validacao, desmarque o modo teste para processar toda a fila.
-- A extensao preenche um caso e espera a revisao humana.
-- Ao confirmar, ela registra o protocolo e abre o proximo caso.
-- Se a sessao expirar, a fila pausa e retoma depois da autenticacao.
-- Mantenha a aba do GERID aberta durante a execucao.
+2. Clique em "Preparar e iniciar" e acompanhe o log do popup.
+3. Confira no painel se o protocolo e o comprovante entraram.
+4. So entao desmarque o modo teste e solte a fila inteira.
 
 SEGURANCA
 
-- O SafeID e o MFA continuam sendo confirmados pelo titular.
-- A extensao nao confirma o requerimento no lugar do operador.
-- O pacote publicado nao contem senhas, chaves nem dados de clientes.
-- A chave nao e exibida nem digitada pelo operador.
+- O pacote nao contem senhas, chaves nem dados de clientes.
+- Mantenha a aba do GERID aberta durante a execucao.
+- Os ultimos 80 eventos ficam guardados para diagnostico, mesmo com o popup
+  fechado.
