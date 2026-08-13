@@ -1568,6 +1568,10 @@ async function passo4GrupoFamiliar(
   const falhas: string[] = [];
   const vistos = new Set<string>();
 
+  /** Valor que está na tela agora. `null` = o combobox nem existe nesta linha. */
+  const valorNaTela = (id: string) =>
+    (document.getElementById(id) as HTMLInputElement | null)?.value.trim() ?? null;
+
   for (const linha of linhas) {
     const ehRequerente = linha.ehRequerente;
     if (linha.cpf) vistos.add(linha.cpf);
@@ -1602,6 +1606,18 @@ async function passo4GrupoFamiliar(
       avisos.push(
         `CPF ${linha.cpf} veio do CadÚnico mas não está na planilha — confira o parentesco.`,
       );
+    }
+
+    /**
+     * Sem parentesco na planilha, o `mapearParentesco('')` devolve "Outros" —
+     * um chute. Se o GERID já trouxe o campo preenchido (o CadÚnico sabe quem é
+     * filho de quem), escrever por cima trocaria dado certo por chute, e no BPC
+     * o parentesco não é decoração: é ele que define quem entra no cálculo da
+     * renda por pessoa da casa. Então: só se escreve sobre o que a tela trouxe
+     * quando a planilha tem alguma coisa a dizer.
+     */
+    if (!parentescoPlanilha.trim() && valorNaTela(`selectParentesco${linha.indice}`)) {
+      continue;
     }
 
     const resolvido = mapearParentesco(parentescoPlanilha);
@@ -1639,10 +1655,6 @@ async function passo4GrupoFamiliar(
     );
   }
 
-  /** Valor que está na tela agora. `null` = o combobox nem existe nesta linha. */
-  const valorNaTela = (id: string) =>
-    (document.getElementById(id) as HTMLInputElement | null)?.value.trim() ?? null;
-
   for (const linha of linhasFinais) {
     const integrante = (linha.cpf ? porCpf.get(linha.cpf) : undefined)
       ?? (linha.ehRequerente ? titularPlanilha : undefined);
@@ -1656,9 +1668,18 @@ async function passo4GrupoFamiliar(
 
     // `null` aqui é a linha do requerente, que não tem combobox de parentesco.
     if (valorNaTela(`selectParentesco${linha.indice}`) === '') {
-      const alvo = mapearParentesco(integrante?.parentesco ?? '').grupo ?? '';
+      const parentescoPlanilha = integrante?.parentesco ?? '';
+      const alvo = mapearParentesco(parentescoPlanilha).grupo ?? '';
       if (!(await escolherNoCombobox(page, mapaGerid.passo4.parentesco(linha.indice), alvo))) {
         falhas.push(`selectParentesco${linha.indice} ("${alvo}")`);
+      } else if (!parentescoPlanilha.trim()) {
+        // O campo é obrigatório e ninguém disse o que é: nem a planilha, nem o
+        // CadÚnico. Marcar "Outros" é o que destrava o Avançar, mas continua
+        // sendo um chute — e chute que ninguém vê vira protocolo errado.
+        avisos.push(
+          `CPF ${linha.cpf || '(não lido)'}: parentesco não informado na planilha e o GERID `
+            + 'trouxe o campo vazio; marquei "Outros". Confira antes de concluir.',
+        );
       }
     }
   }
