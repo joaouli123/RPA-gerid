@@ -851,7 +851,7 @@ async function obterEstadoNaAba(tabId) {
  * cada chamada — o guard para de guardar e vira so trabalho repetido. O teste
  * `extensaoBuildContent` quebra se os dois sairem de sincronia.
  */
-const BUILD_CONTENT_ESPERADO = '1.6.0-20260813.30';
+const BUILD_CONTENT_ESPERADO = '1.6.0-20260813.31';
 
 async function garantirContentScript(tabId) {
   const verificacaoIsolada = await chrome.scripting.executeScript({
@@ -1322,15 +1322,37 @@ function dataInicialDaConsulta(diasParaTras = JANELA_CURTA_DIAS, agora = Date.no
   return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
+/**
+ * CPF em forma comparavel: so digitos, sempre 11.
+ *
+ * A planilha guarda o CPF como TEXTO e mantem o zero a esquerda; o GERID as
+ * vezes o entrega como numero e perde esse zero. Sem igualar o tamanho, a linha
+ * da propria pessoa passa por linha de outra — e nesta consulta o resultado de
+ * nao reconhecer e "nada em aberto, pode protocolar".
+ */
+function cpfComparavel(valor) {
+  const digitos = String(valor || '').replace(/\D/g, '');
+  return digitos && digitos.length < 11 ? digitos.padStart(11, '0') : digitos;
+}
+
 /** Filtra a lista por CPF e devolve as linhas encontradas. */
 async function buscarLinhasNaLista(tabId, cpf, diasParaTras = JANELA_CURTA_DIAS) {
   const saida = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    args: [String(cpf || '').replace(/\D/g, ''), dataInicialDaConsulta(diasParaTras)],
+    args: [cpfComparavel(cpf), dataInicialDaConsulta(diasParaTras)],
     func: async (cpfDigitos, DATA_INICIAL) => {
       const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
       const dig = (v) => (v || '').replace(/\D/g, '');
+      // CPF comparavel: 11 digitos sempre. O GERID as vezes entrega o CPF como
+      // numero, e numero perde zero a esquerda — 00258658541 chega 258658541.
+      // Comparar cru faria a linha da pessoa certa parecer de outra pessoa, e
+      // aqui isso significa concluir "nao tem nada em aberto" e protocolar de
+      // novo. Nao serve para protocolo, que nao tem tamanho fixo.
+      const cpf11 = (v) => {
+        const d = dig(v);
+        return d && d.length < 11 ? d.padStart(11, '0') : d;
+      };
       const norm = (v) => (v || '').replace(/\s+/g, ' ').trim();
       const esperar = async (achar, ms) => {
         const fim = Date.now() + ms;
@@ -1400,7 +1422,7 @@ async function buscarLinhasNaLista(tabId, cpf, diasParaTras = JANELA_CURTA_DIAS)
         // A linha "Nenhum registro encontrado" e um td unico com colspan.
         .filter((c) => c.length >= 8)
         .map((c) => ({
-          protocolo: dig(c[0]), servico: c[1], nome: c[2], cpf: dig(c[3]),
+          protocolo: dig(c[0]), servico: c[1], nome: c[2], cpf: cpf11(c[3]),
           protocoladoEm: c[4], unidade: c[5], situacao: c[6], atualizadoEm: c[7],
         }));
 

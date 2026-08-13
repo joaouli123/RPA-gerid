@@ -1550,6 +1550,29 @@ async function passo3AutorizacaoCadUnico(page: Page): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
+ * CPF em forma comparável: só dígitos, sempre com 11.
+ *
+ * O CadÚnico devolve o CPF ao GERID como NÚMERO, e número não guarda zero à
+ * esquerda: `00258658541` chega na tela como `258658541`. A planilha guarda o
+ * CPF como texto, com os zeros. São a mesma pessoa e davam duas chaves
+ * diferentes.
+ *
+ * O estrago em 13/08/2026 (ANA LUCIA) foi exatamente esse: a mesma filha entrou
+ * como "veio do CadÚnico mas não está na planilha" E como "está na planilha mas
+ * o GERID não listou". Sem casar, o robô ficou sem o parentesco dela, marcou
+ * "Outros" no chute, e as duas pendências pararam o protocolo para revisão
+ * humana. Nenhuma divergência existia — era a comparação que estava errada.
+ *
+ * Preencher com zero é seguro porque o alvo tem tamanho fixo: 11 é o CPF
+ * inteiro, e o que vier menor só pode ter perdido zero à esquerda pelo caminho.
+ * O que já tem 11 (ou mais, num campo sujo) não é tocado.
+ */
+function chaveCpf(valor: string | undefined | null): string {
+  const digitos = apenasDigitos(valor ?? '');
+  return digitos && digitos.length < 11 ? digitos.padStart(11, '0') : digitos;
+}
+
+/**
  * O GERID já lista as pessoas (vindas do CadÚnico). O robô só marca parentesco
  * e estado civil, casando por CPF com a nossa planilha.
  *
@@ -1573,10 +1596,10 @@ async function passo4GrupoFamiliar(
 
   const porCpf = new Map<string, (typeof caso.grupoFamiliar.integrantes)[number]>();
   for (const i of caso.grupoFamiliar.integrantes) {
-    const c = apenasDigitos(i.cpf ?? '');
+    const c = chaveCpf(i.cpf);
     if (c) porCpf.set(c, i);
   }
-  const cpfRequerente = apenasDigitos(caso.grupoFamiliar.requerenteCpf ?? caso.cliente.cpf);
+  const cpfRequerente = chaveCpf(caso.grupoFamiliar.requerenteCpf ?? caso.cliente.cpf);
   const titularPlanilha = porCpf.get(cpfRequerente)
     ?? caso.grupoFamiliar.integrantes.find((i) =>
       ['titular', 'requerente'].includes(normalizar(i.parentesco ?? '')),
@@ -1603,10 +1626,13 @@ async function passo4GrupoFamiliar(
 
   for (const linha of linhas) {
     const ehRequerente = linha.ehRequerente;
-    if (linha.cpf) vistos.add(linha.cpf);
+    // A tela pode ter perdido zeros à esquerda; a planilha não. Comparar pela
+    // chave de 11 dígitos é o que faz as duas listas falarem do mesmo CPF.
+    const cpfLinha = chaveCpf(linha.cpf);
+    if (cpfLinha) vistos.add(cpfLinha);
 
     // --- Estado civil: existe em TODAS as linhas, inclusive a do requerente.
-    const integrantePlanilha = (linha.cpf ? porCpf.get(linha.cpf) : undefined)
+    const integrantePlanilha = (cpfLinha ? porCpf.get(cpfLinha) : undefined)
       ?? (ehRequerente ? titularPlanilha : undefined);
     const parentescoPlanilha = integrantePlanilha?.parentesco ?? '';
     const estadoCivil = estadoCivilGerid(integrantePlanilha?.estadoCivil);
@@ -1633,7 +1659,7 @@ async function passo4GrupoFamiliar(
 
     if (!integrantePlanilha) {
       avisos.push(
-        `CPF ${linha.cpf} veio do CadÚnico mas não está na planilha — confira o parentesco.`,
+        `CPF ${cpfLinha} veio do CadÚnico mas não está na planilha — confira o parentesco.`,
       );
     }
 
@@ -1664,7 +1690,7 @@ async function passo4GrupoFamiliar(
       const decisao = resolvido.grupo === 'Outros'
         ? 'não tem opção própria no GERID; marquei "Outros"'
         : `foi interpretado como "${resolvido.grupo}"`;
-      avisos.push(`CPF ${linha.cpf}: parentesco "${parentescoPlanilha}" ${decisao}. Confira antes de concluir.`);
+      avisos.push(`CPF ${cpfLinha}: parentesco "${parentescoPlanilha}" ${decisao}. Confira antes de concluir.`);
     }
   }
 
@@ -1685,7 +1711,8 @@ async function passo4GrupoFamiliar(
   }
 
   for (const linha of linhasFinais) {
-    const integrante = (linha.cpf ? porCpf.get(linha.cpf) : undefined)
+    const cpfLinha = chaveCpf(linha.cpf);
+    const integrante = (cpfLinha ? porCpf.get(cpfLinha) : undefined)
       ?? (linha.ehRequerente ? titularPlanilha : undefined);
 
     if (valorNaTela(`selectEstadoCivil${linha.indice}`) === '') {
@@ -1706,7 +1733,7 @@ async function passo4GrupoFamiliar(
         // CadÚnico. Marcar "Outros" é o que destrava o Avançar, mas continua
         // sendo um chute — e chute que ninguém vê vira protocolo errado.
         avisos.push(
-          `CPF ${linha.cpf || '(não lido)'}: parentesco não informado na planilha e o GERID `
+          `CPF ${cpfLinha || '(não lido)'}: parentesco não informado na planilha e o GERID `
             + 'trouxe o campo vazio; marquei "Outros". Confira antes de concluir.',
         );
       }

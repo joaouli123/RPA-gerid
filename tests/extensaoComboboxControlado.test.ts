@@ -62,7 +62,17 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
           <h2>Grupo Familiar</h2>
           <table><tbody>
             <tr>
-              <td>111.111.111-11</td>
+              <!--
+                CPF SEM os zeros à esquerda, de propósito: é assim que o CadÚnico
+                entrega quando o valor viaja como número. Na planilha ele tem 11
+                dígitos (00111111111) e aqui chega com 9. São a mesma pessoa, e
+                em 13/08/2026 (ANA LUCIA) o robô não percebeu isso: acusou a
+                filha como "veio do CadÚnico mas não está na planilha" E como
+                "está na planilha mas o GERID não listou", ficou sem o parentesco
+                dela, marcou "Outros" no chute e parou o protocolo para revisão
+                humana por uma divergência que não existia.
+              -->
+              <td>111111111</td>
               <td>Dependente</td>
               <td>${comboControlado('selectParentesco0', [['2', 'Filho(a)'], ['17', 'Outros']], true)}</td>
               <td>${comboControlado('selectEstadoCivil0', [['1', 'Solteiro'], ['2', 'Casado']], true)}</td>
@@ -210,7 +220,7 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
             grupoFamiliar: {
               requerenteCpf: '12345678901',
               integrantes: [
-                { cpf: '11111111111', parentesco: 'Filho(a)', estadoCivil: 'Solteiro' },
+                { cpf: '00111111111', parentesco: 'Filho(a)', estadoCivil: 'Solteiro' },
                 { cpf: '12345678901', parentesco: 'Titular', estadoCivil: 'Casado' },
               ],
             },
@@ -221,6 +231,9 @@ describe('extensão Gerid — comboboxes controlados pelo React', () => {
       );
 
       await pagina.waitForFunction(() => !document.querySelector<HTMLElement>('#passo5')?.hidden);
+      // "Filho(a)" só sai daqui se a linha de 9 dígitos da tela tiver casado com
+      // a de 11 da planilha. Sem casar, o parentesco fica vazio e o robô cai em
+      // "Outros" — que é a opção ao lado, e estava passando por resposta.
       expect(await pagina.inputValue('#selectParentesco0')).toBe('Filho(a)');
       expect(await pagina.inputValue('#selectEstadoCivil0')).toBe('Solteiro');
       expect(await pagina.inputValue('#selectEstadoCivil1')).toBe('Casado');

@@ -1729,15 +1729,19 @@
     await garantirMarcado(check);
     await avancar(page, "passo_3");
   }
+  function chaveCpf(valor) {
+    const digitos = apenasDigitos(valor ?? "");
+    return digitos && digitos.length < 11 ? digitos.padStart(11, "0") : digitos;
+  }
   async function passo4GrupoFamiliar(page, caso, avisos) {
     await esperarTela(page, /Grupo Familiar/i);
     await aguardarGrupoFamiliarEstavel(page, caso.grupoFamiliar.integrantes.length);
     const porCpf = /* @__PURE__ */ new Map();
     for (const i of caso.grupoFamiliar.integrantes) {
-      const c = apenasDigitos(i.cpf ?? "");
+      const c = chaveCpf(i.cpf);
       if (c) porCpf.set(c, i);
     }
-    const cpfRequerente = apenasDigitos(caso.grupoFamiliar.requerenteCpf ?? caso.cliente.cpf);
+    const cpfRequerente = chaveCpf(caso.grupoFamiliar.requerenteCpf ?? caso.cliente.cpf);
     const titularPlanilha = porCpf.get(cpfRequerente) ?? caso.grupoFamiliar.integrantes.find(
       (i) => ["titular", "requerente"].includes(normalizar(i.parentesco ?? ""))
     );
@@ -1753,8 +1757,9 @@
     const valorNaTela = (id) => document.getElementById(id)?.value.trim() ?? null;
     for (const linha of linhas) {
       const ehRequerente = linha.ehRequerente;
-      if (linha.cpf) vistos.add(linha.cpf);
-      const integrantePlanilha = (linha.cpf ? porCpf.get(linha.cpf) : void 0) ?? (ehRequerente ? titularPlanilha : void 0);
+      const cpfLinha = chaveCpf(linha.cpf);
+      if (cpfLinha) vistos.add(cpfLinha);
+      const integrantePlanilha = (cpfLinha ? porCpf.get(cpfLinha) : void 0) ?? (ehRequerente ? titularPlanilha : void 0);
       const parentescoPlanilha = integrantePlanilha?.parentesco ?? "";
       const estadoCivil = estadoCivilGerid(integrantePlanilha?.estadoCivil);
       const okEc = await escolherNoCombobox(
@@ -1776,7 +1781,7 @@
       }
       if (!integrantePlanilha) {
         avisos.push(
-          `CPF ${linha.cpf} veio do Cad\xDAnico mas n\xE3o est\xE1 na planilha \u2014 confira o parentesco.`
+          `CPF ${cpfLinha} veio do Cad\xDAnico mas n\xE3o est\xE1 na planilha \u2014 confira o parentesco.`
         );
       }
       if (!parentescoPlanilha.trim() && valorNaTela(`selectParentesco${linha.indice}`)) {
@@ -1794,7 +1799,7 @@
         );
       } else if (!resolvido.exato) {
         const decisao = resolvido.grupo === "Outros" ? 'n\xE3o tem op\xE7\xE3o pr\xF3pria no GERID; marquei "Outros"' : `foi interpretado como "${resolvido.grupo}"`;
-        avisos.push(`CPF ${linha.cpf}: parentesco "${parentescoPlanilha}" ${decisao}. Confira antes de concluir.`);
+        avisos.push(`CPF ${cpfLinha}: parentesco "${parentescoPlanilha}" ${decisao}. Confira antes de concluir.`);
       }
     }
     await aguardarGrupoFamiliarEstavel(page, caso.grupoFamiliar.integrantes.length);
@@ -1805,7 +1810,8 @@
       );
     }
     for (const linha of linhasFinais) {
-      const integrante = (linha.cpf ? porCpf.get(linha.cpf) : void 0) ?? (linha.ehRequerente ? titularPlanilha : void 0);
+      const cpfLinha = chaveCpf(linha.cpf);
+      const integrante = (cpfLinha ? porCpf.get(cpfLinha) : void 0) ?? (linha.ehRequerente ? titularPlanilha : void 0);
       if (valorNaTela(`selectEstadoCivil${linha.indice}`) === "") {
         const alvo = estadoCivilGerid(integrante?.estadoCivil);
         if (!await escolherNoCombobox(page, mapaGerid.passo4.estadoCivil(linha.indice), alvo)) {
@@ -1819,7 +1825,7 @@
           falhas.push(`selectParentesco${linha.indice} ("${alvo}")`);
         } else if (!parentescoPlanilha.trim()) {
           avisos.push(
-            `CPF ${linha.cpf || "(n\xE3o lido)"}: parentesco n\xE3o informado na planilha e o GERID trouxe o campo vazio; marquei "Outros". Confira antes de concluir.`
+            `CPF ${cpfLinha || "(n\xE3o lido)"}: parentesco n\xE3o informado na planilha e o GERID trouxe o campo vazio; marquei "Outros". Confira antes de concluir.`
           );
         }
       }
@@ -2564,7 +2570,7 @@
       init_detectarProtocolo();
       init_modaisDoEnvio();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.6.0-20260813.30";
+      var CONTENT_BUILD_ID = "1.6.0-20260813.31";
       var EVENTO_LOG_GERID = "__gerid_rpa_log__";
       var CANAL_CONTROLE_GERID = "__gerid_rpa_control__";
       var emContextoExtensao = typeof chrome !== "undefined" && Boolean(chrome.runtime?.id);
