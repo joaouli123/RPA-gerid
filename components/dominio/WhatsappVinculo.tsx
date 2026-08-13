@@ -49,6 +49,11 @@ export function WhatsappVinculo() {
   const [situacao, setSituacao] = useState<Situacao | null>(null);
   const [pedindo, setPedindo] = useState(false);
   const [erro, setErro] = useState('');
+  // Desconectar tem dois cliques de propósito. Um clique errado aqui deixa o
+  // GERID sem para onde pedir o código de acesso, no meio de uma fila rodando —
+  // e quem estiver longe da mesa não tem como consertar sem o celular na mão.
+  const [confirmando, setConfirmando] = useState(false);
+  const [desvinculando, setDesvinculando] = useState(false);
   // O pareamento acontece no celular — o painel não recebe evento nenhum. Só
   // perguntando de tempos em tempos dá para saber que conectou e trocar a tela
   // sozinho. É também o que faz o QR se renovar: o WhatsApp troca a cada ~20s.
@@ -103,6 +108,63 @@ export function WhatsappVinculo() {
     }
   }
 
+  /**
+   * Solta o número pareado no servidor.
+   *
+   * Não basta pedir um QR novo: enquanto a credencial estiver em disco, o
+   * WhatsApp reconecta na MESMA conta e nenhum código aparece. Trocar de
+   * aparelho é desvincular primeiro.
+   */
+  async function desvincular() {
+    setDesvinculando(true);
+    setErro('');
+    try {
+      const resposta = await fetch('/api/whatsapp', { method: 'DELETE' });
+      const corpo = await resposta.json().catch(() => null);
+      if (!corpo?.ok) setErro(corpo?.erro || 'O servidor não conseguiu desconectar o número.');
+      setConfirmando(false);
+      await consultar();
+    } catch (falha) {
+      setErro(falha instanceof Error ? falha.message : String(falha));
+    } finally {
+      setDesvinculando(false);
+    }
+  }
+
+  function trocarDeNumero() {
+    if (!confirmando) {
+      return (
+        <div className="mt-4">
+          <Botao variante="secundario" onClick={() => setConfirmando(true)}>
+            Desconectar / usar outro número
+          </Botao>
+        </div>
+      );
+    }
+    return (
+      <div className="mt-4 space-y-3">
+        <p className="text-sm text-amber-600 dark:text-amber-400">
+          O aparelho sai de <em>Aparelhos conectados</em> no celular e o robô fica sem WhatsApp
+          até alguém ler o QR novo. Nesse intervalo o GERID não tem para onde pedir o código de
+          acesso; comprovantes que não saírem voltam a ser tentados assim que o número novo
+          parear.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Botao variante="perigo" onClick={() => void desvincular()} disabled={desvinculando}>
+            {desvinculando ? 'Desconectando...' : 'Sim, desconectar'}
+          </Botao>
+          <Botao
+            variante="secundario"
+            onClick={() => setConfirmando(false)}
+            disabled={desvinculando}
+          >
+            Cancelar
+          </Botao>
+        </div>
+      </div>
+    );
+  }
+
   if (!situacao) return null;
 
   if (situacao.conectado) {
@@ -116,6 +178,8 @@ export function WhatsappVinculo() {
           Número {situacao.numeroMascarado}. Quando o GERID pedir o código, o aviso chega
           nessa conversa e você responde só os 6 dígitos.
         </p>
+        {trocarDeNumero()}
+        {erro && <p className="mt-3 text-sm text-rose-600 dark:text-rose-400">{erro}</p>}
       </Card>
     );
   }
@@ -139,11 +203,13 @@ export function WhatsappVinculo() {
         {situacao.ultimoErro && (
           <p className="mt-3 text-sm text-amber-600 dark:text-amber-400">{situacao.ultimoErro}</p>
         )}
-        <div className="mt-4">
-          <Botao variante="secundario" onClick={() => void pedirQr()} disabled={pedindo}>
-            {pedindo ? 'Gerando...' : 'Parear outro número'}
-          </Botao>
-        </div>
+        {/*
+          Aqui existia um botão "Parear outro número" que chamava `pedirQr()` — e
+          mentia. Com a credencial em disco o WhatsApp reconecta na mesma conta e
+          nenhum QR aparece; quem clicava ficava esperando um código que nunca ia
+          vir. Trocar de número passa por desvincular, e é só isso que se oferece.
+        */}
+        {trocarDeNumero()}
         {erro && <p className="mt-3 text-sm text-rose-600 dark:text-rose-400">{erro}</p>}
       </Card>
     );

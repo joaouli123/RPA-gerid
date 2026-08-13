@@ -1,12 +1,18 @@
 import { NextResponse } from 'next/server';
 import QRCode from 'qrcode';
-import { iniciarPareamento, manterConexaoViva, situacaoWhatsapp } from '@/lib/server/whatsapp';
+import {
+  desvincularWhatsapp,
+  iniciarPareamento,
+  manterConexaoViva,
+  situacaoWhatsapp,
+} from '@/lib/server/whatsapp';
 
 /**
  * Vincular o WhatsApp pelo painel.
  *
- * GET  — como está a ponte: conectada? tem QR para escanear?
- * POST — pede um QR code e volta na hora.
+ * GET    — como está a ponte: conectada? tem QR para escanear?
+ * POST   — pede um QR code e volta na hora.
+ * DELETE — solta o número pareado, para outro celular assumir.
  *
  * O POST não espera o WhatsApp de propósito. Quando esperava, a requisição
  * passava dos 30s do proxy e voltava a página "Bad Gateway" no lugar do JSON —
@@ -49,4 +55,17 @@ export async function GET() {
 export async function POST() {
   const resultado = iniciarPareamento();
   return NextResponse.json(resultado, { status: resultado.ok ? 202 : 400 });
+}
+
+/**
+ * Diferente do POST, este ESPERA terminar.
+ *
+ * Aqui a demora é o `logout` no WhatsApp e um `rm` de pasta pequena — coisa de
+ * segundos, longe do tempo do proxy. E responder antes da hora seria pior: a
+ * tela consulta o status logo depois e leria a ponte ainda de pé, anunciando
+ * que a desconexão não funcionou.
+ */
+export async function DELETE() {
+  const resultado = await desvincularWhatsapp();
+  return NextResponse.json(resultado, { status: resultado.ok ? 200 : 500 });
 }

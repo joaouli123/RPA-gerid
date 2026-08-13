@@ -458,6 +458,18 @@ async function tratarMensagem(socket: WASocket, mensagem: {
 }
 
 async function conectar(): Promise<void> {
+  /**
+   * Em que geração esta tentativa começou.
+   *
+   * As duas linhas abaixo são `await`: ler a credencial do disco e perguntar a
+   * versão do WhatsApp Web pela internet — essa segunda pode demorar segundos.
+   * Nesse intervalo alguém pode clicar em "Desconectar" no painel, e aí esta
+   * tentativa estaria abrindo um socket com a credencial que JÁ foi apagada:
+   * o Baileys reconectaria no número antigo e gravaria a pasta de volta em
+   * disco, desfazendo a desconexão sem erro nenhum no log. O contador de
+   * geração é a única marca que sobrevive aos `await`.
+   */
+  const geracaoDeEntrada = ponte.geracao;
   const { state, saveCreds } = await useMultiFileAuthState(pastaSessao());
   // A versão do WhatsApp Web é buscada na internet. Quando o servidor não
   // alcança a origem, o Baileys cai numa versão embutida — e versão velha
@@ -468,6 +480,14 @@ async function conectar(): Promise<void> {
     `[WhatsApp] Versão do WhatsApp Web: ${version.join('.')}`
     + `${isLatest ? '' : ' (embutida — não consegui consultar a atual)'}`,
   );
+
+  // O mundo mudou enquanto se esperava: ou o painel desvinculou, ou outra
+  // tentativa já assumiu. Nos dois casos quem manda é a de lá, e esta sai sem
+  // encostar em nada — nem no socket, nem no estado.
+  if (geracaoDeEntrada !== ponte.geracao) {
+    console.log('[WhatsApp] Tentativa de conexão descartada: o estado mudou durante o preparo.');
+    return;
+  }
 
   // Credencial em disco quer dizer que este número já foi pareado um dia — a
   // ponte passa a insistir na reconexão em vez de desistir depois de 5 quedas.
@@ -802,6 +822,87 @@ export function iniciarPareamento(): { ok: boolean; erro?: string } {
     agendarReconexao();
   });
 
+  return { ok: true };
+}
+
+/**
+ * Solta o número pareado, para outro celular poder assumir.
+ *
+ * Existe porque "parear outro número" era impossível pelo painel: enquanto a
+ * credencial estivesse em disco, o Baileys reconectava naquela conta e NUNCA
+ * emitia QR. O botão "Parear outro número" da tela de conexão caída prometia
+ * exatamente isso e entregava uma reconexão no mesmo aparelho — trocar de
+ * número só dava certo apagando a pasta da sessão na VPS, à mão.
+ *
+ * Três coisas acontecem aqui, e nenhuma é dispensável:
+ *
+ * 1. `logout()` avisa o WhatsApp, e é o que faz o "RPA Gerid" sumir de
+ *    Aparelhos conectados no celular. Apagar só o disco deixaria um aparelho
+ *    fantasma autorizado lá, no nome do dono, sem ele saber.
+ * 2. A pasta da sessão é apagada. Ela é justamente o que faz a ponte voltar
+ *    sozinha depois de um restart — sem isso, "desconectar" duraria até o
+ *    próximo deploy.
+ * 3. Os autorizados a responder os 6 dígitos são esquecidos. Este é o ponto
+ *    sensível: se o número velho continuasse na lista, ele seguiria podendo
+ *    mandar um código que entra no GERID depois de já ter sido desvinculado.
+ */
+export async function desvincularWhatsapp(): Promise<{ ok: boolean; erro?: string }> {
+  const alvo = path.resolve(pastaSessao());
+  // `RPA_WHATSAPP_SESSAO` vem do ambiente, e apagar recursivamente o que uma
+  // variável mal preenchida apontar não é risco que valha correr por um botão.
+  if (alvo === path.parse(alvo).root || alvo === path.resolve('.')) {
+    return { ok: false, erro: `Recuso apagar ${alvo}: isso não é uma pasta de sessão.` };
+  }
+
+  try {
+    if (ponte.socket) await ponte.socket.logout();
+  } catch (erro) {
+    // Celular fora do ar ou socket já morto. O logout é cortesia com o outro
+    // lado; quem manda de verdade é a credencial local, e ela vai embora
+    // abaixo de qualquer jeito.
+    const causa = erro instanceof Error ? erro.message : String(erro);
+    console.log(`[WhatsApp] O logout não completou (${causa}); desvinculando local mesmo assim.`);
+  }
+
+  // Daqui para frente, nenhum evento da conexão que está morrendo mexe no
+  // estado — inclusive o `close` que o próprio logout dispara.
+  ponte.geracao += 1;
+  try { ponte.socket?.end(undefined); } catch { /* já estava morto */ }
+
+  if (ponte.religarEm) {
+    clearTimeout(ponte.religarEm);
+    ponte.religarEm = null;
+  }
+
+  ponte.socket = null;
+  ponte.conectando = null;
+  ponte.conectado = false;
+  ponte.qr = null;
+  ponte.tentativas = 0;
+  ponte.registrada = false;
+  // Não reconecta sozinho: quem desvinculou quer parear outro aparelho, e
+  // `iniciarPareamento` (o clique em "Gerar QR code") é que libera de novo.
+  ponte.desvinculado = true;
+  ponte.jidOperador = null;
+  ponte.usuariosOperador.clear();
+  ponte.enviadas.clear();
+  // Já anotado como 'desvinculado' de propósito: assim `manterConexaoViva` não
+  // repete no log a versão dela do motivo — "o aparelho desvinculou o robô" —,
+  // que aqui seria mentira. Quem desvinculou foi o painel, e a linha logo
+  // abaixo diz isso. Log que atribui a causa errada custa investigação.
+  ponte.motivoMudo = 'desvinculado';
+  ponte.ultimoErro = null;
+
+  try {
+    await fs.rm(alvo, { recursive: true, force: true });
+  } catch (erro) {
+    const causa = erro instanceof Error ? erro.message : String(erro);
+    ponte.ultimoErro = `Desconectei, mas não consegui apagar a sessão em disco (${causa}).`;
+    console.log(`[WhatsApp] ${ponte.ultimoErro}`);
+    return { ok: false, erro: ponte.ultimoErro };
+  }
+
+  console.log('[WhatsApp] Número desvinculado pelo painel. Aguardando um QR novo.');
   return { ok: true };
 }
 
