@@ -98,7 +98,9 @@ function montar(filaPorChamada: () => any, haTrabalho: () => boolean = () => fal
           etapaAtual = 'comprovante';
           return [{ result: { status: 'sucesso', protocolo: '1941397434' } }];
         }
-        if (typeof arg === 'string' && /^\d{11}$/.test(arg)) return [{ result: { linhas: [] } }];
+        if (typeof arg === 'string' && /^\d{11}$/.test(arg)) {
+          return [{ result: { buscaConfirmada: true, linhas: [] } }];
+        }
         if (typeof arg === 'string' && /^\d{10}$/.test(arg)) {
           return [{ result: { pdfBase64: 'JVBERi0xLjQK', bytes: 9 } }];
         }

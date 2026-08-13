@@ -76,28 +76,32 @@ describe('consulta ao GERID antes de protocolar', () => {
             return [{ result: { status: 'sucesso', protocolo: `90000000${arg.cpf[0]}` } }];
           }
 
+          // `buscaConfirmada: true` em todas: aqui a lista RESPONDEU. É o que
+          // separa "esta pessoa não tem nada" de "a consulta não voltou" —
+          // sem essa marca, lista vazia não autoriza preenchimento nenhum.
+          //
           // JÁ TEM um BPC em análise: este não pode chegar ao formulário.
           if (arg === '11111111111') {
-            return [{ result: { linhas: [linha({
+            return [{ result: { buscaConfirmada: true, linhas: [linha({
               protocolo: '700000001', cpf: '11111111111', situacao: 'Em Análise',
             })] } }];
           }
           // BPC anterior CONCLUÍDO — processo encerrado. Não barra: negar o
           // pedido novo aqui seria o robô decidindo não atender.
           if (arg === '22222222222') {
-            return [{ result: { linhas: [linha({
+            return [{ result: { buscaConfirmada: true, linhas: [linha({
               protocolo: '700000002', cpf: '22222222222', situacao: 'Concluída',
             })] } }];
           }
           // Aposentadoria em análise. Outro serviço, outro pedido: não barra BPC.
           if (arg === '33333333333') {
-            return [{ result: { linhas: [linha({
+            return [{ result: { buscaConfirmada: true, linhas: [linha({
               protocolo: '700000003', cpf: '33333333333', situacao: 'Em Análise',
               servico: 'Aposentadoria por Idade',
             })] } }];
           }
           // Nunca pediu nada.
-          if (arg === '44444444444') return [{ result: { linhas: [] } }];
+          if (arg === '44444444444') return [{ result: { buscaConfirmada: true, linhas: [] } }];
 
           // Gerar comprovante: aqui o argumento é o PROTOCOLO.
           if (typeof arg === 'string') return [{ result: { pdfBase64: 'JVBERi0xLjQK', bytes: 9 } }];

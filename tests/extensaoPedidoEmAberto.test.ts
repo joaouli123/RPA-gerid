@@ -126,7 +126,7 @@ describe('extensao Gerid - pedido ja em aberto', () => {
             // buscas com segundos de diferença não podem discordar uma da
             // outra, e o gatilho aqui é o formulário ter rodado, não a contagem
             // de chamadas: a linha só passa a existir depois que o pedido entra.
-            if (!casosExecutados.includes(arg)) return [{ result: { linhas: [] } }];
+            if (!casosExecutados.includes(arg)) return [{ result: { buscaConfirmada: true, linhas: [] } }];
             return [{
               result: {
                 linhas: [{

@@ -74,7 +74,9 @@ describe('extensao Gerid - tela depois do protocolo', () => {
           }
 
           // Consulta da lista por CPF: ninguém tem pedido em aberto.
-          if (typeof arg === 'string' && /^\d{11}$/.test(arg)) return [{ result: { linhas: [] } }];
+          if (typeof arg === 'string' && /^\d{11}$/.test(arg)) {
+            return [{ result: { buscaConfirmada: true, linhas: [] } }];
+          }
 
           // Captura do comprovante (o argumento é o protocolo).
           if (typeof arg === 'string' && /^\d{10}$/.test(arg)) {

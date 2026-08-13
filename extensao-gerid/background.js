@@ -1426,22 +1426,34 @@ async function buscarLinhasNaLista(tabId, cpf, diasParaTras = JANELA_CURTA_DIAS)
         return linhas;
       }, 25000);
       const juntar = (...partes) => partes.filter(Boolean).join(' ');
-      if (filtradas) return { linhas: filtradas };
+      // `buscaConfirmada` separa duas coisas que davam na mesma lista vazia e
+      // NAO significam a mesma coisa: "o GERID respondeu e esta pessoa nao tem
+      // nada" e "o GERID nao respondeu". Quem le so as linhas ve zero nos dois
+      // casos e conclui "pode protocolar" — no segundo, isso e um chute com
+      // nome de resposta, e o preco de errar e um requerimento duplicado.
+      if (filtradas) return { linhas: filtradas, buscaConfirmada: true };
 
       // O filtro pode nao ter pegado. Em vez de desistir, aproveita o que esta
-      // na tela — a linha certa continua sendo a que tem este CPF.
+      // na tela — a linha certa continua sendo a que tem este CPF. Linha com o
+      // CPF pedido e prova de que a busca chegou ao servidor.
       const naTela = lerLinhas().filter((l) => l.cpf === cpfDigitos);
       if (naTela.length) {
-        return { linhas: naTela, aviso: 'O filtro de CPF nao pegou; li a linha direto da tabela.' };
+        return {
+          linhas: naTela,
+          buscaConfirmada: true,
+          aviso: 'O filtro de CPF nao pegou; li a linha direto da tabela.',
+        };
       }
       // Aqui, e so aqui, o periodo importa: "nao achei" sem dizer em que janela
       // procurei convida a ler como "esta pessoa nunca teve requerimento".
+      const mudou = antes !== assinatura();
       return {
         linhas: [],
+        buscaConfirmada: mudou,
         aviso: juntar(
-          antes === assinatura()
-            ? 'A lista nao mudou depois do Buscar; pode nao ter filtrado.'
-            : 'A lista do GERID nao trouxe nenhuma linha para este CPF.',
+          mudou
+            ? 'A lista do GERID nao trouxe nenhuma linha para este CPF.'
+            : 'A lista nao mudou depois do Buscar; pode nao ter filtrado.',
           periodoDaTela(),
         ),
       };
@@ -2085,6 +2097,7 @@ async function verificarSeJaProtocolado(caso) {
     );
     let linhas = busca.linhas || [];
     let aberto = emAberto(linhas);
+    let confirmada = busca.buscaConfirmada === true;
 
     // "Nada em aberto nos ultimos dois meses" NAO e "pode protocolar". Um BPC
     // aberto ha quatro meses cai fora da janela e continua impedindo o pedido
@@ -2102,6 +2115,20 @@ async function verificarSeJaProtocolado(caso) {
       if (larga.aviso) sendLog(`Consulta do GERID: ${larga.aviso}`);
       linhas = larga.linhas || [];
       aberto = emAberto(linhas);
+      confirmada = larga.buscaConfirmada === true;
+    }
+    // Lista vazia so libera o preenchimento quando a busca REALMENTE respondeu.
+    // Em 13/08/2026 o POST da consulta voltou 400 e a tela ficou como estava; o
+    // robo leu zero linha e anunciou "pode protocolar" — com a mesma confianca
+    // de quem conferiu. Naquele caso a pessoa nao tinha nada mesmo, e a sorte
+    // nao e um mecanismo. Sem confirmacao isto vira `{ erro }`, que ja tem
+    // caminho pronto: quem chama registra que nao deu para perguntar e segue
+    // assim mesmo. A fila nao para — o que deixa de existir e a frase falsa.
+    if (!aberto && !confirmada) {
+      return {
+        erro: 'a lista de tarefas nao confirmou a consulta (o Buscar nao alterou a tela), '
+          + 'entao nao posso afirmar que este CPF esta livre',
+      };
     }
     if (!aberto) {
       sendLog(
