@@ -16,7 +16,7 @@ import {
   resumirDiagnosticoGerid,
 } from './estadoGerid';
 
-const CONTENT_BUILD_ID = '1.6.0-20260812.29';
+const CONTENT_BUILD_ID = '1.6.0-20260813.30';
 const EVENTO_LOG_GERID = '__gerid_rpa_log__';
 const CANAL_CONTROLE_GERID = '__gerid_rpa_control__';
 const emContextoExtensao = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.id);
@@ -231,25 +231,32 @@ async function resolverBloqueiosConhecidosGerid() {
   return false;
 };
 
-async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> {
-  // Retomada: o wizard já está aberto no meio do caminho. Procurar aqui a tela
-  // de serviços (que não existe mais) só gastaria 15s antes de um erro falso —
-  // era isso que travava a segunda tentativa. O preenchimento sabe continuar.
-  const etapaAgora = detectarEstadoGerid().etapa;
-  if (['passo_2', 'passo_3', 'passo_4', 'passo_5', 'passo_6', 'passo_7', 'passo_8', 'passo_9']
-    .includes(etapaAgora)) {
-    logToBackground(`Requerimento já aberto em ${etapaAgora}. Retomando de onde parou.`);
-    return;
-  }
+/** Etapas em que o wizard já está aberto — não há o que abrir, só continuar. */
+const ETAPAS_WIZARD_ABERTO = [
+  'passo_2', 'passo_3', 'passo_4', 'passo_5', 'passo_6', 'passo_7', 'passo_8', 'passo_9',
+];
 
+async function abrirNovoRequerimentoSeNecessario(page: MockPage): Promise<void> {
   const seletorServico = page.locator(mapaGerid.passo1.campoBusca);
   const novoRequerimento = page.getByRole('button', { name: /^Novo Requerimento$/i });
 
   // O Gerid é uma SPA: a navegação termina antes de o conteúdo de
-  // /requerimentos ser renderizado. Aguarde uma das duas telas válidas em vez
+  // /requerimentos ser renderizado. Aguarde uma das telas válidas em vez
   // de transformar esse intervalo em erro fatal.
+  //
+  // A retomada (wizard já aberto no meio do caminho) é conferida DENTRO do
+  // laço, e não uma vez antes dele. Foi assim que o robô parou hoje: quando ele
+  // olhou, a SPA ainda não tinha pintado nada; o wizard apareceu em passo_2
+  // segundos depois, e como o laço só procurava a tela de serviços, gastou os
+  // 15s e culpou o operador por uma tela que estava na frente dele — o próprio
+  // erro saiu carimbado com "Estado passo_2".
   const limite = Date.now() + 15_000;
   while (Date.now() < limite) {
+    const etapaAgora = detectarEstadoGerid().etapa;
+    if (ETAPAS_WIZARD_ABERTO.includes(etapaAgora)) {
+      logToBackground(`Requerimento já aberto em ${etapaAgora}. Retomando de onde parou.`);
+      return;
+    }
     if (await seletorServico.isVisible().catch(() => false)) return;
     if (await novoRequerimento.isVisible().catch(() => false)) {
       logToBackground('Abrindo Novo Requerimento no Gerid...');

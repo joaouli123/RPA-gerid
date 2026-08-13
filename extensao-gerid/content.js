@@ -1145,6 +1145,17 @@
     const contar = loc.countAttached;
     return contar ? contar.call(loc) : loc.count();
   }
+  async function evidenciaDeRedeCaida() {
+    try {
+      await fetch(`${location.origin}/favicon.ico?rpa=${Date.now()}`, {
+        method: "HEAD",
+        cache: "no-store"
+      });
+      return "";
+    } catch {
+      return ` Tamb\xE9m n\xE3o consegui alcan\xE7ar ${location.host} agora \u2014 confira a VPN e limpe o cache do navegador antes de suspeitar do preenchimento.`;
+    }
+  }
   async function avancar(page, etapaAtual) {
     const antes = detectarEstadoGerid();
     if (antes.etapa !== etapaAtual) {
@@ -1172,9 +1183,10 @@
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     const contexto = resumirDiagnosticoGerid(capturarDiagnosticoGerid());
+    const rede = await evidenciaDeRedeCaida();
     throw new ErroGerid(
       FalhaGerid.ERRO_PREENCHIMENTO,
-      `O GERID n\xE3o saiu de ${etapaAtual} ap\xF3s validar os dados. ${contexto}`
+      `O GERID n\xE3o saiu de ${etapaAtual} ap\xF3s validar os dados. ${contexto}${rede}`
     );
   }
   async function esperarTela(page, marca) {
@@ -1738,6 +1750,7 @@
     }
     const falhas = [];
     const vistos = /* @__PURE__ */ new Set();
+    const valorNaTela = (id) => document.getElementById(id)?.value.trim() ?? null;
     for (const linha of linhas) {
       const ehRequerente = linha.ehRequerente;
       if (linha.cpf) vistos.add(linha.cpf);
@@ -1766,6 +1779,9 @@
           `CPF ${linha.cpf} veio do Cad\xDAnico mas n\xE3o est\xE1 na planilha \u2014 confira o parentesco.`
         );
       }
+      if (!parentescoPlanilha.trim() && valorNaTela(`selectParentesco${linha.indice}`)) {
+        continue;
+      }
       const resolvido = mapearParentesco(parentescoPlanilha);
       const okP = await escolherNoCombobox(
         page,
@@ -1788,7 +1804,6 @@
         `O GERID mudou a tabela do grupo familiar durante o preenchimento (${linhas.length} -> ${linhasFinais.length} linhas). Confira antes de concluir.`
       );
     }
-    const valorNaTela = (id) => document.getElementById(id)?.value.trim() ?? null;
     for (const linha of linhasFinais) {
       const integrante = (linha.cpf ? porCpf.get(linha.cpf) : void 0) ?? (linha.ehRequerente ? titularPlanilha : void 0);
       if (valorNaTela(`selectEstadoCivil${linha.indice}`) === "") {
@@ -1798,9 +1813,14 @@
         }
       }
       if (valorNaTela(`selectParentesco${linha.indice}`) === "") {
-        const alvo = mapearParentesco(integrante?.parentesco ?? "").grupo ?? "";
+        const parentescoPlanilha = integrante?.parentesco ?? "";
+        const alvo = mapearParentesco(parentescoPlanilha).grupo ?? "";
         if (!await escolherNoCombobox(page, mapaGerid.passo4.parentesco(linha.indice), alvo)) {
           falhas.push(`selectParentesco${linha.indice} ("${alvo}")`);
+        } else if (!parentescoPlanilha.trim()) {
+          avisos.push(
+            `CPF ${linha.cpf || "(n\xE3o lido)"}: parentesco n\xE3o informado na planilha e o GERID trouxe o campo vazio; marquei "Outros". Confira antes de concluir.`
+          );
         }
       }
     }
@@ -2544,7 +2564,7 @@
       init_detectarProtocolo();
       init_modaisDoEnvio();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.6.0-20260812.29";
+      var CONTENT_BUILD_ID = "1.6.0-20260813.30";
       var EVENTO_LOG_GERID = "__gerid_rpa_log__";
       var CANAL_CONTROLE_GERID = "__gerid_rpa_control__";
       var emContextoExtensao = typeof chrome !== "undefined" && Boolean(chrome.runtime?.id);
@@ -2701,16 +2721,26 @@
         }
         return false;
       };
+      var ETAPAS_WIZARD_ABERTO = [
+        "passo_2",
+        "passo_3",
+        "passo_4",
+        "passo_5",
+        "passo_6",
+        "passo_7",
+        "passo_8",
+        "passo_9"
+      ];
       async function abrirNovoRequerimentoSeNecessario(page) {
-        const etapaAgora = detectarEstadoGerid().etapa;
-        if (["passo_2", "passo_3", "passo_4", "passo_5", "passo_6", "passo_7", "passo_8", "passo_9"].includes(etapaAgora)) {
-          logToBackground(`Requerimento j\xE1 aberto em ${etapaAgora}. Retomando de onde parou.`);
-          return;
-        }
         const seletorServico = page.locator(mapaGerid.passo1.campoBusca);
         const novoRequerimento = page.getByRole("button", { name: /^Novo Requerimento$/i });
         const limite = Date.now() + 15e3;
         while (Date.now() < limite) {
+          const etapaAgora = detectarEstadoGerid().etapa;
+          if (ETAPAS_WIZARD_ABERTO.includes(etapaAgora)) {
+            logToBackground(`Requerimento j\xE1 aberto em ${etapaAgora}. Retomando de onde parou.`);
+            return;
+          }
           if (await seletorServico.isVisible().catch(() => false)) return;
           if (await novoRequerimento.isVisible().catch(() => false)) {
             logToBackground("Abrindo Novo Requerimento no Gerid...");

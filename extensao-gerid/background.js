@@ -851,7 +851,7 @@ async function obterEstadoNaAba(tabId) {
  * cada chamada — o guard para de guardar e vira so trabalho repetido. O teste
  * `extensaoBuildContent` quebra se os dois sairem de sincronia.
  */
-const BUILD_CONTENT_ESPERADO = '1.6.0-20260812.29';
+const BUILD_CONTENT_ESPERADO = '1.6.0-20260813.30';
 
 async function garantirContentScript(tabId) {
   const verificacaoIsolada = await chrome.scripting.executeScript({
