@@ -23,16 +23,28 @@ const INICIADO_EM = new Date().toISOString();
  * instante em que o GERID pedia o 2FA. Pior momento possível para descobrir que
  * a conexão tinha caído de madrugada.
  *
- * Import dinâmico e erro engolido de propósito: se o Baileys falhar em carregar,
+ * Import dinâmico e erro contido de propósito: se o Baileys falhar em carregar,
  * o health check ainda precisa responder "ok", senão o Coolify derruba o
  * contêiner inteiro por causa do WhatsApp.
+ *
+ * Contido não quer dizer escondido. A falha era engolida sem uma linha sequer, e
+ * o resultado é que "módulo não carrega" e "ninguém pareou ainda" produziam
+ * exatamente o mesmo log: nenhum. Da parte de fora as duas viram a mesma frase
+ * do operador — "não chegou mensagem no meu WhatsApp" — e não havia como separar
+ * uma da outra sem entrar no contêiner.
  */
+let jaContou = false;
+
 async function religarWhatsapp(): Promise<void> {
   try {
     const { manterConexaoViva } = await import('@/lib/server/whatsapp');
     await manterConexaoViva();
-  } catch {
-    // Sem WhatsApp o robô ainda protocola; só o 2FA fica manual.
+  } catch (erro) {
+    // Uma vez por processo: esta rota é chamada de 5 em 5 segundos, para sempre.
+    if (jaContou) return;
+    jaContou = true;
+    const causa = erro instanceof Error ? erro.message : String(erro);
+    console.log(`[WhatsApp] A ponte nem chegou a carregar: ${causa}`);
   }
 }
 

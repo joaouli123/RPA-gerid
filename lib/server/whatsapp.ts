@@ -167,12 +167,14 @@ interface Ponte {
    */
   jidOperador: string | null;
   /**
-   * Todos os "users" que contam como sendo o operador: o do `.env`, o que o
-   * WhatsApp devolveu, e o `@lid` dele quando aparecer. Existe porque a mesma
-   * pessoa chega com endereços diferentes conforme o caminho da mensagem, e
-   * quem responde os 6 dígitos precisa ser reconhecido em todos eles.
+   * Todos os "users" que contam como sendo o operador: as duas formas do número
+   * pareado (com e sem o nono dígito) e o `@lid` dele quando aparecer. Existe
+   * porque a mesma pessoa chega com endereços diferentes conforme o caminho da
+   * mensagem, e quem responde os 6 dígitos precisa ser reconhecido em todos.
    */
   usuariosOperador: Set<string>;
+  /** Último motivo de "não vou subir" já dito no log. Evita repetir a cada batida. */
+  motivoMudo: string | null;
 }
 
 /**
@@ -221,6 +223,7 @@ raiz[chave] ??= {
   geracao: 0,
   jidOperador: null,
   usuariosOperador: new Set(),
+  motivoMudo: null,
 };
 const ponte = raiz[chave]!;
 // Uma ponte que sobreviveu ao hot reload pode ter sido criada por uma versão
@@ -233,6 +236,27 @@ ponte.desvinculado ??= false;
 ponte.geracao ??= 0;
 ponte.jidOperador ??= null;
 ponte.usuariosOperador ??= new Set();
+ponte.motivoMudo ??= null;
+
+/**
+ * Diz no log por que a ponte NÃO vai subir — uma vez por motivo.
+ *
+ * Existe porque o contrário custou uma investigação inteira: com a ponte fora do
+ * ar, o log ficava IDÊNTICO ao de um sistema saudável, ou seja, sem nenhuma
+ * linha. `manterConexaoViva()` desistia em silêncio e o health check respondia
+ * "ok" por cima. "Não chegou mensagem no meu WhatsApp" virava adivinhação entre
+ * duas causas que ninguém consegue separar de fora.
+ *
+ * Uma vez por motivo, e não a cada chamada, porque o health check bate de 5 em 5
+ * segundos: repetir a mesma linha 720 vezes por hora é a maneira mais rápida de
+ * ensinar alguém a não ler o log. A linha aparece na transição, que é quando ela
+ * informa alguma coisa.
+ */
+function silencioExplicado(motivo: string, texto: string): void {
+  if (ponte.motivoMudo === motivo) return;
+  ponte.motivoMudo = motivo;
+  console.log(`[WhatsApp] ${texto}`);
+}
 
 /**
  * A pasta da sessão guarda uma credencial que REALMENTE pareou?
@@ -295,8 +319,26 @@ function agendarReconexao(): void {
  * esperada — essa demora, e a resposta não pode esperar por ela.
  */
 export async function manterConexaoViva(): Promise<void> {
-  if (ponte.conectado || ponte.conectando || ponte.religarEm || ponte.desvinculado) return;
-  if (!(await sessaoJaPareada())) return;
+  if (ponte.conectado || ponte.conectando || ponte.religarEm) return;
+
+  if (ponte.desvinculado) {
+    silencioExplicado(
+      'desvinculado',
+      'O aparelho desvinculou o robô no WhatsApp. Não vou reconectar sozinho — '
+      + 'leia um QR novo em Configurações.',
+    );
+    return;
+  }
+
+  if (!(await sessaoJaPareada())) {
+    silencioExplicado(
+      'sem-sessao',
+      `Nenhuma sessão pareada em ${pastaSessao()}. Enquanto isso, o 2FA do GERID `
+      + 'não tem para onde avisar: leia o QR em Configurações.',
+    );
+    return;
+  }
+
   ponte.registrada = true;
   void garantirConexao().catch(() => agendarReconexao());
 }
@@ -491,6 +533,10 @@ async function conectar(): Promise<void> {
       ponte.tentativas = 0;
       ponte.registrada = true;
       ponte.desvinculado = false;
+      // Subiu: o próximo motivo de silêncio volta a ser digno de log, mesmo que
+      // seja o mesmo de antes. Sem zerar aqui, uma queda depois de uma conexão
+      // boa ficaria muda por já ter sido explicada horas atrás.
+      ponte.motivoMudo = null;
       console.log('[WhatsApp] Conectado.');
     }
     if (atualizacao.connection === 'close') {
