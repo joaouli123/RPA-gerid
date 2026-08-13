@@ -31,6 +31,28 @@ Por isso o **cadastro pelo sistema funciona**: ele só altera a planilha que já
 2. ⚠️ **O Módulo 3 vai esbarrar nisto.** Salvar o comprovante do protocolo na
    pasta do cliente é *criar um arquivo novo* — vai falhar do mesmo jeito.
 
+## DECIDIDO em 2026-08-13: o comprovante não vai para o Drive
+
+O escritório optou por **não** migrar de credencial. O comprovante tem dois
+destinos, e os dois funcionam:
+
+1. **Painel** — anexado ao caso, com botão de download na tela da execução.
+2. **WhatsApp** — o PDF chega no celular do operador, com o nome do requerente
+   e o número do protocolo. Se a entrega falhar, vira dívida em disco e a ronda
+   cobra sozinha até entregar (`lib/server/whatsappPendentes.ts`).
+
+Consequências no código, para não reabrirem isto por engano:
+
+- `salvarComprovante` **continua tentando** o Drive. É de propósito: no dia em
+  que a credencial mudar, volta a funcionar sozinho.
+- A recusa por cota vem marcada com `limitacaoConhecida`, e por isso **não**
+  entra no Diagnóstico — senão seriam ~5 linhas idênticas por dia enterrando as
+  variações de erro que a tela existe para revelar.
+- O aviso do comprovante deixou de gritar "não entrou no Drive": isso agora é o
+  estado normal, e alarme diário deixa de ser lido.
+
+Reabrir só faz sentido junto com uma das saídas abaixo.
+
 ### Saídas possíveis para o Módulo 3
 
 - **Shared Drive (recomendado):** mover a pasta "Protocolo INSS" para um Drive

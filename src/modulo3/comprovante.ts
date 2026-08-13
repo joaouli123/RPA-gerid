@@ -46,6 +46,10 @@ export interface OpcoesComprovante {
 /**
  * Tenta salvar no Drive; se a conta não tiver cota, cai para o disco local e
  * devolve o aviso. Nunca silencia a falha.
+ *
+ * A tentativa continua sendo feita mesmo depois de o escritório aceitar viver
+ * sem o Drive: o dia em que a credencial mudar (OAuth ou Shared Drive), isto
+ * volta a funcionar sozinho, sem ninguém lembrar de reativar nada.
  */
 export async function salvarComprovante(
   drive: DriveGateway,
@@ -74,8 +78,9 @@ export async function salvarComprovante(
         referencia,
         limitacaoConhecida: semCota,
         aviso: semCota
-          ? 'A service account não tem cota de armazenamento e não pode criar arquivos no Drive. ' +
-            'O comprovante ficou salvo localmente — ver docs/serviceaccount-cota.md.'
+          ? 'O Drive do cliente não recebe o comprovante: a credencial atual não pode criar ' +
+            'arquivo lá. Por decisão do escritório, o destino é o painel e o WhatsApp — ' +
+            'ver docs/serviceaccount-cota.md.'
           : `Não foi possível salvar no Drive (${msg}). Comprovante salvo localmente.`,
       };
     }

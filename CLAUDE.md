@@ -268,9 +268,19 @@ protocolar dado errado em nome de terceiros. Siga
 
 ## Módulo 3 — comprovante (`src/modulo3/comprovante.ts`)
 
-Tenta salvar na pasta do cliente no Drive; se a credencial não puder criar
-arquivo, salva em disco local e **devolve um aviso explícito** com a causa.
-Ver `docs/serviceaccount-cota.md`.
+**O comprovante tem dois destinos: o painel e o WhatsApp do operador.** O Drive
+ficou de fora por decisão do escritório em 2026-08-13 ("deixa só no sistema
+mesmo e no WhatsApp, já é suficiente") — a service account não pode criar
+arquivo e o cliente preferiu não migrar de credencial.
+
+O código **continua tentando** o Drive de propósito: no dia em que a credencial
+mudar (OAuth ou Shared Drive), volta a funcionar sem ninguém reativar nada. A
+recusa por cota vem marcada com `limitacaoConhecida` e não vira ocorrência no
+Diagnóstico. Ver `docs/serviceaccount-cota.md`.
+
+⚠️ Não trate mais "não entrou no Drive" como defeito a corrigir — é o estado
+acordado. O que **não** pode falhar em silêncio é a entrega no WhatsApp, e é
+por isso que existe a fila de `lib/server/whatsappPendentes.ts`.
 
 ## Status
 
@@ -293,4 +303,5 @@ Ver `docs/serviceaccount-cota.md`.
 
 1. **Mapeamento do Gerid** (`mapaGerid.ts`) — sem isso o robô não protocola, por decisão de projeto.
 2. **`RPA_GOOGLE_CREDENTIALS` no Railway** — sem ela o servidor roda com dataset de exemplo.
-3. **Cota da service account** — impede salvar o comprovante no Drive (cai para local).
+3. ~~Cota da service account~~ — **deixou de ser bloqueio em 2026-08-13**: o comprovante vai
+   para o painel e para o WhatsApp, e o Drive saiu do caminho por decisão do escritório.

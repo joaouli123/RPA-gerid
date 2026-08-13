@@ -106,9 +106,17 @@ export async function POST(req: Request) {
         const nomeArquivo = nomeRequerente
           ? `${nomeRequerente} - comprovante ${String(protocolo || '').trim()}.pdf`
           : `comprovante ${String(protocolo || '').trim()}.pdf`;
+        // O Drive deixou de ser destino do comprovante (decisão do escritório
+        // em 13/08/2026): ele vive no painel e aqui no WhatsApp. Por isso a
+        // ausência ESPERADA não sai mais em caixa alta — alarme que dispara em
+        // todo protocolo para de ser lido, e no dia em que o Drive falhar por
+        // outro motivo ninguém veria diferença nenhuma. O grito continua
+        // reservado para a falha que ninguém previu.
         const observacao = confirmacao.drive
           ? 'Salvo na pasta do cliente no Drive.'
-          : 'ATENÇÃO: não entrou no Drive do cliente. Guarde este arquivo.';
+          : driveLimitacaoConhecida
+            ? 'Este arquivo e o painel são as cópias do comprovante.'
+            : 'ATENÇÃO: não entrou no Drive do cliente. Guarde este arquivo.';
         try {
           const enviado = await enviarComprovanteAoOperador({
             nome: nomeRequerente || `CPF ${cpf}`,
