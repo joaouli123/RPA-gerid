@@ -570,6 +570,34 @@ async function contarAnexados(loc: Locator): Promise<number> {
   return contar ? contar.call(loc) : loc.count();
 }
 
+/**
+ * O GERID é uma SPA: o Avançar de cada passo dispara uma chamada de API antes
+ * de trocar de tela. Quando essa chamada morre na rede (ERR_NAME_NOT_RESOLVED
+ * no `atendimento.inss.gov.br`, o que acontece quando a VPN oscila ou o cache
+ * de DNS do Chrome envelhece), a tela simplesmente não muda — e o sintoma é
+ * idêntico ao de um campo mal preenchido.
+ *
+ * Aqui não se conclui nada: pergunta-se à rede. Uma resposta qualquer, até
+ * 404, prova que o nome resolveu e que o problema é o preenchimento. Só a
+ * rejeição vira evidência, e mesmo assim ela é ANEXADA ao erro original em vez
+ * de substituí-lo — o CSP da página também pode recusar esta sondagem, e trocar
+ * um diagnóstico certo por um chute mandaria o operador mexer na VPN à toa.
+ */
+async function evidenciaDeRedeCaida(): Promise<string> {
+  try {
+    await fetch(`${location.origin}/favicon.ico?rpa=${Date.now()}`, {
+      method: 'HEAD',
+      cache: 'no-store',
+    });
+    return '';
+  } catch {
+    return (
+      ` Também não consegui alcançar ${location.host} agora — confira a VPN e limpe o cache do`
+      + ' navegador antes de suspeitar do preenchimento.'
+    );
+  }
+}
+
 /** Avança usando o id estável — nunca por texto, que existe várias vezes. */
 async function avancar(page: Page, etapaAtual: EtapaGerid): Promise<void> {
   const antes = detectarEstadoGerid();
@@ -599,9 +627,10 @@ async function avancar(page: Page, etapaAtual: EtapaGerid): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   const contexto = resumirDiagnosticoGerid(capturarDiagnosticoGerid());
+  const rede = await evidenciaDeRedeCaida();
   throw new ErroGerid(
     FalhaGerid.ERRO_PREENCHIMENTO,
-    `O GERID não saiu de ${etapaAtual} após validar os dados. ${contexto}`,
+    `O GERID não saiu de ${etapaAtual} após validar os dados. ${contexto}${rede}`,
   );
 }
 

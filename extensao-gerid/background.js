@@ -370,10 +370,10 @@ async function pedirAutorizacaoNoCelular(tabId, apiUrl, apiToken) {
         // limpar o cache do proprio Chrome. Chutar uma delas custa a ele ficar
         // parado esperando o que nao vem.
         if (document.querySelector('#main-frame-error')) {
-          const codigo = String(document.querySelector('.error-code')?.textContent || '')
+          const erroDeRede = String(document.querySelector('.error-code')?.textContent || '')
             .trim()
             .toUpperCase();
-          return codigo ? `site_fora:${codigo}` : 'site_fora';
+          return erroDeRede ? `site_fora:${erroDeRede}` : 'site_fora';
         }
         const botao = document.querySelector('#botaoCertificadoDigital');
         if (!botao || botao.disabled || !botao.offsetParent) return 'sem_botao';
@@ -387,7 +387,11 @@ async function pedirAutorizacaoNoCelular(tabId, apiUrl, apiToken) {
         return 'disparado';
       },
     });
-    resultado = saida?.[0]?.result || '';
+    // String() nao e decorativo: `result` vem de fora e nem sempre e texto.
+    // Um booleano aqui fazia o `startsWith` abaixo estourar, e a excecao levava
+    // junto o agendamento da retomada — a fila ficava parada esperando uma
+    // autenticacao que ninguem ia reagendar.
+    resultado = String(saida?.[0]?.result || '');
   } catch {
     return;
   }
@@ -398,19 +402,23 @@ async function pedirAutorizacaoNoCelular(tabId, apiUrl, apiToken) {
   } else if (resultado === 'ja_aguardando') {
     sendLog('Ja existe uma solicitacao do SafeID no seu celular. Autorize por la.');
   } else if (resultado.startsWith('site_fora')) {
-    const codigo = resultado.split(':')[1] || '';
+    // Nome longo de proposito: uma variavel chamada so `codigo` e, neste
+    // arquivo, o segredo de 6 digitos do MFA — que nao pode entrar em log
+    // nenhum, e ha teste varrendo o fonte para garantir isso. Este aqui e
+    // outra coisa: o codigo de erro de rede do Chrome.
+    const codigoDoErro = resultado.split(':')[1] || '';
     // ERR_NAME_NOT_RESOLVED e o DNS do proprio computador, nao o Dataprev. E o
     // que acontece na autenticacao por certificado, que sai da porta 443 e vai
     // para :8443: o Chrome guarda o endereco que falhou e insiste no erro. Da
     // fora, o sintoma e a tela piscar e voltar para o login — o CAS nao tem
     // para onde mandar. Limpar o cache resolve; esperar o site voltar, nao.
-    const cacheDeDns = codigo === 'ERR_NAME_NOT_RESOLVED';
+    const cacheDeDns = codigoDoErro === 'ERR_NAME_NOT_RESOLVED';
     sendLog(
       cacheDeDns
         ? 'O Chrome nao resolveu o endereco do GERID (ERR_NAME_NOT_RESOLVED) — costuma ser '
           + 'cache de DNS depois que a VPN oscila, nao o site fora do ar. Se a tela piscar e '
           + 'voltar para o login, limpe o cache do navegador e tente de novo.'
-        : `O GERID (Dataprev) nao respondeu${codigo ? ` (${codigo})` : ''} — o site esta fora do ar `
+        : `O GERID (Dataprev) nao respondeu${codigoDoErro ? ` (${codigoDoErro})` : ''} — o site esta fora do ar `
           + 'ou instavel. Nao e login nem sessao: nao adianta autenticar. A fila tenta de novo sozinha.',
     );
   }
