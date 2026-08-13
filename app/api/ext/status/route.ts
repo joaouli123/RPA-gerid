@@ -5,7 +5,9 @@ import {
   atualizarStatusCaso,
   finalizarExecucao,
   getExecucaoAtual,
+  nomeDoCasoNaExecucao,
 } from '@/lib/server/store';
+import { enviarComprovanteAoOperador } from '@/lib/server/whatsapp';
 import { revalidatePath } from 'next/cache';
 import { autorizarExtensao } from '@/lib/server/extensaoAuth';
 
@@ -45,7 +47,7 @@ export async function POST(req: Request) {
     // Confirmacao que volta para a extensao. Nao decide nada no servidor: serve
     // para o operador ver no log se o comprovante chegou aos DOIS lugares, em
     // vez de supor que chegou.
-    const confirmacao = { painel: false, drive: false, aviso: '' };
+    const confirmacao = { painel: false, drive: false, whatsapp: false, aviso: '' };
     if (status === 'sucesso' && pdfBase64) {
       let buffer: Buffer | null = null;
       let origem: { destino: 'drive' | 'local'; referencia: string } | null = null;
@@ -84,6 +86,37 @@ export async function POST(req: Request) {
         } catch (e) {
           console.error('Erro ao anexar o comprovante ao painel:', e);
           avisoComprovante += ` Cópia do painel falhou: ${
+            e instanceof Error ? e.message : 'erro desconhecido'
+          }.`;
+        }
+
+        // Terceira entrega: o PDF no celular do escritório, com o nome de quem
+        // é. Vale mais justamente quando o Drive falhou — ali o comprovante
+        // fica num disco do servidor que ninguém abre, e o operador só descobre
+        // lendo o aviso no painel.
+        //
+        // É entrega, não prova: falhar aqui não muda o protocolo nem a resposta
+        // da rota. Vira uma linha no aviso e a fila segue.
+        try {
+          const nomeRequerente = await nomeDoCasoNaExecucao(idExecucao, cpf);
+          const enviado = await enviarComprovanteAoOperador({
+            nome: nomeRequerente || `CPF ${cpf}`,
+            protocolo: String(protocolo || '').trim(),
+            pdf: buffer,
+            nomeArquivo: nomeRequerente
+              ? `${nomeRequerente} - comprovante ${String(protocolo || '').trim()}.pdf`
+              : `comprovante ${String(protocolo || '').trim()}.pdf`,
+            observacao: confirmacao.drive
+              ? 'Salvo na pasta do cliente no Drive.'
+              : 'ATENÇÃO: não entrou no Drive do cliente. Guarde este arquivo.',
+          });
+          confirmacao.whatsapp = enviado.ok;
+          avisoComprovante += enviado.ok
+            ? ' Enviado no WhatsApp.'
+            : ` WhatsApp não recebeu: ${enviado.erro}.`;
+        } catch (e) {
+          console.error('Erro ao mandar o comprovante no WhatsApp:', e);
+          avisoComprovante += ` WhatsApp não recebeu: ${
             e instanceof Error ? e.message : 'erro desconhecido'
           }.`;
         }

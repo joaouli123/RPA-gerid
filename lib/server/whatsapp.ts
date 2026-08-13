@@ -348,14 +348,21 @@ export async function manterConexaoViva(): Promise<void> {
  * do operador. Guarda só as últimas: o robô manda pouca coisa, e um Set que
  * cresce para sempre num processo que fica meses no ar é vazamento.
  */
-async function enviarTexto(socket: WASocket, texto: string): Promise<void> {
-  const enviada = await socket.sendMessage(jidDoOperador(socket), { text: texto });
+async function enviar(
+  socket: WASocket,
+  conteudo: Parameters<WASocket['sendMessage']>[1],
+): Promise<void> {
+  const enviada = await socket.sendMessage(jidDoOperador(socket), conteudo);
   const id = enviada?.key?.id;
   if (!id) return;
   ponte.enviadas.add(id);
   if (ponte.enviadas.size > 50) {
     ponte.enviadas.delete(ponte.enviadas.values().next().value!);
   }
+}
+
+async function enviarTexto(socket: WASocket, texto: string): Promise<void> {
+  await enviar(socket, { text: texto });
 }
 
 /** Texto da mensagem, seja ela simples ou com citação. */
@@ -626,6 +633,55 @@ export async function avisarOperador(texto: string): Promise<{ ok: boolean; erro
   } catch (erro) {
     ponte.ultimoErro = erro instanceof Error ? erro.message : String(erro);
     console.log(`[WhatsApp] Não consegui avisar o operador: ${ponte.ultimoErro}`);
+    return { ok: false, erro: ponte.ultimoErro };
+  }
+}
+
+/**
+ * Manda o comprovante em PDF para o próprio número pareado.
+ *
+ * O destino é o mesmo de todo o resto (a conversa do operador com ele mesmo,
+ * ver `jidDoOperador`) e isso não é limitação a contornar: mandar para terceiro
+ * a partir de uma sessão automatizada é o caminho curto para o número ser
+ * bloqueado, e o número aqui é o do escritório.
+ *
+ * O nome do requerente vai no arquivo E na legenda. Um PDF chamado
+ * "comprovante 1941397434.pdf" chegando sozinho no celular não diz de quem é —
+ * e o operador teria que abrir cada um para descobrir.
+ *
+ * Falhar aqui não pode derrubar nada: o protocolo já está feito e registrado, e
+ * o WhatsApp é entrega, não prova. Por isso devolve o motivo em vez de estourar.
+ */
+export async function enviarComprovanteAoOperador(opcoes: {
+  nome: string;
+  protocolo: string;
+  pdf: Uint8Array;
+  nomeArquivo: string;
+  /** O que dizer sobre o Drive — normalmente por que ele NÃO chegou lá. */
+  observacao?: string;
+}): Promise<{ ok: boolean; erro?: string }> {
+  try {
+    await garantirConexao();
+    if (!ponte.socket) return { ok: false, erro: 'A ponte do WhatsApp não está conectada.' };
+
+    const linhas = [
+      `✅ ${opcoes.nome}`,
+      `Protocolo ${opcoes.protocolo}`,
+      opcoes.observacao?.trim(),
+    ].filter(Boolean);
+
+    await enviar(ponte.socket, {
+      document: Buffer.from(opcoes.pdf),
+      mimetype: 'application/pdf',
+      fileName: opcoes.nomeArquivo.endsWith('.pdf')
+        ? opcoes.nomeArquivo
+        : `${opcoes.nomeArquivo}.pdf`,
+      caption: linhas.join('\n'),
+    });
+    return { ok: true };
+  } catch (erro) {
+    ponte.ultimoErro = erro instanceof Error ? erro.message : String(erro);
+    console.log(`[WhatsApp] Não consegui enviar o comprovante: ${ponte.ultimoErro}`);
     return { ok: false, erro: ponte.ultimoErro };
   }
 }

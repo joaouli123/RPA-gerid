@@ -945,13 +945,19 @@ async function reiniciarWizardNaAba(tabId) {
  * ⚠️ Nao serve para caso em REVISAO. Ali a tela preenchida e justamente o que o
  * operador vai conferir, e limpar seria apagar o trabalho na frente dele.
  */
-async function limparAbaParaProximoCaso(tabId) {
+async function limparAbaParaProximoCaso(tabId, { requerimentoConcluido = false } = {}) {
   const etapa = await etapaDaAba(tabId);
   if (!etapa || ['lista_requerimentos', 'passo_1'].includes(etapa)) return true;
 
   // Passo 10 e comprovante sao telas de requerimento JA ENVIADO ou prestes a
-  // ser. Nao se limpa isso por conta propria: o proximo caso espera.
-  if (['passo_10', 'comprovante'].includes(etapa)) return false;
+  // ser. Sem o numero na mao nao se limpa isso por conta propria: pode haver
+  // pedido em voo, e o proximo caso espera.
+  //
+  // COM o numero registrado e o comprovante ja capturado, nao ha mais nada em
+  // voo — a tela virou recibo do que terminou. Ficar parado nela foi exatamente
+  // o que aconteceu depois do primeiro protocolo real: o robo concluiu, salvou
+  // tudo, e estacionou no detalhe da tarefa em vez de chamar o proximo cliente.
+  if (!requerimentoConcluido && ['passo_10', 'comprovante'].includes(etapa)) return false;
 
   if (await reiniciarWizardNaAba(tabId).catch(() => false)) return true;
   try {
@@ -977,8 +983,8 @@ async function limparAbaParaProximoCaso(tabId) {
  * chegavam a ser tentados. Aba nova nasce limpa e nao herda o que travou a
  * antiga; a fila so para se ate isso falhar.
  */
-async function abaProntaParaProximoCaso(aba) {
-  if (await limparAbaParaProximoCaso(aba.id).catch(() => false)) return aba;
+async function abaProntaParaProximoCaso(aba, opcoes) {
+  if (await limparAbaParaProximoCaso(aba.id, opcoes).catch(() => false)) return aba;
 
   const etapa = await etapaDaAba(aba.id).catch(() => null);
   try {
@@ -2034,7 +2040,10 @@ async function enviarResultado(apiUrl, apiToken, idExecucao, caso, resultado) {
     if (!conferido) {
       sendLog('Enviei o comprovante, mas o painel nao confirmou onde salvou. Confira na tela de Execucao.');
     } else if (conferido.painel && conferido.drive) {
-      sendLog(`Comprovante de ${caso.nome} confirmado no painel E no Drive do cliente.`);
+      sendLog(
+        `Comprovante de ${caso.nome} confirmado no painel E no Drive do cliente.` +
+        (conferido.whatsapp ? ' Tambem foi para o WhatsApp.' : ''),
+      );
     } else if (conferido.painel || conferido.drive) {
       // Meio caminho nao e "deu certo". O pedido e o arquivo nos DOIS lugares, e
       // o destino que faltou e sempre o Drive na pratica (a service account nao
@@ -2044,6 +2053,7 @@ async function enviarResultado(apiUrl, apiToken, idExecucao, caso, resultado) {
       const faltou = conferido.painel ? 'Drive do cliente' : 'painel';
       sendLog(
         `ATENCAO: o comprovante de ${caso.nome} entrou no ${entrou} mas NAO no ${faltou}. ` +
+        (conferido.whatsapp ? 'Mandei no WhatsApp para nao ficar so no servidor. ' : '') +
         `${conferido.aviso || ''}`.trim(),
       );
     } else {
@@ -2583,6 +2593,19 @@ async function processQueue(
           continue;
         }
         sendLog(`${caso.nome}: PROTOCOLADO — ${resultado.protocolo}`);
+
+        // O protocolo ja foi enviado ao painel logo acima e o comprovante ja foi
+        // buscado. O que sobrou na tela e o detalhe da tarefa concluida — com
+        // "Gerar Comprovante", "Cancelar Requerimento" e "Voltar" — e dali o
+        // proximo cliente nao comeca. O robo parava exatamente ai, de pedido
+        // feito e tudo salvo, parecendo travado.
+        //
+        // Falhar aqui NAO derruba a fila: o caso deu certo e esta registrado. O
+        // proximo tenta a partir de onde a tela estiver, e se tambem nao andar e
+        // ele quem reporta.
+        const seguinte = await abaProntaParaProximoCaso(aba, { requerimentoConcluido: true });
+        if (seguinte) aba = seguinte;
+        else sendLog('Nao consegui voltar a tela inicial depois do protocolo; sigo mesmo assim.');
         continue;
       }
 

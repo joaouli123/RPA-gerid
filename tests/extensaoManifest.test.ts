@@ -9,7 +9,7 @@ describe('manifesto publicado da extensao', () => {
       'utf8',
     ));
 
-    expect(manifesto.version).toBe('1.7.3');
+    expect(manifesto.version).toBe('1.7.4');
     expect(manifesto.permissions).not.toContain('debugger');
     expect(manifesto.permissions).not.toContain('activeTab');
     // `downloads` É pedida, de propósito. O GERID entrega o comprovante de duas

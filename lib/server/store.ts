@@ -723,6 +723,20 @@ export async function anexarComprovanteAoCaso(
 }
 
 /**
+ * Nome do requerente deste caso, como o servidor o conhece.
+ *
+ * Vem daqui e não da extensão de propósito: é o nome que o painel mostra e que
+ * o escritório reconhece. Se vier vazio, quem chama decide o que fazer — não
+ * invente "cliente" nem repita o CPF no lugar do nome.
+ */
+export async function nomeDoCasoNaExecucao(idExecucao: string, cpf: string): Promise<string> {
+  const estado = await carregarEstado();
+  const atual = estado.execucaoAtual;
+  if (!atual || atual.id !== idExecucao) return '';
+  return atual.casos.find((c) => c.cpf === cpf)?.nome?.trim() || '';
+}
+
+/**
  * Lê a cópia do painel. Só devolve o arquivo de um caso que REALMENTE tem
  * comprovante registrado — a execução atual ou o histórico —, para que a rota
  * não vire um leitor de arquivo arbitrário a partir da querystring.
