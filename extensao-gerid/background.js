@@ -407,21 +407,47 @@ async function pedirAutorizacaoNoCelular(tabId, apiUrl, apiToken) {
     // nenhum, e ha teste varrendo o fonte para garantir isso. Este aqui e
     // outra coisa: o codigo de erro de rede do Chrome.
     const codigoDoErro = resultado.split(':')[1] || '';
-    // ERR_NAME_NOT_RESOLVED e o DNS do proprio computador, nao o Dataprev. E o
-    // que acontece na autenticacao por certificado, que sai da porta 443 e vai
-    // para :8443: o Chrome guarda o endereco que falhou e insiste no erro. Da
-    // fora, o sintoma e a tela piscar e voltar para o login — o CAS nao tem
-    // para onde mandar. Limpar o cache resolve; esperar o site voltar, nao.
-    const cacheDeDns = codigoDoErro === 'ERR_NAME_NOT_RESOLVED';
-    sendLog(
-      cacheDeDns
-        ? 'O Chrome nao resolveu o endereco do GERID (ERR_NAME_NOT_RESOLVED) — costuma ser '
-          + 'cache de DNS depois que a VPN oscila, nao o site fora do ar. Se a tela piscar e '
-          + 'voltar para o login, limpe o cache do navegador e tente de novo.'
-        : `O GERID (Dataprev) nao respondeu${codigoDoErro ? ` (${codigoDoErro})` : ''} — o site esta fora do ar `
-          + 'ou instavel. Nao e login nem sessao: nao adianta autenticar. A fila tenta de novo sozinha.',
-    );
+    sendLog(explicarErroDeRede(codigoDoErro));
   }
+}
+
+/**
+ * Traduz o codigo de erro de rede do Chrome para o que o operador precisa FAZER.
+ *
+ * Os tres casos abaixo chegam na cadeira do operador com a mesma cara — "nao
+ * entra no GERID" — e nao tem nada em comum. Responder "o site esta fora do ar"
+ * para todos ja mandou gente esperar um site que estava de pe.
+ */
+function explicarErroDeRede(codigoDoErro) {
+  // O nome nao resolveu. Medido em 2026-08-14: o Windows resolvia o endereco e
+  // conectava na :8443 no mesmo instante em que o Chrome recusava, e nao havia
+  // NENHUMA interface de VPN na maquina — culpar a VPN mandava mexer no que nao
+  // estava quebrado. Quem falha e o resolvedor proprio do Chrome (DNS seguro,
+  // DoH), que guarda resposta NEGATIVA em cache. Por isso limpar resolve e
+  // esperar nao resolve.
+  if (codigoDoErro === 'ERR_NAME_NOT_RESOLVED') {
+    return 'O Chrome nao resolveu o endereco do GERID (ERR_NAME_NOT_RESOLVED). Nao e o site fora '
+      + 'do ar nem a rede: e o DNS seguro do proprio Chrome com resposta velha em cache. Em '
+      + 'chrome://net-internals/#dns use "Clear host cache"; para nao voltar, desligue "Usar DNS '
+      + 'seguro" em chrome://settings/security.';
+  }
+
+  // O certificado foi escolhido e a assinatura do TLS falhou. Aparecer na
+  // janela "Selecione um certificado" NAO prova que a chave existe: aquela lista
+  // le so a parte publica, que fica na loja do Windows. Quando a chave mora em
+  // midia virtual (CSP Dexon/Safeweb) e a midia nao esta montada, o Chrome pede
+  // a assinatura, ninguem responde, e o GERID nega. Tentar de novo nunca vai
+  // funcionar: a assinatura acontece antes de sair desta maquina.
+  if (codigoDoErro === 'ERR_SSL_CLIENT_AUTH_SIGNATURE_FAILED'
+    || codigoDoErro === 'ERR_BAD_SSL_CLIENT_AUTH_CERT') {
+    return `O certificado nao conseguiu assinar (${codigoDoErro}). A chave privada nao esta `
+      + 'acessivel nesta maquina: se o certificado e de midia virtual, ela nao esta montada. '
+      + 'Abra o gerenciador da certificadora e faca o login do titular. Trocar de rede, limpar '
+      + 'cache ou repetir a tentativa nao resolve — e a fila fica parada ate alguem montar.';
+  }
+
+  return `O GERID (Dataprev) nao respondeu${codigoDoErro ? ` (${codigoDoErro})` : ''} — o site esta fora do ar `
+    + 'ou instavel. Nao e login nem sessao: nao adianta autenticar. A fila tenta de novo sozinha.';
 }
 
 function agendarRetomadaAutenticacao() {
