@@ -84,6 +84,32 @@ export type EstadoGerid =
   | 'aguardando_confirmacao'
   | 'revisao';
 
+export type NivelEvento = 'info' | 'aviso' | 'erro' | 'sucesso';
+
+/**
+ * Uma linha do diario de bordo da execucao.
+ *
+ * Existe porque ate 19/08/2026 o robo contava o que estava fazendo APENAS no
+ * popup da extensao, que so aparece enquanto o Chrome esta aberto na maquina
+ * certa e cujo historico morre junto com o service worker. Quem olhava o painel
+ * via "Processando" e mais nada — e quando o robo parava, a tela nao dizia onde
+ * nem por que, so mudava a cor de uma bolinha. Diagnosticar virava pedir print
+ * ao operador.
+ *
+ * O `nivel` nao e enfeite: e o que faz "parou no Orgao Pagador" saltar aos olhos
+ * no meio de trinta linhas de "abri a aba", "cliquei em avancar".
+ */
+export interface EventoExecucao {
+  /** ISO 8601, do relogio de quem gerou o evento. */
+  em: string;
+  mensagem: string;
+  nivel: NivelEvento;
+  /** Caso a que o evento pertence, quando da para saber. */
+  cpf?: string;
+  /** Passo do formulario do GERID (1 a 10), quando a mensagem revela. */
+  passo?: number;
+}
+
 /** Execução em andamento no servidor (consultada por polling). */
 export interface ExecucaoAtual {
   id: string;
@@ -111,6 +137,14 @@ export interface ExecucaoAtual {
    * que o robô "esqueceu" alguém e protocolar de novo na mão.
    */
   pulados?: ProtocoloRegistrado[];
+  /**
+   * Diario de bordo, do mais antigo para o mais novo, com teto de linhas.
+   *
+   * Guardado NA execucao, e nao num arquivo separado, porque a pergunta que ele
+   * responde e sempre "o que aconteceu nesta rodada". Quando a execucao vai
+   * para o historico, o relato vai junto e continua respondendo por ela.
+   */
+  eventos?: EventoExecucao[];
 }
 
 export type AcaoRevisao = 'resolvido' | 'reprocessar';

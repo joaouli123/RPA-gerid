@@ -52,7 +52,7 @@ export default async function DiagnosticoPage() {
       )}
 
       {ocorrencias.length > 0 && (
-        <Card>
+        <Card padding="none" className="overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <THead>

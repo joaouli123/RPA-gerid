@@ -1,22 +1,31 @@
 import Link from 'next/link';
-import { getEstadoFonte, getExecucoes, getProtocolosPorCpf, getResultado } from '@/lib/data';
+import {
+  getEstadoFonte,
+  getExecucaoEmAndamento,
+  getExecucoes,
+  getProtocolosPorCpf,
+  getResultado,
+} from '@/lib/data';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, Secao } from '@/components/ui/Card';
 import { Botao } from '@/components/ui/Botao';
 import { Icone } from '@/components/ui/Icone';
 import { StatusPill } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Aviso } from '@/components/ui/Aviso';
 import { ResumoCards } from '@/components/dominio/ResumoCards';
 import { BotaoRecarregar } from '@/components/dominio/BotaoRecarregar';
 import { digitosCpf, formatarCpf, formatarData } from '@/lib/format';
 
 export default async function PainelPage() {
-  const [resultado, execucoes, fonte, protocolados] = await Promise.all([
+  const [resultado, execucoes, fonte, protocolados, atual] = await Promise.all([
     getResultado(),
     getExecucoes(),
     getEstadoFonte(),
     getProtocolosPorCpf(),
+    getExecucaoEmAndamento(),
   ]);
+  const emAndamento = atual?.status === 'rodando' ? atual : null;
   const prontos = resultado.clientesProntos;
   // "Pronto" e "falta protocolar" não são a mesma coisa: a pasta continua no
   // Drive depois do protocolo, então quem já foi volta como pronto todo dia.
@@ -39,16 +48,35 @@ export default async function PainelPage() {
         }
       />
 
+      {/* O robô está trabalhando AGORA — e isto precisa aparecer na primeira
+          tela, não só em /execucao. Quem abre o painel e vê tudo parado supõe
+          que nada está acontecendo, e clica em Executar por cima de uma rodada
+          viva. */}
+      {emAndamento && (
+        <Link
+          href="/execucao"
+          className="flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-5 py-4 text-sm transition hover:bg-blue-100 dark:border-blue-500/25 dark:bg-blue-500/10 dark:hover:bg-blue-500/15"
+        >
+          <span className="relative flex h-2.5 w-2.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-blue-500" />
+          </span>
+          <span className="min-w-0 flex-1 text-blue-900 dark:text-blue-100">
+            <strong>Uma rodada está em andamento.</strong>{' '}
+            {emAndamento.casos.filter((c) => c.status === 'sucesso').length} de{' '}
+            {emAndamento.casos.length} protocolado(s).
+            {emAndamento.detalheGerid ? ` ${emAndamento.detalheGerid}` : ''}
+          </span>
+          <span className="font-medium text-blue-700 dark:text-blue-300">Acompanhar →</span>
+        </Link>
+      )}
+
       {fonte.erro ? (
-        <div className="flex items-start gap-2 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
-          <Icone nome="alerta" className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
-            <strong>Não consegui ler o Google Drive — mostrando dados de exemplo.</strong>
-            <div className="mt-1">{fonte.erro}</div>
-          </div>
-        </div>
+        <Aviso tom="erro" titulo="Não consegui ler o Google Drive — mostrando dados de exemplo.">
+          <p>{fonte.erro}</p>
+        </Aviso>
       ) : (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white px-5 py-3 text-sm dark:border-zinc-800 dark:bg-zinc-900">
           {fonte.reais ? (
             <StatusPill tom="verde">Google conectado</StatusPill>
           ) : (
@@ -79,7 +107,7 @@ export default async function PainelPage() {
             </Link>
           }
         >
-          <Card>
+          <Card padding="none">
             {prontos.length === 0 ? (
               <div className="p-4">
                 <EmptyState titulo="Nenhum caso pronto" />
@@ -89,7 +117,7 @@ export default async function PainelPage() {
                 {prontos.slice(0, 5).map((c) => {
                   const feito = protocolados.get(digitosCpf(c.cliente.cpf));
                   return (
-                    <li key={digitosCpf(c.cliente.cpf)} className="flex items-center justify-between px-4 py-3">
+                    <li key={digitosCpf(c.cliente.cpf)} className="flex items-center justify-between px-5 py-3.5">
                       <div>
                         <Link
                           href={`/clientes/${digitosCpf(c.cliente.cpf)}`}
@@ -126,10 +154,10 @@ export default async function PainelPage() {
             </Link>
           }
         >
-          <Card>
+          <Card padding="none">
             <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
               {execucoes.map((e) => (
-                <li key={e.id} className="flex items-center justify-between px-4 py-3">
+                <li key={e.id} className="flex items-center justify-between px-5 py-3.5">
                   <div>
                     <div className="font-medium">{formatarData(e.dataISO)}</div>
                     <div className="text-xs text-zinc-400">

@@ -61,9 +61,64 @@ async function sincronizarAutorizacaoDoPainel() {
   }));
 }
 
+/**
+ * Para onde mandar o diario de bordo, quando ha uma execucao viva.
+ *
+ * O log do robo sempre existiu, mas so no popup do Chrome: ele morre com o
+ * service worker e so pode ser lido na maquina que esta rodando. Quem abria o
+ * painel via "Processando" e nada mais, e quando o robo parava a tela nao dizia
+ * onde nem por que. Agora o mesmo texto vai tambem para o painel, que persiste
+ * e pode ser olhado de qualquer lugar.
+ */
+let relatoDestino = null;
+let relatoPendente = [];
+let relatoAgendado = null;
+
+/** Junta o que saiu de `sendLog` e manda em lote, no maximo uma vez por segundo. */
+function enfileirarRelato(message) {
+  if (!relatoDestino) return;
+  relatoPendente.push({ mensagem: String(message), em: new Date().toISOString() });
+  // Teto de seguranca: se o painel estiver fora do ar, o acumulo nao pode
+  // crescer sem fim dentro do service worker.
+  if (relatoPendente.length > 300) relatoPendente = relatoPendente.slice(-300);
+  if (relatoAgendado) return;
+  relatoAgendado = setTimeout(() => {
+    relatoAgendado = null;
+    void despacharRelato();
+  }, 1_000);
+}
+
+async function despacharRelato() {
+  const destino = relatoDestino;
+  const lote = relatoPendente;
+  if (!destino || lote.length === 0) return;
+  relatoPendente = [];
+  try {
+    await buscarComTimeout(destino.apiUrl.replace(/\/$/, '') + '/api/ext/log', {
+      method: 'POST',
+      headers: headersAutorizacao(destino.apiToken, true),
+      body: JSON.stringify({ idExecucao: destino.idExecucao, eventos: lote }),
+    });
+  } catch {
+    // Relato e observacao: falhar em contar o que aconteceu nunca pode
+    // atrapalhar o que esta acontecendo. O lote se perde e o robo segue.
+  }
+}
+
+/** Liga o relato a uma execucao. `null` desliga e manda o que ficou pendente. */
+function definirDestinoDoRelato(destino) {
+  if (!destino) {
+    void despacharRelato();
+    relatoDestino = null;
+    return;
+  }
+  relatoDestino = destino;
+}
+
 function sendLog(message) {
   console.log(message);
   chrome.runtime.sendMessage({ action: 'log', message }).catch(() => {});
+  enfileirarRelato(message);
   filaLogs = filaLogs.then(async () => {
     const salvo = await chrome.storage.local.get([CHAVE_LOGS]);
     const logs = Array.isArray(salvo[CHAVE_LOGS]) ? salvo[CHAVE_LOGS] : [];
@@ -884,7 +939,7 @@ async function obterEstadoNaAba(tabId) {
  * cada chamada — o guard para de guardar e vira so trabalho repetido. O teste
  * `extensaoBuildContent` quebra se os dois sairem de sincronia.
  */
-const BUILD_CONTENT_ESPERADO = '1.7.16-20260818.4';
+const BUILD_CONTENT_ESPERADO = '1.7.17-20260819.1';
 
 async function garantirContentScript(tabId) {
   const verificacaoIsolada = await chrome.scripting.executeScript({
@@ -2600,6 +2655,11 @@ async function processQueue(
       aba = await chrome.tabs.get(aba.id);
     }
 
+    // A partir daqui tudo o que o robo disser aparece tambem no painel, com
+    // hora e nivel. E o unico jeito de alguem que nao esta na frente desta
+    // maquina saber em que passo a rodada esta — ou onde ela parou.
+    definirDestinoDoRelato({ apiUrl, apiToken, idExecucao: data.idExecucao });
+
     await salvarExecucaoAtiva({
       idExecucao: data.idExecucao,
       geridTabId: aba?.id,
@@ -2946,6 +3006,10 @@ async function processQueue(
     }
   } finally {
     isRunning = false;
+    // Desligar ANTES de limpar a execucao, e nao depois: isto despacha o que
+    // ficou no buffer. A ultima linha da rodada e justamente a que explica o
+    // fim dela, e ela sairia pela janela se o desligamento fosse mudo.
+    definirDestinoDoRelato(null);
     if (!manterExecucaoPendente) await limparExecucaoAtiva();
     chrome.runtime.sendMessage({ action: 'finished' }).catch(() => {});
   }

@@ -3,6 +3,7 @@
 import { useState, useTransition, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Cliente, Integrante } from '@/src/domain/types';
+import { Aviso } from '@/components/ui/Aviso';
 import { Card } from '@/components/ui/Card';
 import { Botao } from '@/components/ui/Botao';
 import { Icone } from '@/components/ui/Icone';
@@ -134,17 +135,13 @@ export function ClienteForm({
   return (
     <form onSubmit={salvar} className="space-y-5">
       {erros.length > 0 && (
-        <div className="rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
-          <div className="flex items-center gap-2 font-medium">
-            <Icone nome="alerta" className="h-4 w-4" />
-            Corrija antes de salvar:
-          </div>
-          <ul className="mt-1 list-inside list-disc space-y-0.5">
+        <Aviso tom="erro" titulo="Corrija antes de salvar:">
+          <ul className="list-inside list-disc space-y-0.5">
             {erros.map((erro, i) => (
               <li key={i}>{erro}</li>
             ))}
           </ul>
-        </div>
+        </Aviso>
       )}
 
       <Bloco titulo="Dados do requerente" descricao="Vão para a aba Clientes da planilha.">
@@ -155,7 +152,7 @@ export function ClienteForm({
         <Campo rotulo="Telefone" valor={cliente.telefone ?? ''} onChange={setCampo('telefone')} dica="Em branco usa o telefone do escritório." />
       </Bloco>
 
-      <Card className="p-4">
+      <Card>
         <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
           <div>
             <h3 className="font-semibold">Grupo familiar</h3>
@@ -326,7 +323,7 @@ function Bloco({
   children: ReactNode;
 }) {
   return (
-    <Card className="p-4">
+    <Card>
       <div className="mb-3">
         <h3 className="font-semibold">{titulo}</h3>
         {descricao && <p className="text-sm text-zinc-500 dark:text-zinc-400">{descricao}</p>}

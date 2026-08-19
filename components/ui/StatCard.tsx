@@ -25,7 +25,7 @@ export function StatCard({
   icone?: ReactNode;
 }) {
   return (
-    <Card className="p-4">
+    <Card>
       <div className="flex items-center justify-between">
         <div className="text-sm text-zinc-500 dark:text-zinc-400">{rotulo}</div>
         {icone && <div className="text-zinc-400">{icone}</div>}

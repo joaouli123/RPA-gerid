@@ -142,7 +142,7 @@ function Bloco({
   children: ReactNode;
 }) {
   return (
-    <Card className="p-4">
+    <Card>
       <div className="mb-3">
         <h3 className="font-semibold">{titulo}</h3>
         {descricao && <p className="text-sm text-zinc-500 dark:text-zinc-400">{descricao}</p>}

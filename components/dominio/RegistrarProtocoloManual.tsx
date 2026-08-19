@@ -52,7 +52,7 @@ export function RegistrarProtocoloManual({ cpf, nome }: { cpf: string; nome: str
   }
 
   return (
-    <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/30">
+    <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-500/25 dark:bg-amber-500/10">
       <p className="text-sm font-medium">Registrar protocolo já existente</p>
       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
         Confira o número na lista de tarefas do GERID, na linha de <strong>{nome}</strong>. Depois de

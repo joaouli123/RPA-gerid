@@ -169,7 +169,7 @@ export function WhatsappVinculo() {
 
   if (situacao.conectado) {
     return (
-      <Card className="p-4">
+      <Card>
         <h3 className="font-semibold">
           WhatsApp vinculado{' '}
           <span className="font-normal text-emerald-600 dark:text-emerald-400">• conectado</span>
@@ -189,7 +189,7 @@ export function WhatsappVinculo() {
   // por nada — e escanear DERRUBA a credencial que estava só voltando.
   if (situacao.pareado && !situacao.qrSvg) {
     return (
-      <Card className="p-4">
+      <Card>
         <h3 className="font-semibold">
           WhatsApp vinculado{' '}
           <span className="font-normal text-amber-600 dark:text-amber-400">
@@ -218,7 +218,7 @@ export function WhatsappVinculo() {
   const esperando = Boolean(situacao.qrSvg);
 
   return (
-    <Card className="p-4">
+    <Card>
       <h3 className="font-semibold">
         WhatsApp do 2FA{' '}
         <span className="font-normal text-amber-600 dark:text-amber-400">• não vinculado</span>

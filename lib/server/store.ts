@@ -12,6 +12,7 @@ import type {
 import { parseClientes, parseGrupoFamiliar } from '@/src/domain/parsePlanilha';
 import { agruparGrupoFamiliar } from '@/src/domain/grupoFamiliar';
 import { apenasDigitos } from '@/src/domain/texto';
+import { MAX_EVENTOS, normalizarEventos } from '@/lib/eventosExecucao';
 import { salvarComprovante, type ComprovanteSalvo } from '@/src/modulo3/comprovante';
 import {
   serializarClientes,
@@ -581,6 +582,38 @@ export async function execucaoPausada(idExecucao: string): Promise<boolean> {
 }
 
 /** Registra que a extensao continua ativa e informa a etapa atual do GERID. */
+/**
+ * Anexa linhas do diario de bordo a execucao em andamento.
+ *
+ * Aceita LOTE, e nao linha a linha, porque cada gravacao reescreve o
+ * `estado.json` inteiro: o robo escreve varias linhas por segundo em algumas
+ * etapas, e uma gravacao por linha transformaria o relato num gargalo do
+ * proprio robo que ele deveria apenas observar.
+ *
+ * Nao derruba nada quando a execucao ja fechou — devolve `false` e pronto. O
+ * relato chega com atraso por natureza (a extensao acumula e manda depois), e
+ * um lote atrasado no fim de uma rodada e o caso comum, nao um defeito.
+ */
+export async function registrarEventosExecucao(
+  idExecucao: string,
+  brutos: unknown,
+): Promise<boolean> {
+  const estado = await carregarEstado();
+  const atual = estado.execucaoAtual;
+  if (!atual || atual.id !== idExecucao) return false;
+
+  const anteriores = atual.eventos ?? [];
+  const novos = normalizarEventos(brutos, anteriores);
+  if (novos.length === 0) return true;
+
+  // Corta pelo fim: o comeco da rodada e o que menos importa quando alguem
+  // abre a tela para entender uma parada que esta acontecendo agora.
+  atual.eventos = [...anteriores, ...novos].slice(-MAX_EVENTOS);
+  atual.ultimoSinalEm = new Date().toISOString();
+  await persistir();
+  return true;
+}
+
 export async function registrarSinalExtensao(
   idExecucao: string,
   estadoGerid: EstadoGerid,

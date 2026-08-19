@@ -2674,7 +2674,7 @@
       init_detectarProtocolo();
       init_modaisDoEnvio();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.7.16-20260818.4";
+      var CONTENT_BUILD_ID = "1.7.17-20260819.1";
       var EVENTO_LOG_GERID = "__gerid_rpa_log__";
       var CANAL_CONTROLE_GERID = "__gerid_rpa_control__";
       var emContextoExtensao = typeof chrome !== "undefined" && Boolean(chrome.runtime?.id);

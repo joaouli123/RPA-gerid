@@ -74,7 +74,7 @@ export default async function DetalheClientePage({
         <Secao titulo="Pendências" descricao="O que precisa ser corrigido antes de protocolar.">
           <div className="space-y-2">
             {motivos.map((m, i) => (
-              <Card key={i} className="p-4">
+              <Card key={i}>
                 <MotivoBadge motivo={m} />
                 <p className="mt-2 text-sm">{m.detalhe}</p>
                 <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
@@ -88,7 +88,7 @@ export default async function DetalheClientePage({
 
       {cliente ? (
         <Secao titulo="Dados do requerente">
-          <Card className="p-4">
+          <Card>
             <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Campo rotulo="CPF" valor={cliente.cpf ? formatarCpf(cliente.cpf) : '—'} />
               <Campo rotulo="Cidade" valor={cliente.cidade || '—'} />
@@ -188,7 +188,7 @@ function ProtocoloDoClienteCard({
   )}&cpf=${encodeURIComponent(protocolo.cpf)}`;
 
   return (
-    <Card className="p-4">
+    <Card>
       <dl className="grid gap-4 sm:grid-cols-3">
         <Campo rotulo="Protocolo" valor={protocolo.protocolo} />
         <Campo rotulo="Protocolado em" valor={formatarData(protocolo.em)} />

@@ -3,6 +3,7 @@
 import { useActionState } from 'react';
 import { useFormStatus } from 'react-dom';
 import { acaoEntrar } from '@/lib/server/acoesAuth';
+import { Aviso } from '@/components/ui/Aviso';
 import { Icone } from '@/components/ui/Icone';
 
 function BotaoEntrar() {
@@ -24,12 +25,8 @@ export function LoginForm() {
   return (
     <form action={acao} className="space-y-3">
       {estado?.erro && (
-        <div
-          role="alert"
-          className="flex items-start gap-2 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200"
-        >
-          <Icone nome="alerta" className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>{estado.erro}</span>
+        <div role="alert">
+          <Aviso tom="erro">{estado.erro}</Aviso>
         </div>
       )}
 

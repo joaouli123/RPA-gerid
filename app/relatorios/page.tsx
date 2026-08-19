@@ -34,8 +34,8 @@ export default async function RelatoriosPage() {
 
       <div className="space-y-6">
         {execucoes.map((e) => (
-          <Card key={e.id}>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <Card key={e.id} padding="none" className="overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-5 py-3.5 dark:border-zinc-800">
               <div>
                 <div className="flex items-center gap-2">
                   <span className="font-semibold">{formatarData(e.dataISO)}</span>

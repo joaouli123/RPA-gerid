@@ -113,8 +113,8 @@ export function FilaRevisao({
         const info = infoDoMotivo(codigo);
         const tom: Tom = info.tom === 'vermelho' ? 'vermelho' : 'ambar';
         return (
-          <Card key={codigo} className="overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <Card key={codigo} padding="none" className="overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50 px-5 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/40">
               <div className="flex items-center gap-2">
                 <Badge tom={tom}>{info.rotulo}</Badge>
                 <span className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -136,7 +136,7 @@ export function FilaRevisao({
                 return (
                   <li
                     key={item.chave}
-                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                    className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5"
                   >
                     <div className={cn('min-w-0', resolvido && 'opacity-60')}>
                       <div className="flex items-center gap-2 font-medium">
