@@ -261,16 +261,45 @@ const GRUPOS_PARENTESCO_GERID = {
 } as const;
 
 /**
- * DECISÃO DO ESCRITÓRIO: quando a planilha indica cônjuge,
- * companheiro, esposa, marido etc., marcar "Companheiro (a)".
+ * DECISÃO REVISADA EM 2026-08-18, com as duas telas abertas lado a lado.
+ *
+ * A regra anterior mandava marcar "Companheiro (a)" para cônjuge, companheiro,
+ * esposa e marido — tudo na mesma opção. Ela nasceu de uma leitura errada do
+ * GERID (achava-se que era um campo só) e cobrava um preço que só apareceu em
+ * produção: como "Cônjuge" da planilha virava "Companheiro (a)" na tela, isso
+ * contava como INTERPRETAÇÃO do robô, e a trava final se recusava a protocolar.
+ * Resultado: todo requerente com cônjuge no grupo familiar chegava até o fim e
+ * parava. Não era um caso — era uma classe inteira travada para sempre.
+ *
+ * O que as duas telas mostram, e que desfaz o nó:
+ *  - o combo do GERID lista "Cônjuge" e "Companheiro (a)" como opções SEPARADAS;
+ *  - a própria planilha do escritório só oferece "Cônjuge" na lista de
+ *    parentesco — "Companheiro" não existe lá.
+ *
+ * Ou seja: quando a planilha diz "Cônjuge", o GERID tem essa palavra igual.
+ * Traduzir não é interpretar, é trocar o dado por outro. Passa a valer o
+ * literal, e "Companheiro (a)" fica reservado a quem for descrito como
+ * companheiro/união estável (só chega por texto livre).
+ *
+ * Isto NÃO afrouxa a trava: ela continua barrando parentesco que o GERID não
+ * tem. O que mudou é que estes dois deixaram de ser chute — são correspondência
+ * exata, e por isso `confirmado: true`.
  */
 const MAPA_PARENTESCO: Array<{ termos: string[]; grupo: string; confirmado: boolean }> = [
   { termos: ['mae', 'pai', 'padrasto', 'madrasta'], grupo: GRUPOS_PARENTESCO_GERID.paisPadrastos, confirmado: true },
   { termos: ['irmao', 'irma'], grupo: GRUPOS_PARENTESCO_GERID.irmaos, confirmado: true },
+  // Casado no papel. "esposa/esposo/marido" entram aqui porque nomeiam
+  // casamento, nao uniao estavel.
   {
-    termos: ['conjuge', 'companheir', 'esposa', 'esposo', 'marido'],
+    termos: ['conjuge', 'esposa', 'esposo', 'marido'],
+    grupo: GRUPOS_PARENTESCO_GERID.conjuge,
+    confirmado: true,
+  },
+  // Uniao estavel. So chega por texto livre: a lista da planilha nao oferece.
+  {
+    termos: ['companheir', 'uniao estavel', 'amasi', 'concubin'],
     grupo: GRUPOS_PARENTESCO_GERID.companheiro,
-    confirmado: false,
+    confirmado: true,
   },
   { termos: ['entead'], grupo: GRUPOS_PARENTESCO_GERID.enteado, confirmado: true },
   { termos: ['filho', 'filha'], grupo: GRUPOS_PARENTESCO_GERID.filhos, confirmado: true },

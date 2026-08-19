@@ -5,6 +5,7 @@ import {
   formaDeConvivio,
   estadoCivilGerid,
   mapearParentesco,
+  OPCOES_PARENTESCO,
   escolherUnidadePorCidade,
   planoGrupoFamiliar,
   slotGeridDoDocumento,
@@ -82,8 +83,10 @@ describe('parentesco (planilha -> grupos do GERID)', () => {
     expect(mapearParentesco('Irmão(ã)')).toEqual({ grupo: 'Irmão / Irmã', confirmado: true });
   });
 
-  it('filho usa a opção oficial; cônjuge e avô ficam marcados para conferir', () => {
-    expect(mapearParentesco('cônjuge').confirmado).toBe(false);
+  // "cônjuge" saiu daqui em 2026-08-18 e passou a ser correspondencia exata:
+  // o GERID tem a opcao com esse nome. Ver o bloco proprio mais abaixo.
+  // "avô/avó" continua sem opcao no GERID, entao continua marcado para conferir.
+  it('filho usa a opção oficial; avô fica marcado para conferir', () => {
     expect(mapearParentesco('filho')).toEqual({ grupo: 'Filho(a)', confirmado: true });
     expect(mapearParentesco('avó').confirmado).toBe(false);
   });
@@ -149,5 +152,71 @@ describe('plano do grupo familiar (casado por CPF)', () => {
     expect(plano[1]?.parentesco.grupo).toBe('Pai / Mãe / Padrasto / Madrasta');
     expect(plano[2]).toMatchObject({ cpf: '333', estadoCivil: 'Solteiro' });
     expect(plano[2]?.parentesco.grupo).toBe('Irmão / Irmã');
+  });
+});
+
+describe('parentesco de conjuge e companheiro', () => {
+  // Este bloco existe por causa da ANA LUCIA (2026-08-18): o robo preencheu o
+  // requerimento inteiro e se recusou a protocolar porque "Conjuge" da planilha
+  // virava "Companheiro (a)" na tela, e isso contava como interpretacao. Nao era
+  // um caso isolado — travava todo requerente com conjuge, em toda ronda.
+  it('usa o literal "Cônjuge", que existe igual no GERID, sem marcar como chute', () => {
+    const r = mapearParentesco('Cônjuge');
+    expect(r.grupo).toBe('Cônjuge');
+    // `confirmado: false` aqui e o que faz a trava final barrar o protocolo.
+    expect(r.confirmado).toBe(true);
+  });
+
+  it('trata esposa/esposo/marido como casamento, nao como uniao estavel', () => {
+    for (const termo of ['esposa', 'ESPOSO', 'Marido']) {
+      expect(mapearParentesco(termo).grupo).toBe('Cônjuge');
+    }
+  });
+
+  it('reserva "Companheiro (a)" para quem e descrito como companheiro/uniao estavel', () => {
+    for (const termo of ['Companheira', 'companheiro', 'união estável']) {
+      const r = mapearParentesco(termo);
+      expect(r.grupo).toBe('Companheiro (a)');
+      expect(r.confirmado).toBe(true);
+    }
+  });
+
+  it('continua barrando parentesco que o GERID nao tem — a trava nao afrouxou', () => {
+    const r = mapearParentesco('Sobrinho');
+    expect(r.grupo).toBe('Outros');
+    expect(r.confirmado).toBe(false);
+  });
+
+  // O combo so aceita rotulo que exista de verdade na tela.
+  it('os dois rotulos usados existem na lista real do combobox', () => {
+    const rotulos = OPCOES_PARENTESCO.map((o) => o.rotulo);
+    expect(rotulos).toContain('Cônjuge');
+    expect(rotulos).toContain('Companheiro (a)');
+  });
+});
+
+describe('as duas copias da regra de parentesco nao podem divergir', () => {
+  // A regra vive DUAS vezes: src/modulo2 (Playwright, coberto por estes testes)
+  // e extensao-gerid/src (o que vira content.js e roda de verdade na maquina do
+  // operador). Corrigir so a primeira faz a suite ficar verde enquanto o robo
+  // continua errando na tela — foi o risco real ao consertar o caso da ANA
+  // LUCIA. Este teste transforma esse descompasso em falha de build.
+  it('mapeiam os mesmos parentescos para os mesmos rotulos do GERID', async () => {
+    const daExtensao = await import('../extensao-gerid/src/regrasPreenchimento');
+
+    const termos = [
+      'Titular', 'Cônjuge', 'esposa', 'marido', 'Companheira', 'união estável',
+      'Filho(a)', 'Enteado', 'Mãe', 'Pai', 'Irmão(ã)', 'Menor Tutelado',
+      'Sobrinho', '',
+    ];
+
+    for (const termo of termos) {
+      const aqui = mapearParentesco(termo);
+      const la = daExtensao.mapearParentesco(termo);
+      expect(
+        { termo, grupo: la.grupo, confirmado: la.confirmado },
+        `divergencia em "${termo}"`,
+      ).toEqual({ termo, grupo: aqui.grupo, confirmado: aqui.confirmado });
+    }
   });
 });

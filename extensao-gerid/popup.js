@@ -1,5 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
-  const API_URL_PADRAO = 'https://vmkcogtpgc1dgd5ae6gjfz1n.179.198.98.63.sslip.io';
+  const API_URL_PADRAO = 'https://fabriciodouglas.net';
   const btnStart = document.getElementById('btnStart');
   const btnPausa = document.getElementById('btnPausa');
   const btnAuth = document.getElementById('btnAuth');
@@ -42,7 +42,13 @@ document.addEventListener('DOMContentLoaded', () => {
         .map((item) => item?.mensagem || String(item))
         .join('\n');
     }
-    modoTesteInput.checked = result.modoTeste !== false;
+    // `=== true`, e nao `!== false`. A diferenca e o dia inteiro do operador:
+    // com `!== false`, storage vazio virava modo teste LIGADO, e modo teste
+    // processa so o primeiro caso da fila. O robo protocolava um, parava, e
+    // alguem tinha que clicar em Iniciar de novo — parecia trava, era opcao.
+    // Padrao de robo de fila e trabalhar a fila inteira; testar e que e o
+    // pedido especial, e pedido especial se marca na mao.
+    modoTesteInput.checked = result.modoTeste === true;
     renderAuth(result.estadoAutenticacaoGerid);
     if (result.execucaoAtivaGerid?.aguardandoConfirmacao) {
       statusLabel.innerText = 'Aguardando confirmação no GERID';

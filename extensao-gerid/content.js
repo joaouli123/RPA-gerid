@@ -761,10 +761,18 @@
       MAPA_PARENTESCO = [
         { termos: ["mae", "pai", "padrasto", "madrasta"], grupo: GRUPOS_PARENTESCO_GERID.paisPadrastos, confirmado: true },
         { termos: ["irmao", "irma"], grupo: GRUPOS_PARENTESCO_GERID.irmaos, confirmado: true },
+        // Casado no papel. "esposa/esposo/marido" entram aqui porque nomeiam
+        // casamento, nao uniao estavel.
         {
-          termos: ["conjuge", "companheir", "esposa", "esposo", "marido"],
+          termos: ["conjuge", "esposa", "esposo", "marido"],
+          grupo: GRUPOS_PARENTESCO_GERID.conjuge,
+          confirmado: true
+        },
+        // Uniao estavel. So chega por texto livre: a lista da planilha nao oferece.
+        {
+          termos: ["companheir", "uniao estavel", "amasi", "concubin"],
           grupo: GRUPOS_PARENTESCO_GERID.companheiro,
-          confirmado: false
+          confirmado: true
         },
         { termos: ["entead"], grupo: GRUPOS_PARENTESCO_GERID.enteado, confirmado: true },
         { termos: ["filho", "filha"], grupo: GRUPOS_PARENTESCO_GERID.filhos, confirmado: true },
@@ -2395,6 +2403,100 @@
     if (ok) await avancar(page, "passo_8");
     return ok;
   }
+  function escolherMunicipioDoOrgaoPagador(desejado, municipioDaUnidade, opcoes) {
+    const alvo = soCidade(desejado);
+    const uteis = opcoes.filter((o) => {
+      const limpo = normalizar(o);
+      return limpo.length > 0 && limpo !== "limpar";
+    });
+    if (uteis.length === 0) return null;
+    const igual = alvo ? uteis.find((o) => soCidade(o) === alvo) : void 0;
+    if (igual) return { rotulo: igual, motivo: "mesmo municipio do cliente" };
+    const parecidos = uteis.filter((o) => nomesParecidos(soCidade(o), alvo));
+    const unicoParecido = parecidos.length === 1 ? parecidos[0] : void 0;
+    if (unicoParecido) {
+      return { rotulo: unicoParecido, motivo: `mesma cidade escrita diferente de "${desejado}"` };
+    }
+    const daUnidade = soCidade(municipioDaUnidade);
+    const casaComUnidade = daUnidade ? uteis.find((o) => soCidade(o) === daUnidade) : void 0;
+    if (casaComUnidade) {
+      return {
+        rotulo: casaComUnidade,
+        motivo: "e o municipio da agencia de atendimento ja escolhida no passo 8"
+      };
+    }
+    const unica = uteis.length === 1 ? uteis[0] : void 0;
+    if (unica) return { rotulo: unica, motivo: "era a unica opcao oferecida pelo GERID" };
+    return null;
+  }
+  function soCidade(texto) {
+    return normalizar(texto).replace(/^(agencia|aps|gerencia executiva|gex)\s+/u, "").replace(/\s*[-/.]\s*[a-z]{2}$/u, "").trim();
+  }
+  function nomesParecidos(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    if (a.length < 5 || b.length < 5) return false;
+    if (a.slice(0, 4) !== b.slice(0, 4)) return false;
+    return distanciaDeEdicao(a, b) <= 2;
+  }
+  function distanciaDeEdicao(a, b) {
+    const linha = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      let anterior = linha[0] ?? 0;
+      linha[0] = i;
+      for (let j = 1; j <= b.length; j++) {
+        const guardado = linha[j] ?? 0;
+        linha[j] = Math.min(
+          (linha[j] ?? 0) + 1,
+          (linha[j - 1] ?? 0) + 1,
+          anterior + (a[i - 1] === b[j - 1] ? 0 : 1)
+        );
+        anterior = guardado;
+      }
+    }
+    return linha[b.length] ?? 0;
+  }
+  async function listarOpcoesCombobox(page, idCombobox) {
+    const idNoSeletor = idCombobox.match(/\[id="([^"]+)"\]/)?.[1];
+    const id = idNoSeletor ?? idCombobox.replace(/^#/, "");
+    const combo = page.locator(`[id="${id}"]`);
+    const limite = Date.now() + 6e3;
+    let ultimoClique = 0;
+    for (; ; ) {
+      const rotulos = await page.evaluate(
+        (seletor) => Array.from(document.querySelectorAll(seletor)).map((elemento) => ((elemento.innerText || "").split("\n")[0] || "").trim()).filter((texto) => texto.length > 0),
+        `[id="${id}-itens"] label`
+      ).catch(() => []);
+      const uteis = rotulos.filter((rotulo) => normalizar(rotulo) !== "limpar");
+      if (uteis.length > 0) return uteis;
+      if (Date.now() - ultimoClique > 1500) {
+        ultimoClique = Date.now();
+        await combo.click().catch(() => void 0);
+      }
+      if (Date.now() >= limite) return uteis;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  }
+  async function usarMunicipioAlternativoDoOrgaoPagador(page, municipio, avisos) {
+    const opcoes = await listarOpcoesCombobox(page, mapaGerid.passo9.municipio);
+    const escolha = escolherMunicipioDoOrgaoPagador(municipio, municipioDaUnidadeEscolhida, opcoes);
+    if (!escolha) {
+      const oferecidas = opcoes.length ? ` O GERID ofereceu: ${opcoes.slice(0, 10).join(", ")}.` : "";
+      avisos.push(
+        `Nao encontrei o municipio "${municipio}" na lista de orgao pagador.${oferecidas}`
+      );
+      return false;
+    }
+    if (!await escolherNoCombobox(page, mapaGerid.passo9.municipio, escolha.rotulo)) {
+      avisos.push(`Nao consegui selecionar "${escolha.rotulo}" como municipio do orgao pagador.`);
+      return false;
+    }
+    avisos.push(avisoInformativo(
+      `O GERID nao tem orgao pagador em "${municipio}"; usei "${escolha.rotulo}" \u2014 ${escolha.motivo}.`
+    ));
+    console.log(`[P9] municipio alternativo: ${escolha.rotulo} (${escolha.motivo})`);
+    return true;
+  }
   async function passo9OrgaoPagador(page, caso, avisos) {
     await esperarTela(page, /.rg.o Pagador|receber o benef.cio/i);
     const municipio = cidadeSemUf(caso.cliente.cidade);
@@ -2403,8 +2505,7 @@
       mapaGerid.passo9.municipio,
       municipio
     );
-    if (!selecionouMunicipio) {
-      avisos.push(`Nao encontrei o municipio "${municipio}" na lista de orgao pagador.`);
+    if (!selecionouMunicipio && !await usarMunicipioAlternativoDoOrgaoPagador(page, municipio, avisos)) {
       return false;
     }
     const marcouAlvo = await marcarPrimeiroRadioDoOrgaoPagador(page);
@@ -2467,6 +2568,7 @@
       avisos.push("Nenhuma unidade de atendimento foi listada para o CEP informado.");
       return false;
     }
+    municipioDaUnidadeEscolhida = "";
     const alvo = normalizar(cidadeSemUf(caso.cliente.cidade));
     const semUf = (cidade) => normalizar(cidade).replace(/\s*-\s*[a-z]{2}$/u, "").trim();
     const exata = opcoes.find((o) => semUf(o.cidade) === alvo);
@@ -2477,6 +2579,7 @@
         `O GERID nao listou unidade no municipio "${cidadeSemUf(caso.cliente.cidade)}"; foi usada a primeira unidade regional retornada (${escolhida.nome}).`
       );
     }
+    municipioDaUnidadeEscolhida = escolhida.cidade || escolhida.nome;
     const card = unidades.nth(escolhida.indice);
     await card.click().catch(() => void 0);
     let selecionou = false;
@@ -2491,7 +2594,7 @@
     }
     return true;
   }
-  var ORDEM_ETAPAS, posicaoEtapa, AVISO_PENDENTE, pedidoAbertoLembrado, observadorPedidoAberto, MARCA_INFORMATIVO, comboPorPergunta, inputPorPergunta;
+  var ORDEM_ETAPAS, posicaoEtapa, AVISO_PENDENTE, pedidoAbertoLembrado, observadorPedidoAberto, MARCA_INFORMATIVO, comboPorPergunta, inputPorPergunta, municipioDaUnidadeEscolhida;
   var init_preencherGerid = __esm({
     "src/preencherGerid.ts"() {
       "use strict";
@@ -2527,6 +2630,7 @@
       MARCA_INFORMATIVO = "\u2139\uFE0F ";
       comboPorPergunta = (page, trechoPergunta, esperaMs) => campoPorPergunta(page, trechoPergunta, true, esperaMs);
       inputPorPergunta = (page, trechoPergunta) => campoPorPergunta(page, trechoPergunta, false);
+      municipioDaUnidadeEscolhida = "";
     }
   });
 
@@ -2570,7 +2674,7 @@
       init_detectarProtocolo();
       init_modaisDoEnvio();
       init_estadoGerid();
-      var CONTENT_BUILD_ID = "1.6.0-20260813.31";
+      var CONTENT_BUILD_ID = "1.7.16-20260818.4";
       var EVENTO_LOG_GERID = "__gerid_rpa_log__";
       var CANAL_CONTROLE_GERID = "__gerid_rpa_control__";
       var emContextoExtensao = typeof chrome !== "undefined" && Boolean(chrome.runtime?.id);

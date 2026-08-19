@@ -1,6 +1,13 @@
 const URL_REQUERIMENTOS_GERID = 'https://atendimento.inss.gov.br/requerimentos';
 const URL_LOGIN_GERID = 'https://geridinss.dataprev.gov.br/';
-const URL_PAINEL_RPA = 'https://vmkcogtpgc1dgd5ae6gjfz1n.179.198.98.63.sslip.io';
+const URL_PAINEL_RPA = 'https://fabriciodouglas.net';
+// Onde procurar a aba do painel. O curinga cobre subdominio futuro
+// (painel.fabriciodouglas.net e afins) sem exigir reinstalar a extensao — e o
+// unico motivo de existir uma lista aqui em vez de uma constante so.
+const PADROES_ABA_PAINEL = [
+  `${URL_PAINEL_RPA}/*`,
+  'https://*.fabriciodouglas.net/*',
+];
 const CHAVE_EXECUCAO_ATIVA = 'execucaoAtivaGerid';
 const CHAVE_ESTADO_AUTENTICACAO = 'estadoAutenticacaoGerid';
 const CHAVE_ULTIMO_AVISO_AUTENTICACAO = 'ultimoAvisoAutenticacaoGerid';
@@ -44,7 +51,7 @@ let isRunning = false;
 let filaLogs = Promise.resolve();
 
 async function sincronizarAutorizacaoDoPainel() {
-  const abas = await chrome.tabs.query({ url: `${URL_PAINEL_RPA}/*` }).catch(() => []);
+  const abas = await chrome.tabs.query({ url: PADROES_ABA_PAINEL }).catch(() => []);
   await Promise.all(abas.map((aba) => {
     if (!aba.id) return Promise.resolve();
     return chrome.scripting.executeScript({
@@ -877,7 +884,7 @@ async function obterEstadoNaAba(tabId) {
  * cada chamada — o guard para de guardar e vira so trabalho repetido. O teste
  * `extensaoBuildContent` quebra se os dois sairem de sincronia.
  */
-const BUILD_CONTENT_ESPERADO = '1.6.0-20260813.31';
+const BUILD_CONTENT_ESPERADO = '1.7.16-20260818.4';
 
 async function garantirContentScript(tabId) {
   const verificacaoIsolada = await chrome.scripting.executeScript({
@@ -2427,7 +2434,10 @@ async function verificarConfirmacaoPendente(tabIdPreferido) {
     );
     sendLog(`Protocolo ${protocolo} registrado com sucesso.`);
     await salvarExecucaoAtiva({ ...ativa, aguardandoConfirmacao: false, geridTabId: aba.id });
-    if (ativa.modoTeste !== false) {
+    // `=== true` aqui pelo mesmo motivo do popup: execucao salva sem o campo
+    // (ou salva antes desta versao) nao pode ser lida como modo teste, senao a
+    // fila para depois de UM caso confirmado e alguem tem que clicar de novo.
+    if (ativa.modoTeste === true) {
       sendLog('Modo teste concluido. Desative-o e inicie novamente para processar toda a fila.');
       await limparExecucaoAtiva();
       isRunning = false;
@@ -2437,7 +2447,7 @@ async function verificarConfirmacaoPendente(tabIdPreferido) {
     await processQueue(
       dados.apiUrl,
       dados.apiToken,
-      ativa.modoTeste !== false,
+      ativa.modoTeste === true,
       aba.id,
       Number(ativa.tentativasRetomada) || 0,
       false,
@@ -2530,7 +2540,18 @@ async function processQueue(
       }
     }
 
+    // Truncar a fila em silencio foi o que escondeu o problema por dias: o
+    // log dizia "PROTOCOLADO" e terminava, sem nunca mencionar que os outros
+    // tres casos nem tinham sido considerados. Comportamento que muda o
+    // resultado do dia tem que aparecer escrito.
     const casos = modoTeste ? data.casos.slice(0, 1) : data.casos;
+    if (modoTeste && data.casos.length > 1) {
+      sendLog(
+        `MODO TESTE ligado: vou processar SO o primeiro dos ${data.casos.length} casos da fila. `
+        + 'Para o robo seguir sozinho ate o fim, desmarque "Testar somente o primeiro caso" '
+        + 'em Configuracao avancada, no popup da extensao.',
+      );
+    }
     if (casos.length === 0 || !data.idExecucao) {
       await relatarFilaVazia(data, silencioso);
       return;
@@ -2951,7 +2972,7 @@ async function retomarExecucaoPersistida() {
   void processQueue(
     dados.apiUrl,
     dados.apiToken,
-    ativa.modoTeste !== false,
+    ativa.modoTeste === true,
     ativa.geridTabId,
     Number(ativa.tentativasRetomada) || 0,
   );
@@ -2985,7 +3006,8 @@ async function iniciarFilaAposLogin(tabId) {
   }
 
   const salvo = await chrome.storage.local.get(['modoTeste']).catch(() => ({}));
-  const modoTeste = salvo?.modoTeste !== false;
+  // Mesmo motivo do popup: ausencia de configuracao significa fila inteira.
+  const modoTeste = salvo?.modoTeste === true;
 
   isRunning = true;
   sendLog(modoTeste
@@ -3061,7 +3083,11 @@ async function rondaContinua() {
   if (isRunning) return;
 
   const salvo = await chrome.storage.local.get(['modoTeste']).catch(() => ({}));
-  const modoTeste = salvo?.modoTeste !== false;
+  // Ausencia de configuracao = fila inteira. Aqui o defeito era pior que no
+  // botao: a ronda roda sozinha de 5 em 5 minutos, entao ela processava um caso
+  // e ia dormir, um caso e ia dormir — a fila andava um por rodada e ninguem
+  // relacionava isso com uma caixinha escondida em "Configuracao avancada".
+  const modoTeste = salvo?.modoTeste === true;
 
   isRunning = true;
   try {
@@ -3093,7 +3119,10 @@ chrome.runtime.onMessage.addListener((request) => {
       return;
     }
     isRunning = true;
-    const modoTeste = request.modoTeste !== false;
+    // O popup sempre manda o valor da caixinha; este padrao so vale para
+    // mensagem antiga ou vinda de outro lugar, e mesmo ai o padrao e trabalhar
+    // a fila inteira.
+    const modoTeste = request.modoTeste === true;
     void chrome.storage.local
       .set({ apiUrl: request.apiUrl, apiToken: request.apiToken, modoTeste })
       .then(async () => {
@@ -3152,12 +3181,42 @@ chrome.runtime.onInstalled?.addListener(() => {
   void sincronizarAutorizacaoDoPainel();
   void retomarExecucaoPersistida();
 });
+/**
+ * Desliga o modo teste que ficou LIGADO nas maquinas ja instaladas.
+ *
+ * Ate a v1.7.15 o popup nascia com "Testar somente o primeiro caso" marcado, e
+ * gravava esse `true` no storage no primeiro clique em Iniciar. Trocar so o
+ * padrao nao alcancaria quem ja tem o valor gravado: a extensao continuaria
+ * protocolando um caso por clique, para sempre, exatamente como antes.
+ *
+ * Roda uma vez por maquina (`MIGRACAO_MODO_TESTE` marca que ja rodou) e apaga
+ * a chave em vez de escrever `false` — assim o valor volta a ser "nao
+ * configurado", e quem QUISER modo teste depois marca de novo e a marca dele
+ * fica de pe, porque a migracao nao roda uma segunda vez.
+ */
+const MIGRACAO_MODO_TESTE = 'migracaoModoTesteDesligado';
+
+async function desligarModoTesteHerdado() {
+  const salvo = await chrome.storage.local
+    .get([MIGRACAO_MODO_TESTE, 'modoTeste'])
+    .catch(() => ({}));
+  if (salvo?.[MIGRACAO_MODO_TESTE]) return;
+  await chrome.storage.local.set({ [MIGRACAO_MODO_TESTE]: true }).catch(() => undefined);
+  if (salvo?.modoTeste !== true) return;
+  await chrome.storage.local.remove('modoTeste').catch(() => undefined);
+  sendLog(
+    'Modo teste estava ligado nesta maquina e foi desligado: o robo passa a processar '
+    + 'a fila inteira, um caso atras do outro, sem precisar de clique entre eles.',
+  );
+}
+
 // Fora de qualquer listener, de proposito: isto roda toda vez que o service
 // worker acorda, inclusive nas vezes em que nem onStartup nem onInstalled
 // disparam (que sao a maioria — o MV3 desliga o worker por inatividade e o
 // religa no proximo evento). Sem esta linha, a ronda existiria so nos dois
 // momentos em que ninguem precisa dela.
 armarRonda();
+void desligarModoTesteHerdado();
 chrome.alarms?.onAlarm.addListener((alarme) => {
   if (alarme.name === ALARME_CONFIRMACAO) {
     void verificarConfirmacaoPendente();

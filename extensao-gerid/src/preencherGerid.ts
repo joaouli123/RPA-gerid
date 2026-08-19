@@ -2659,6 +2659,200 @@ async function passo8SelecionarUnidade(
   return ok;
 }
 
+/**
+ * O municipio do cliente nem sempre esta na lista de orgao pagador — e isso
+ * NAO e defeito.
+ *
+ * O caso do IAGO, em 18/08/2026: ele mora em Igrapiuna, e o GERID nao tem
+ * agencia pagadora la. A lista oferecia CAMAMU, a uns 20 minutos de estrada, e
+ * era a unica. O robo tentou "Igrapiuna", nao achou, e parou — quatro rondas
+ * seguidas parando no mesmo lugar, ate o operador terminar na mao escolhendo
+ * exatamente aquela unica opcao que estava na tela.
+ *
+ * Repare no que o robo fez de errado: ele nao ficou em duvida entre duas
+ * coisas. Ele tinha UMA opcao na frente e mesmo assim desistiu, porque o codigo
+ * so sabia perguntar "o nome bate?". Cidade sem agencia do INSS e a regra no
+ * interior, nao a excecao; do jeito antigo, todo cliente de cidade pequena
+ * estava condenado a parar aqui para sempre.
+ *
+ * A escolha agora tem ordem, e cada degrau responde a uma pergunta diferente:
+ *
+ *  1. **mesmo nome** — o caso normal, sem novidade;
+ *  2. **grafia parecida, e so uma candidata** — "Igrapiuna"/"Igrapiúna",
+ *     acento perdido, letra trocada na planilha. Exige candidata UNICA: com
+ *     duas cidades parecidas, escolher seria adivinhar de quem e o dinheiro;
+ *  3. **o municipio da agencia que o passo 8 ja marcou** — o robo nao esta
+ *     inventando um lugar novo, esta usando o mesmo que ja escolheu duas telas
+ *     atras para atender essa pessoa;
+ *  4. **opcao unica** — nao ha escolha a fazer. Recusar aqui e recusar o que o
+ *     proprio GERID oferece como caminho unico.
+ *
+ * Fora desses quatro, para de novo — e ai para com razao: varias cidades
+ * diferentes na tela e nenhuma ligada a este cliente e duvida de verdade, e
+ * orgao pagador e onde a pessoa vai receber o beneficio.
+ *
+ * Funcao pura de proposito: a decisao e testavel sem navegador, que e o unico
+ * jeito de garantir que ela nao volte a travar quando ninguem estiver olhando.
+ */
+export type EscolhaOrgaoPagador = { rotulo: string; motivo: string };
+
+export function escolherMunicipioDoOrgaoPagador(
+  desejado: string,
+  municipioDaUnidade: string,
+  opcoes: string[],
+): EscolhaOrgaoPagador | null {
+  const alvo = soCidade(desejado);
+  const uteis = opcoes.filter((o) => {
+    const limpo = normalizar(o);
+    return limpo.length > 0 && limpo !== 'limpar';
+  });
+  if (uteis.length === 0) return null;
+
+  const igual = alvo ? uteis.find((o) => soCidade(o) === alvo) : undefined;
+  if (igual) return { rotulo: igual, motivo: 'mesmo municipio do cliente' };
+
+  const parecidos = uteis.filter((o) => nomesParecidos(soCidade(o), alvo));
+  const unicoParecido = parecidos.length === 1 ? parecidos[0] : undefined;
+  if (unicoParecido) {
+    return { rotulo: unicoParecido, motivo: `mesma cidade escrita diferente de "${desejado}"` };
+  }
+
+  const daUnidade = soCidade(municipioDaUnidade);
+  const casaComUnidade = daUnidade ? uteis.find((o) => soCidade(o) === daUnidade) : undefined;
+  if (casaComUnidade) {
+    return {
+      rotulo: casaComUnidade,
+      motivo: 'e o municipio da agencia de atendimento ja escolhida no passo 8',
+    };
+  }
+
+  const unica = uteis.length === 1 ? uteis[0] : undefined;
+  if (unica) return { rotulo: unica, motivo: 'era a unica opcao oferecida pelo GERID' };
+
+  return null;
+}
+
+/**
+ * Reduz "AGÊNCIA CAMAMU", "CAMAMU.BA" e "Camamu - BA" ao mesmo "camamu".
+ *
+ * A lista de orgao pagador, o card de unidade do passo 8 e a planilha escrevem
+ * a mesma cidade de tres jeitos. Sem isto, o degrau 3 acima nunca casaria.
+ */
+function soCidade(texto: string): string {
+  return normalizar(texto)
+    .replace(/^(agencia|aps|gerencia executiva|gex)\s+/u, '')
+    .replace(/\s*[-/.]\s*[a-z]{2}$/u, '')
+    .trim();
+}
+
+/**
+ * Duas grafias da MESMA cidade — nao duas cidades vizinhas.
+ *
+ * O criterio e apertado de proposito: precisa comecar igual (4 letras) e estar
+ * a no maximo 2 edicoes de distancia. "Igrapiuna"/"Igrapiúna" passa; "Camamu"
+ * e "Camacan", municipios diferentes da mesma regiao, nao passam. E mesmo
+ * assim quem chama so aceita quando existe UMA candidata parecida.
+ */
+function nomesParecidos(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length < 5 || b.length < 5) return false;
+  if (a.slice(0, 4) !== b.slice(0, 4)) return false;
+  return distanciaDeEdicao(a, b) <= 2;
+}
+
+function distanciaDeEdicao(a: string, b: string): number {
+  const linha = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let anterior = linha[0] ?? 0;
+    linha[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const guardado = linha[j] ?? 0;
+      linha[j] = Math.min(
+        (linha[j] ?? 0) + 1,
+        (linha[j - 1] ?? 0) + 1,
+        anterior + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+      anterior = guardado;
+    }
+  }
+  return linha[b.length] ?? 0;
+}
+
+/** Municipio da unidade de atendimento marcada no passo 8. Ver o degrau 3. */
+let municipioDaUnidadeEscolhida = '';
+
+/**
+ * Le os rotulos que o combo REALMENTE esta oferecendo.
+ *
+ * Existe porque `escolherNoCombobox` so responde sim/nao: quando ele diz nao,
+ * ninguem sabe se a lista estava vazia ou cheia de outra coisa — e e essa
+ * diferenca que decide entre seguir e parar. "Limpar" e item de controle do
+ * componente gov.br, nao e cidade, entao sai fora.
+ */
+async function listarOpcoesCombobox(page: Page, idCombobox: string): Promise<string[]> {
+  const idNoSeletor = idCombobox.match(/\[id="([^"]+)"\]/)?.[1];
+  const id = idNoSeletor ?? idCombobox.replace(/^#/, '');
+  const combo = page.locator(`[id="${id}"]`);
+  const limite = Date.now() + 6_000;
+  let ultimoClique = 0;
+
+  for (;;) {
+    // Cada item guarda o rotulo duas vezes (um para quem ve, outro para leitor
+    // de tela). A primeira linha basta, e nao inventa texto: sai do proprio DOM.
+    const rotulos = await page.evaluate(
+      (seletor: string) => Array.from(document.querySelectorAll<HTMLElement>(seletor))
+        .map((elemento) => ((elemento.innerText || '').split('\n')[0] || '').trim())
+        .filter((texto) => texto.length > 0),
+      `[id="${id}-itens"] label`,
+    ).catch(() => [] as string[]);
+
+    const uteis = rotulos.filter((rotulo) => normalizar(rotulo) !== 'limpar');
+    if (uteis.length > 0) return uteis;
+
+    // Lista vazia costuma ser dropdown fechado, nao ausencia de opcao.
+    if (Date.now() - ultimoClique > 1_500) {
+      ultimoClique = Date.now();
+      await combo.click().catch(() => undefined);
+    }
+    if (Date.now() >= limite) return uteis;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+}
+
+async function usarMunicipioAlternativoDoOrgaoPagador(
+  page: Page,
+  municipio: string,
+  avisos: string[],
+): Promise<boolean> {
+  const opcoes = await listarOpcoesCombobox(page, mapaGerid.passo9.municipio);
+  const escolha = escolherMunicipioDoOrgaoPagador(municipio, municipioDaUnidadeEscolhida, opcoes);
+
+  if (!escolha) {
+    const oferecidas = opcoes.length
+      ? ` O GERID ofereceu: ${opcoes.slice(0, 10).join(', ')}.`
+      : '';
+    avisos.push(
+      `Nao encontrei o municipio "${municipio}" na lista de orgao pagador.${oferecidas}`,
+    );
+    return false;
+  }
+
+  if (!(await escolherNoCombobox(page, mapaGerid.passo9.municipio, escolha.rotulo))) {
+    avisos.push(`Nao consegui selecionar "${escolha.rotulo}" como municipio do orgao pagador.`);
+    return false;
+  }
+
+  // Informativo, e nao pendencia: o robo NAO deixou de fazer nada. A escolha
+  // esta feita e registrada; marcar como pendencia faria o passo 10 recusar
+  // protocolar, devolvendo o caso exatamente ao lugar de onde ele saiu.
+  avisos.push(avisoInformativo(
+    `O GERID nao tem orgao pagador em "${municipio}"; usei "${escolha.rotulo}" — ${escolha.motivo}.`,
+  ));
+  console.log(`[P9] municipio alternativo: ${escolha.rotulo} (${escolha.motivo})`);
+  return true;
+}
+
 async function passo9OrgaoPagador(
   page: Page,
   caso: CasoParaProtocolar,
@@ -2672,8 +2866,8 @@ async function passo9OrgaoPagador(
     municipio,
   );
 
-  if (!selecionouMunicipio) {
-    avisos.push(`Nao encontrei o municipio "${municipio}" na lista de orgao pagador.`);
+  if (!selecionouMunicipio
+    && !(await usarMunicipioAlternativoDoOrgaoPagador(page, municipio, avisos))) {
     return false;
   }
 
@@ -2755,6 +2949,10 @@ async function selecionarUnidadeDeAtendimento(
     return false;
   }
 
+  // Zerado a cada passo 8: sobra de um caso anterior mandaria o passo 9 para a
+  // cidade do cliente errado, e ninguem perceberia.
+  municipioDaUnidadeEscolhida = '';
+
   const alvo = normalizar(cidadeSemUf(caso.cliente.cidade));
   const semUf = (cidade: string) => normalizar(cidade).replace(/\s*-\s*[a-z]{2}$/u, '').trim();
   const exata = opcoes.find((o) => semUf(o.cidade) === alvo);
@@ -2767,6 +2965,11 @@ async function selecionarUnidadeDeAtendimento(
         `foi usada a primeira unidade regional retornada (${escolhida.nome}).`,
     );
   }
+
+  // O passo 9 precisa saber qual cidade acabou de ser escolhida aqui — e o
+  // `.municipio` do card pode vir vazio, entao o nome ("AGÊNCIA CAMAMU") serve
+  // de segunda fonte. `soCidade` limpa os dois formatos.
+  municipioDaUnidadeEscolhida = escolhida.cidade || escolhida.nome;
 
   const card = unidades.nth(escolhida.indice);
   await card.click().catch(() => undefined);

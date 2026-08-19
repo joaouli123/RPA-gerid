@@ -37,7 +37,7 @@ describe('extensao Gerid - autorizacao automatica', () => {
         path.join(process.cwd(), 'extensao-gerid', 'bootstrap.js'),
         'utf8',
       )).replace(
-        'https://vmkcogtpgc1dgd5ae6gjfz1n.179.198.98.63.sslip.io',
+        'https://fabriciodouglas.net',
         'https://rpa.teste',
       );
       await pagina.addScriptTag({ content: script });
